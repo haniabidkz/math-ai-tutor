@@ -72,10 +72,11 @@ AccordionItem.displayName = "AccordionItem";
 
 const AccordionTrigger = React.forwardRef<
     HTMLButtonElement,
-    React.ButtonHTMLAttributes<HTMLButtonElement>
->(({ className, children, ...props }, ref) => {
-    // @ts-ignore
-    const { isOpen, onToggle } = props;
+    Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "onToggle"> & {
+        isOpen?: boolean;
+        onToggle?: () => void;
+    }
+>(({ className, children, isOpen, onToggle, ...props }, ref) => {
 
     return (
         <div className="flex">
@@ -99,10 +100,8 @@ AccordionTrigger.displayName = "AccordionTrigger";
 
 const AccordionContent = React.forwardRef<
     HTMLDivElement,
-    React.HTMLAttributes<HTMLDivElement>
->(({ className, children, ...props }, ref) => {
-    // @ts-ignore
-    const { isOpen } = props;
+    React.HTMLAttributes<HTMLDivElement> & { isOpen?: boolean }
+>(({ className, children, isOpen, ...props }, ref) => {
 
     return (
         <AnimatePresence initial={false}>
