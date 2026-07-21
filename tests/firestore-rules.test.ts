@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
-import { collection, doc, getDoc, getDocs, setDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, setDoc, where } from "firebase/firestore";
 
 const emulatorAvailable = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const describeRules = emulatorAvailable ? describe : describe.skip;
@@ -49,6 +49,8 @@ describeRules("Firestore security rules", () => {
     it("allows a linked parent to read the child and progress", async () => {
         const db = environment.authenticatedContext("parent-a", { email: "parent@example.com", email_verified: true }).firestore();
         await assertSucceeds(getDoc(doc(db, "students/student-a")));
+        const children = await assertSucceeds(getDocs(query(collection(db, "students"), where("parentEmail", "==", "parent@example.com"))));
+        expect(children.docs.map((child) => child.id)).toEqual(["student-a"]);
         await assertSucceeds(getDoc(doc(db, "students/student-a/topicProgress/progress-a")));
         await assertFails(getDoc(doc(db, "students/student-b")));
     });

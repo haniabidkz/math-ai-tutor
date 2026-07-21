@@ -6,14 +6,15 @@ service cloud.firestore {
     function superAdmin() { return verified() && request.auth.token.super_admin == true; }
     function owner(uid) { return verified() && request.auth.uid == uid; }
     function teacher() { return verified() && exists(/databases/$(database)/documents/teachers/$(request.auth.uid)); }
+    function parent() { return verified() && exists(/databases/$(database)/documents/parents/$(request.auth.uid)); }
     function parentOf(uid) {
-      return verified()
-        && exists(/databases/$(database)/documents/parents/$(request.auth.uid))
+      return parent()
         && get(/databases/$(database)/documents/students/$(uid)).data.parentEmail == request.auth.token.email;
     }
 
     match /students/{uid} {
-      allow read: if owner(uid) || superAdmin() || teacher() || parentOf(uid);
+      allow read: if owner(uid) || superAdmin() || teacher()
+        || (parent() && resource.data.parentEmail == request.auth.token.email);
       allow update: if owner(uid) || superAdmin();
       allow create: if signedIn() && request.auth.uid == uid;
       allow delete: if superAdmin();

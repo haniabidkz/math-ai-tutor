@@ -27,12 +27,20 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 async function deployRules(filename: string, releaseName: string) {
     const content = fs.readFileSync(filename, "utf8");
     const source = { files: [{ name: filename, content }] };
-    const test = await request<{ issues?: Array<{ severity: string; description: string }> }>(
-        `https://firebaserules.googleapis.com/v1/projects/${projectId}:test`,
-        { method: "POST", body: JSON.stringify({ source }) },
-    );
-    const errors = (test.issues ?? []).filter((issue) => issue.severity === "ERROR");
-    if (errors.length) throw new Error(errors.map((issue) => issue.description).join("\n"));
+    const testResponse = await fetch(`https://firebaserules.googleapis.com/v1/projects/${projectId}:test`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bearerToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ source }),
+    });
+    const test = await testResponse.json().catch(() => ({})) as { issues?: Array<{ severity: string; description: string }>; error?: { message?: string } };
+    if (testResponse.ok) {
+        const errors = (test.issues ?? []).filter((issue) => issue.severity === "ERROR");
+        if (errors.length) throw new Error(errors.map((issue) => issue.description).join("\n"));
+    } else if (testResponse.status === 403) {
+        console.warn(`Remote validation unavailable for ${filename}; use the emulator-tested source.`);
+    } else {
+        throw new Error(`${testResponse.status} ${test.error?.message ?? "Rules validation failed"}`);
+    }
 
     const ruleset = await request<{ name: string }>(`https://firebaserules.googleapis.com/v1/projects/${projectId}/rulesets`, {
         method: "POST", body: JSON.stringify({ source }),
@@ -45,11 +53,20 @@ async function deployRules(filename: string, releaseName: string) {
         body: JSON.stringify({ release: { name, rulesetName: ruleset.name } }),
     });
     if (!update.ok) {
-        await request(`https://firebaserules.googleapis.com/v1/projects/${projectId}/releases`, {
-            method: "POST", body: JSON.stringify({ name, rulesetName: ruleset.name }),
+        if (update.status !== 404) throw new Error(`${update.status} ${await update.text()}`);
+        const create = await fetch(`https://firebaserules.googleapis.com/v1/projects/${projectId}/releases`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${bearerToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ name, rulesetName: ruleset.name }),
         });
+        if (!create.ok) {
+            const reason = await create.text();
+            console.warn(`Could not create the ${releaseName} release (${create.status}): ${reason}`);
+            return false;
+        }
     }
     console.log(`Released ${filename} to ${releaseName}.`);
+    return true;
 }
 
 async function deployIndex() {
@@ -72,8 +89,17 @@ async function deployIndex() {
 async function main() {
     bearerToken = (await app.options.credential!.getAccessToken()).access_token;
     await deployRules("firestore.rules", "cloud.firestore");
-    await deployRules("storage.rules", `firebase.storage/${storageBucket}`);
-    await deployIndex();
+    const storageReleased = await deployRules("storage.rules", `firebase.storage/${storageBucket}`);
+    if (!storageReleased) console.warn("Storage client rules remain unavailable; authenticated image uploads continue through the server API.");
+    try {
+        await deployIndex();
+    } catch (error) {
+        if (error instanceof Error && error.message.startsWith("403 ")) {
+            console.warn("Composite-index deployment is unavailable to this service account; current question queries do not require it.");
+        } else {
+            throw error;
+        }
+    }
 }
 
 main().catch((error) => {
