@@ -99,16 +99,6 @@ export default function Home() {
             <main className="flex-1 pt-32 pb-16 px-6">
                 <div className="container mx-auto max-w-6xl">
                     <div className="text-center space-y-6 mb-16 relative">
-                        {/* Decorative background blobs */}
-                        <motion.div
-                            animate={{
-                                scale: [1, 1.1, 1],
-                                opacity: [0.3, 0.5, 0.3],
-                            }}
-                            transition={{ duration: 8, repeat: Infinity }}
-                            className="absolute -top-20 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-primary/20 rounded-full blur-[100px] -z-10 pointer-events-none"
-                        />
-
                         <Badge variant="secondary" className="px-4 py-1.5 text-sm font-medium rounded-full border-primary/20 bg-primary/5 text-primary">
                             ✨ AI-Powered Personalized Learning
                         </Badge>

@@ -1,6 +1,7 @@
 import { initializeApp, getApps, cert, App } from "firebase-admin/app";
 import { getAuth, Auth } from "firebase-admin/auth";
 import { getFirestore, Firestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 
 // Firebase Admin SDK initialization (server-only)
 // NEVER import this file on the client side
@@ -18,6 +19,7 @@ function initializeAdmin() {
                     "\n"
                 ),
             }),
+            storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
         });
     } else {
         app = getApps()[0];
@@ -27,6 +29,7 @@ function initializeAdmin() {
         adminApp: app,
         adminAuth: getAuth(app),
         adminDb: getFirestore(app),
+        adminStorage: getStorage(app),
     };
 }
 
@@ -34,4 +37,5 @@ const admin = initializeAdmin();
 
 export const adminAuth = admin.adminAuth;
 export const adminDb = admin.adminDb;
+export const adminStorage = admin.adminStorage;
 export default admin.adminApp;

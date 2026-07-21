@@ -1,239 +1,66 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { onAuthStateChanged, signOut, User } from "firebase/auth";
-import { doc, getDoc, collection, getDocs } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
-import { StudentProfile, TopicProgress } from "@/types/user";
-
+import { useRouter } from "next/navigation";
+import { onAuthStateChanged, signOut, type User } from "firebase/auth";
+import { BookOpen, CheckCircle2, ChevronRight, Clock, LayoutDashboard, LockKeyhole, Trophy } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
+import { SessionControls } from "@/components/session-controls";
 import { StatCard } from "@/components/stat-card";
-import { Card, CardContent } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import {
-    BookOpen,
-    CheckCircle2,
-    HandHelping,
-    ChevronRight,
-    Trophy,
-    LayoutDashboard,
-    AlertCircle,
-    Clock
-} from "lucide-react";
-import { motion } from "framer-motion";
+import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { auth } from "@/lib/firebase";
+import type { Locale, MicroConcept } from "@/types/curriculum";
 
-// Math topics organized by class (Same as before)
-const TOPICS_BY_CLASS: Record<number, string[]> = {
-    1: ["Counting (1-100)", "Addition (Single Digit)", "Subtraction (Single Digit)", "Shapes"],
-    2: ["Addition (Two Digits)", "Subtraction (Two Digits)", "Skip Counting", "Time (Hours)"],
-    3: ["Multiplication Tables", "Division Basics", "Fractions Introduction", "Money"],
-    4: ["Multi-digit Multiplication", "Long Division", "Fractions", "Decimals Introduction"],
-    5: ["Fractions & Decimals", "Percentage Basics", "Geometry", "Data Handling"],
-    6: ["Integers", "Algebra Basics", "Ratio & Proportion", "Area & Perimeter"],
-    7: ["Algebraic Expressions", "Linear Equations", "Triangles", "Probability"],
-    8: ["Polynomials", "Quadrilaterals", "Statistics", "Exponents"],
-    9: ["Real Numbers", "Coordinate Geometry", "Surface Area & Volume", "Trigonometry Intro"],
-    10: ["Quadratic Equations", "Arithmetic Sequences", "Circles", "Trigonometry"],
-};
+interface DashboardConcept extends MicroConcept { mastered: boolean; percentage: number; locked: boolean }
+interface DashboardData {
+    profile: { name: string; email: string; classLevel: 6 | 7 | 8; diagnosticCompleted: boolean };
+    topics: Array<{ topicId: string; title: MicroConcept["topicTitle"]; concepts: DashboardConcept[] }>;
+    metrics: { mastered: number; inProgress: number; available: number; total: number };
+    weeklyDue: boolean;
+    nextWeeklyAssessmentAt: string | null;
+}
 
 export default function StudentDashboard() {
     const router = useRouter();
     const [user, setUser] = useState<User | null>(null);
-    const [profile, setProfile] = useState<StudentProfile | null>(null);
-    const [progress, setProgress] = useState<TopicProgress[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [data, setData] = useState<DashboardData | null>(null);
+    const [locale, setLocale] = useState<Locale>("english");
+    const [error, setError] = useState("");
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-            if (!currentUser) {
-                router.push("/login?role=student");
-                return;
-            }
-
+        setLocale(localStorage.getItem("mathTutorLocale") === "roman-urdu" ? "roman-urdu" : "english");
+        return onAuthStateChanged(auth, async (currentUser) => {
+            if (!currentUser) return router.replace("/login?role=student");
+            if (!currentUser.emailVerified) { await signOut(auth); return router.replace("/login?role=student&verify=1"); }
             setUser(currentUser);
-
-            const profileDoc = await getDoc(doc(db, "students", currentUser.uid));
-            if (profileDoc.exists()) {
-                const profileData = profileDoc.data() as StudentProfile;
-                if (!profileData.placementCompleted) {
-                    router.push("/placement");
-                    return;
-                }
-                setProfile(profileData);
-            }
-
-            const progressSnapshot = await getDocs(
-                collection(db, "students", currentUser.uid, "topicProgress")
-            );
-            const progressData: TopicProgress[] = [];
-            progressSnapshot.forEach((doc) => {
-                progressData.push(doc.data() as TopicProgress);
-            });
-            setProgress(progressData);
-
-            setLoading(false);
+            try {
+                const response = await fetch("/api/progress", { headers: { Authorization: `Bearer ${await currentUser.getIdToken()}` } });
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.error);
+                if (!payload.profile.diagnosticCompleted) return router.replace("/placement");
+                setData(payload);
+            } catch (caught) { setError(caught instanceof Error ? caught.message : "Progress could not be loaded"); }
         });
-
-        return () => unsubscribe();
     }, [router]);
 
-    const handleSignOut = async () => {
-        await signOut(auth);
-        router.push("/");
-    };
+    if (!data || !user) return <div className="mx-auto min-h-screen max-w-6xl space-y-5 bg-slate-50 p-8">{error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : <><Skeleton className="h-16 w-full" /><div className="grid gap-4 md:grid-cols-3"><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" /></div><Skeleton className="h-96" /></>}</div>;
 
-    const getTopicStatus = (topicName: string) => {
-        const topicProgress = progress.find((p) => p.topicName === topicName);
-        if (!topicProgress) return { status: "new", icon: BookOpen, label: "Start learning", color: "bg-slate-500", border: "border-l-slate-400" };
-        if (topicProgress.needsHumanAttention) return { status: "attention", icon: HandHelping, label: "Needs teacher help", color: "bg-amber-500", border: "border-l-amber-500" };
-        if (topicProgress.understood) return { status: "completed", icon: CheckCircle2, label: "Completed", color: "bg-emerald-500", border: "border-l-emerald-500" };
-        return { status: "in-progress", icon: Clock, label: "In Progress", color: "bg-indigo-500", border: "border-l-indigo-500" };
-    };
-
-    if (loading || !profile || !user) {
-        return (
-            <div className="min-h-screen bg-slate-50/50 p-8">
-                <div className="max-w-7xl mx-auto space-y-8">
-                    <div className="flex justify-between items-center">
-                        <Skeleton className="h-12 w-64" />
-                        <Skeleton className="h-10 w-10 rounded-full" />
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {[1, 2, 3].map((i) => (
-                            <Skeleton key={i} className="h-32 rounded-xl" />
-                        ))}
-                    </div>
-                    <div className="space-y-4">
-                        <Skeleton className="h-8 w-48" />
-                        {[1, 2, 3, 4].map((i) => (
-                            <Skeleton key={i} className="h-20 rounded-xl" />
-                        ))}
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    const topics = profile?.class ? TOPICS_BY_CLASS[profile.class] || [] : [];
-    const completedCount = progress.filter((p) => p.understood).length;
-    const inProgressCount = progress.filter((p) => !p.understood && !p.needsHumanAttention).length;
-    const needHelpCount = progress.filter((p) => p.needsHumanAttention).length;
-
+    const localize = (value: { english: string; romanUrdu: string }) => locale === "roman-urdu" ? value.romanUrdu : value.english;
     return (
-        <DashboardLayout
-            user={{
-                name: profile.name,
-                email: profile.email,
-                role: "student",
-                classLevel: profile.class,
-            }}
-            onSignOut={handleSignOut}
-        >
-            <PageHeader
-                title={
-                    <div className="flex items-center gap-3">
-                        Welcome back, {profile.name.split(" ")[0]}!
-                        {profile.adaptive_level && (
-                            <Badge variant="default" className="text-sm px-3 py-1 bg-indigo-600 hover:bg-indigo-700 shadow-md">
-                                Level {profile.adaptive_level}
-                            </Badge>
-                        )}
-                    </div>
-                }
-                description="Ready to solve some problems today?"
-                icon={<LayoutDashboard className="h-6 w-6" />}
-            />
-
-            {/* Stats Row */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 stagger-fade">
-                <StatCard
-                    title="Completed Topics"
-                    value={completedCount}
-                    icon={Trophy}
-                    color="success"
-                    description={`${Math.round((completedCount / (topics.length || 1)) * 100)}% of curriculum`}
-                />
-                <StatCard
-                    title="In Progress"
-                    value={inProgressCount}
-                    icon={BookOpen}
-                    color="primary"
-                    description="Keep going!"
-                />
-                <StatCard
-                    title="Need Help"
-                    value={needHelpCount}
-                    icon={HandHelping}
-                    color="warning"
-                    description={needHelpCount > 0 ? "Ask your teacher" : "Great job!"}
-                />
-            </div>
-
-            {/* Topics Section */}
-            <section className="space-y-4">
-                <div className="flex items-center justify-between">
-                    <h2 className="text-xl font-semibold tracking-tight">Your Topics</h2>
-                    <Badge variant="outline" className="px-3 py-1">Class {profile.class}</Badge>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-4">
-                    {topics.map((topic, index) => {
-                        const { status, icon: Icon, label, color, border } = getTopicStatus(topic);
-                        const topicId = `class${profile?.class}_topic${index}`;
-
-                        return (
-                            <motion.div
-                                key={topicId}
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: index * 0.05 }}
-                            >
-                                <Link href={`/learn?topic=${encodeURIComponent(topic)}&topicId=${topicId}&class=${profile.class}`}>
-                                    <Card className={`group hover:shadow-md transition-all duration-200 border-l-4 ${border} overflow-hidden`}>
-                                        <CardContent className="p-0">
-                                            <div className="flex items-center p-4 gap-4">
-                                                <div className={`p-3 rounded-xl ${color} bg-opacity-10 text-opacity-100 flex-shrink-0`}>
-                                                    <Icon className={`h-6 w-6 ${color.replace("bg-", "text-")}`} />
-                                                </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <h3 className="font-semibold text-foreground truncate group-hover:text-primary transition-colors">
-                                                        {topic}
-                                                    </h3>
-                                                    <p className="text-xs text-muted-foreground mt-0.5">
-                                                        {label}
-                                                    </p>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    {status === "completed" && (
-                                                        <Badge variant="secondary" className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400">
-                                                            Mastered
-                                                        </Badge>
-                                                    )}
-                                                    {status === "attention" && (
-                                                        <Badge variant="secondary" className="bg-amber-100 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400">
-                                                            Help Needed
-                                                        </Badge>
-                                                    )}
-                                                    <ChevronRight className="h-5 w-5 text-muted-foreground/50 group-hover:text-primary group-hover:translate-x-1 transition-all" />
-                                                </div>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                </Link>
-                            </motion.div>
-                        );
-                    })}
-                </div>
-            </section>
+        <DashboardLayout user={{ name: data.profile.name, email: data.profile.email, role: "student", classLevel: data.profile.classLevel }} onSignOut={() => signOut(auth).then(() => router.push("/"))}>
+            <PageHeader title={locale === "roman-urdu" ? `Khush amdeed, ${data.profile.name.split(" ")[0]}` : `Welcome, ${data.profile.name.split(" ")[0]}`} description={locale === "roman-urdu" ? "Apna agla math concept chunein." : "Choose the next math concept in your learning path."} icon={<LayoutDashboard className="h-6 w-6" />} action={<SessionControls locale={locale} onLocaleChange={setLocale} />} />
+            {data.weeklyDue ? <Alert className="border-amber-300 bg-amber-50"><Clock className="h-4 w-4 text-amber-700" /><AlertTitle>{locale === "roman-urdu" ? "Haftawar jaiza tayar hai" : "Weekly review is ready"}</AlertTitle><AlertDescription className="mt-2 flex flex-wrap items-center justify-between gap-3"><span>{locale === "roman-urdu" ? "8 sawalon se apni taraqqi check karein." : "Check retention with an 8-question review."}</span><Button size="sm" asChild><Link href={`/quiz?kind=weekly&class=${data.profile.classLevel}`}>{locale === "roman-urdu" ? "Shuru karein" : "Start review"}<ChevronRight className="ml-1 h-4 w-4" /></Link></Button></AlertDescription></Alert> : null}
+            <div className="grid gap-4 md:grid-cols-3"><StatCard title={locale === "roman-urdu" ? "Mukammal concepts" : "Mastered concepts"} value={data.metrics.mastered} icon={Trophy} color="success" description={`${data.metrics.mastered}/${data.metrics.total}`} /><StatCard title={locale === "roman-urdu" ? "Jari" : "In progress"} value={data.metrics.inProgress} icon={BookOpen} color="primary" description={locale === "roman-urdu" ? "Mashq jari rakhein" : "Keep practicing"} /><StatCard title={locale === "roman-urdu" ? "Dastiyab" : "Available now"} value={data.metrics.available} icon={CheckCircle2} color="warning" description={locale === "roman-urdu" ? "Agla qadam chunein" : "Choose your next step"} /></div>
+            <section className="space-y-6">{data.topics.map((topic) => <div key={topic.topicId}><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-semibold">{localize(topic.title)}</h2><Badge variant="outline">Class {data.profile.classLevel}</Badge></div><div className="grid gap-3 md:grid-cols-2">{topic.concepts.map((concept) => {
+                const content = <Card className={`rounded-md border-l-4 ${concept.mastered ? "border-l-emerald-500" : concept.locked ? "border-l-slate-300 opacity-65" : "border-l-indigo-500"}`}><CardContent className="flex min-h-24 items-center gap-4 p-4"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-slate-100">{concept.mastered ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> : concept.locked ? <LockKeyhole className="h-5 w-5 text-slate-500" /> : <BookOpen className="h-5 w-5 text-indigo-600" />}</div><div className="min-w-0 flex-1"><h3 className="font-semibold">{localize(concept.title)}</h3><p className="mt-1 text-xs text-muted-foreground">{concept.mastered ? `${concept.percentage}% mastered` : concept.locked ? (locale === "roman-urdu" ? "Pehle pichla concept mukammal karein" : "Complete the prerequisite first") : (locale === "roman-urdu" ? "Seekhna shuru karein" : "Ready to learn")}</p></div>{!concept.locked ? <ChevronRight className="h-5 w-5 text-muted-foreground" /> : null}</CardContent></Card>;
+                return concept.locked ? <div key={concept.microTag}>{content}</div> : <Link key={concept.microTag} href={`/learn?microTag=${concept.microTag}&class=${data.profile.classLevel}`}>{content}</Link>;
+            })}</div></div>)}</section>
         </DashboardLayout>
     );
 }
-
-// Helper component for StatCard total display logic if needed specifically for dashboard
-// But generic StatCard should handle basic value display.
-// I'll update StatCard call above to pass simple value and put description as "x/y total" logic

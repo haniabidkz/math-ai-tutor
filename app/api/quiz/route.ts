@@ -1,217 +1,141 @@
-import { NextRequest, NextResponse } from "next/server";
-import { adminDb, adminAuth } from "@/lib/firebase-admin";
-import { generateQuizQuestions } from "@/lib/openai";
+import { randomUUID } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
-import { QuizQuestion, QuizSession, Difficulty } from "@/types/quiz";
+import { NextRequest, NextResponse } from "next/server";
+import {
+    getAssessmentConfig,
+    getPublishedConcept,
+    selectQuestion,
+    selectQuizQuestions,
+    toClientQuestion,
+} from "@/lib/assessment-content";
+import type { StoredQuizSession } from "@/lib/assessment-session";
+import { getClassConcepts, getConcept } from "@/lib/curriculum";
+import { adminDb } from "@/lib/firebase-admin";
+import { authErrorResponse, requireVerifiedUser } from "@/lib/server-auth";
+import type { Difficulty, Locale, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
 
-export interface GenerateQuizRequest {
-    topicId: string;
-    topicName: string;
-    classLevel: number;
+function parseLocale(value: unknown): Locale {
+    return value === "roman-urdu" ? "roman-urdu" : "english";
 }
 
-export interface QuizResponse {
-    success: boolean;
-    session?: {
-        id: string;
-        questions: Array<{
-            id: string;
-            question: string;
-            difficulty: Difficulty;
-            options?: string[];
-        }>;
-        totalQuestions: number;
-    };
-    error?: string;
+function parseClass(value: unknown): StudentClassLevel | null {
+    const parsed = Number(value);
+    return parsed === 6 || parsed === 7 || parsed === 8 ? parsed : null;
 }
 
-/**
- * POST /api/quiz
- * Generate a new quiz session for a topic
- * Difficulty progression: Easy (2) → Medium (2) → Hard (1)
- */
-export async function POST(request: NextRequest): Promise<NextResponse<QuizResponse>> {
+async function weeklyQuestions(classLevel: StudentClassLevel, weakTags: string[], count: number) {
+    const tags = [...weakTags, ...getClassConcepts(classLevel).map((concept) => concept.microTag)];
+    const uniqueTags = [...new Set(tags)];
+    const selected: QuestionBankItem[] = [];
+    for (let index = 0; selected.length < count && uniqueTags.length; index += 1) {
+        const microTag = uniqueTags[index % uniqueTags.length];
+        const question = await selectQuestion({ microTag, usedIds: selected.map((item) => item.id) });
+        if (!selected.some((item) => item.id === question.id)) selected.push(question);
+        if (index > count * uniqueTags.length) break;
+    }
+    return selected;
+}
+
+export async function POST(request: NextRequest) {
     try {
-        const authHeader = request.headers.get("authorization");
-        if (!authHeader?.startsWith("Bearer ")) {
-            return NextResponse.json(
-                { success: false, error: "Unauthorized" },
-                { status: 401 }
-            );
+        const user = await requireVerifiedUser(request, ["student"]);
+        const body = await request.json();
+        const profileSnapshot = await adminDb.collection("students").doc(user.uid).get();
+        const profile = profileSnapshot.data() ?? {};
+        const classLevel = parseClass(profile.class) ?? parseClass(body.classLevel);
+        if (!classLevel) return NextResponse.json({ success: false, error: "Class must be 6, 7, or 8" }, { status: 400 });
+
+        const kind: "mastery" | "weekly" = body.kind === "weekly" ? "weekly" : "mastery";
+        const locale = parseLocale(body.locale);
+        const preferredDifficulty: Difficulty = body.difficulty === "easy" || body.difficulty === "hard" ? body.difficulty : "medium";
+        const config = await getAssessmentConfig();
+        let microTag = String(body.microTag ?? body.topicId ?? "");
+        if (!microTag && kind === "mastery") return NextResponse.json({ success: false, error: "microTag is required" }, { status: 400 });
+        if (microTag && !getConcept(microTag)) {
+            const byTopic = getClassConcepts(classLevel).find((concept) => concept.topicId === microTag);
+            microTag = byTopic?.microTag ?? microTag;
         }
 
-        const token = authHeader.split("Bearer ")[1];
-        const decodedToken = await adminAuth.verifyIdToken(token);
-        const uid = decodedToken.uid;
+        const questions = kind === "weekly"
+            ? await weeklyQuestions(classLevel, profile.diagnosticProfile?.weakMicroTags ?? [], config.weeklyQuestionCount)
+            : await selectQuizQuestions(microTag, config.masteryQuestionCount, preferredDifficulty);
+        if (!questions.length) return NextResponse.json({ success: false, error: "No published questions are available" }, { status: 409 });
+        if (kind === "weekly") microTag = "weekly-review";
+        else if (!(await getPublishedConcept(microTag))) return NextResponse.json({ success: false, error: "Concept not found" }, { status: 404 });
 
-        const body: GenerateQuizRequest = await request.json();
-        const { topicId, topicName, classLevel } = body;
-
-        if (!topicId || !topicName || !classLevel) {
-            return NextResponse.json(
-                { success: false, error: "Missing required fields" },
-                { status: 400 }
-            );
-        }
-
-        const progressDoc = await adminDb.collection("students").doc(uid).collection("studentProgress").doc("adaptiveState").get();
-        let adaptive_level = 2; // default
-        if (progressDoc.exists) {
-            adaptive_level = progressDoc.data()?.adaptive_level || 2;
-        }
-
-        let counts = { easy: 2, medium: 2, hard: 1 };
-        switch(adaptive_level) {
-            case 1: counts = { easy: 4, medium: 1, hard: 0 }; break;
-            case 2: counts = { easy: 2, medium: 3, hard: 0 }; break;
-            case 3: counts = { easy: 1, medium: 3, hard: 1 }; break;
-            case 4: counts = { easy: 0, medium: 2, hard: 3 }; break;
-            case 5: counts = { easy: 0, medium: 1, hard: 4 }; break;
-        }
-
-        // Generate questions with mixed difficulty in a single call (faster)
-        const generatedQuestions = await import("@/lib/openai").then(m => m.generateMixedQuiz({
-            topic: topicName,
-            classLevel,
-            counts
-        }));
-
-        if (generatedQuestions.length === 0) {
-            return NextResponse.json(
-                { success: false, error: "Failed to generate quiz questions" },
-                { status: 500 }
-            );
-        }
-
-        // Create quiz questions with IDs
-        const questions: QuizQuestion[] = generatedQuestions.map((q, index) => ({
-            id: `q_${Date.now()}_${index}`,
-            question: q.question,
-            difficulty: (q.difficulty as Difficulty) || (index < 2 ? "easy" : index < 4 ? "medium" : "hard"),
-            correctAnswer: q.correctAnswer,
-            hint: q.hint,
-            encouragement: q.encouragement,
-            options: q.options,
-        }));
-
-        // Create quiz session
-        const sessionId = `quiz_${uid}_${topicId}_${Date.now()}`;
-        const session: Omit<QuizSession, "attempts"> = {
+        const sessionId = `${kind}_${randomUUID()}`;
+        const session: StoredQuizSession = {
             id: sessionId,
-            studentUid: uid,
-            topicId,
-            topicName,
+            kind,
+            studentUid: user.uid,
+            microTag,
+            classLevel,
+            locale,
+            status: "active",
             questions,
             currentQuestionIndex: 0,
-            startedAt: new Date(),
-            totalHintsUsed: 0,
-            totalTimeSeconds: 0,
             score: 0,
             maxScore: questions.length,
+            hintedQuestionIds: [],
+            eventIds: [],
+            answers: [],
+            retryOf: typeof body.retryOf === "string" ? body.retryOf : null,
+            remedialTag: null,
         };
-
-        // Store session in Firestore
-        await adminDb
-            .collection("students")
-            .doc(uid)
-            .collection("quizSessions")
-            .doc(sessionId)
-            .set({
-                ...session,
-                attempts: [],
-                startedAt: FieldValue.serverTimestamp(),
-            });
-
-        // Return questions without correct answers (security)
-        const clientQuestions = questions.map(({ id, question, difficulty, options }) => ({
-            id,
-            question,
-            difficulty,
-            options,
-        }));
+        await adminDb.collection("students").doc(user.uid).collection("assessmentSessions").doc(sessionId).set({
+            ...session,
+            startedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+        });
 
         return NextResponse.json({
             success: true,
             session: {
                 id: sessionId,
-                questions: clientQuestions,
+                kind,
+                microTag,
+                question: toClientQuestion(questions[0], locale),
+                questionNumber: 1,
                 totalQuestions: questions.length,
+                score: 0,
             },
-        });
+        }, { status: 201 });
     } catch (error) {
-        console.error("Quiz generation error:", error);
-        return NextResponse.json(
-            { success: false, error: "Failed to create quiz" },
-            { status: 500 }
-        );
+        console.error("Quiz start error", error);
+        const auth = authErrorResponse(error);
+        return auth
+            ? NextResponse.json(auth.body, { status: auth.status })
+            : NextResponse.json({ success: false, error: "Failed to create quiz" }, { status: 500 });
     }
 }
 
-/**
- * GET /api/quiz
- * Get an existing quiz session
- */
-export async function GET(request: NextRequest): Promise<NextResponse> {
+export async function GET(request: NextRequest) {
     try {
-        const authHeader = request.headers.get("authorization");
-        if (!authHeader?.startsWith("Bearer ")) {
-            return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-        }
-
-        const token = authHeader.split("Bearer ")[1];
-        const decodedToken = await adminAuth.verifyIdToken(token);
-        const uid = decodedToken.uid;
-
+        const user = await requireVerifiedUser(request, ["student"]);
         const sessionId = request.nextUrl.searchParams.get("sessionId");
-
-        if (!sessionId) {
-            return NextResponse.json(
-                { success: false, error: "Session ID required" },
-                { status: 400 }
-            );
-        }
-
-        const sessionDoc = await adminDb
-            .collection("students")
-            .doc(uid)
-            .collection("quizSessions")
-            .doc(sessionId)
-            .get();
-
-        if (!sessionDoc.exists) {
-            return NextResponse.json(
-                { success: false, error: "Session not found" },
-                { status: 404 }
-            );
-        }
-
-        const session = sessionDoc.data() as QuizSession;
-
-        // Return questions without correct answers
-        const clientQuestions = session.questions.map(({ id, question, difficulty, options }) => ({
-            id,
-            question,
-            difficulty,
-            options,
-        }));
-
+        if (!sessionId) return NextResponse.json({ success: false, error: "sessionId is required" }, { status: 400 });
+        const snapshot = await adminDb.collection("students").doc(user.uid).collection("assessmentSessions").doc(sessionId).get();
+        if (!snapshot.exists) return NextResponse.json({ success: false, error: "Session not found" }, { status: 404 });
+        const session = snapshot.data() as StoredQuizSession;
         return NextResponse.json({
             success: true,
             session: {
                 id: session.id,
-                questions: clientQuestions,
-                currentQuestionIndex: session.currentQuestionIndex,
-                totalHintsUsed: session.totalHintsUsed,
+                kind: session.kind,
+                microTag: session.microTag,
+                status: session.status,
                 score: session.score,
+                maxScore: session.maxScore,
+                questionNumber: Math.min(session.currentQuestionIndex + 1, session.questions.length),
                 totalQuestions: session.questions.length,
-                completedAt: session.completedAt,
+                question: session.status === "active" ? toClientQuestion(session.questions[session.currentQuestionIndex], session.locale) : undefined,
+                remedialTag: session.remedialTag,
             },
         });
     } catch (error) {
-        console.error("Quiz fetch error:", error);
-        return NextResponse.json(
-            { success: false, error: "Failed to fetch quiz" },
-            { status: 500 }
-        );
+        const auth = authErrorResponse(error);
+        return auth
+            ? NextResponse.json(auth.body, { status: auth.status })
+            : NextResponse.json({ success: false, error: "Failed to load quiz" }, { status: 500 });
     }
 }

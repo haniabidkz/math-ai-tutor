@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
     createUserWithEmailAndPassword,
+    sendEmailVerification,
+    signOut,
     signInWithEmailAndPassword,
 } from "firebase/auth";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
@@ -24,17 +26,19 @@ import { ArrowLeft, Loader2, AlertCircle, CheckCircle2, Mail, Lock, User, Gradua
 function LoginContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const role = (searchParams.get("role") as UserRole) || "student";
+    const requestedRole = searchParams.get("role");
+    const role: Exclude<UserRole, "super_admin"> = requestedRole === "parent" || requestedRole === "teacher" ? requestedRole : "student";
 
     const [isSignUp, setIsSignUp] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const [verificationSent, setVerificationSent] = useState(false);
 
     // Form fields
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [name, setName] = useState("");
-    const [classLevel, setClassLevel] = useState<string>("5");
+    const [classLevel, setClassLevel] = useState<string>("6");
     const [parentEmail, setParentEmail] = useState("");
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -66,12 +70,22 @@ function LoginContent() {
 
                 const collection = role === "student" ? "students" : `${role}s`;
                 await setDoc(doc(db, collection, uid), profileData);
-
-                const redirectPath = role === "student" ? "/dashboard" : `/${role}-dashboard`;
-                router.push(redirectPath);
+                await sendEmailVerification(userCredential.user);
+                await signOut(auth);
+                setVerificationSent(true);
+                setIsSignUp(false);
             } else {
-                await signInWithEmailAndPassword(auth, email, password);
-                const redirectPath = role === "student" ? "/dashboard" : `/${role}-dashboard`;
+                const credential = await signInWithEmailAndPassword(auth, email, password);
+                if (!credential.user.emailVerified) {
+                    await sendEmailVerification(credential.user);
+                    await signOut(auth);
+                    setVerificationSent(true);
+                    return;
+                }
+                const token = await credential.user.getIdTokenResult(true);
+                const redirectPath = token.claims.super_admin === true
+                    ? "/super-admin"
+                    : role === "student" ? "/dashboard" : `/${role}-dashboard`;
                 router.push(redirectPath);
             }
         } catch (err) {
@@ -215,6 +229,18 @@ function LoginContent() {
                         <CardContent className="px-8 pb-8">
                             <form onSubmit={handleSubmit} className="space-y-4 pt-4">
                                 <AnimatePresence mode="popLayout">
+                                    {verificationSent && (
+                                        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+                                            <Alert className="border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+                                                <CheckCircle2 className="h-4 w-4" />
+                                                <AlertDescription>
+                                                    Verification email sent. Open the link in your inbox, then sign in again.
+                                                </AlertDescription>
+                                            </Alert>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                                <AnimatePresence mode="popLayout">
                                     {error && (
                                         <motion.div
                                             initial={{ opacity: 0, scale: 0.95, y: -10 }}
@@ -309,7 +335,7 @@ function LoginContent() {
                                                             <SelectValue placeholder="Select class" />
                                                         </SelectTrigger>
                                                         <SelectContent>
-                                                            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((c) => (
+                                                            {[6, 7, 8].map((c) => (
                                                                 <SelectItem key={c} value={String(c)}>
                                                                     Class {c}
                                                                 </SelectItem>

@@ -1,308 +1,304 @@
-import { NextRequest, NextResponse } from "next/server";
-import { adminDb, adminAuth } from "@/lib/firebase-admin";
-import { generateFeedback } from "@/lib/openai";
-import { calculateUnderstanding, generateUnderstandingSummary } from "@/lib/understanding";
 import { FieldValue } from "firebase-admin/firestore";
-import { QuizSession, QuizAttempt, QuizResult, StudentAdaptiveState } from "@/types/quiz";
+import { NextRequest, NextResponse } from "next/server";
+import { addDays, isMastered, masteryPercentage, scoreDelta } from "@/lib/adaptive-engine";
+import { getAssessmentConfig, getPublishedConcept, localized, toClientQuestion } from "@/lib/assessment-content";
+import type { StoredAnswer, StoredQuizSession } from "@/lib/assessment-session";
+import { adminDb } from "@/lib/firebase-admin";
+import { authErrorResponse, requireVerifiedUser } from "@/lib/server-auth";
 
-export interface EvaluateRequest {
-    sessionId: string;
-    questionId: string;
-    answer: string;
-    timeTakenSeconds: number;
-    requestHint?: boolean;
-}
-
-export interface EvaluateResponse {
-    success: boolean;
+type EvaluationOutcome = {
+    success: true;
+    duplicate?: boolean;
+    action: "hint" | "answer" | "remedialComplete";
     isCorrect?: boolean;
-    feedback?: string;
     hint?: string;
-    attemptNumber?: number;
-    shouldMoveNext?: boolean;
-    quizComplete?: boolean;
-    result?: QuizResult;
-    error?: string;
-    levelChanged?: boolean;
-    newLevel?: number;
-    direction?: "up" | "down" | null;
+    explanation?: string;
+    score: number;
+    scoreDelta: number;
+    status: StoredQuizSession["status"];
+    completed: boolean;
+    mastered?: boolean;
+    percentage?: number;
+    question?: ReturnType<typeof toClientQuestion>;
+    questionNumber?: number;
+    totalQuestions: number;
+    remedial?: {
+        microTag: string;
+        title: string;
+        concept: string;
+        visualKind: string;
+        imageUrl?: string;
+    };
+};
+
+function currentResponse(session: StoredQuizSession, duplicate = false): EvaluationOutcome {
+    return {
+        success: true,
+        duplicate,
+        action: "answer",
+        score: session.score,
+        scoreDelta: 0,
+        status: session.status,
+        completed: session.status === "completed",
+        question: session.status === "active" ? toClientQuestion(session.questions[session.currentQuestionIndex], session.locale) : undefined,
+        questionNumber: Math.min(session.currentQuestionIndex + 1, session.questions.length),
+        totalQuestions: session.questions.length,
+    };
 }
 
-const MAX_ATTEMPTS_PER_QUESTION = 3;
-
-/**
- * POST /api/evaluate
- * Evaluate a quiz answer and provide feedback
- */
-export async function POST(request: NextRequest): Promise<NextResponse<EvaluateResponse>> {
+export async function POST(request: NextRequest) {
     try {
-        const authHeader = request.headers.get("authorization");
-        if (!authHeader?.startsWith("Bearer ")) {
-            return NextResponse.json(
-                { success: false, error: "Unauthorized" },
-                { status: 401 }
-            );
+        const user = await requireVerifiedUser(request, ["student"]);
+        const body = await request.json();
+        const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+        const eventId = typeof body.eventId === "string" ? body.eventId : "";
+        const action = body.action === "hint" || body.action === "remedialComplete" ? body.action : "answer";
+        if (!sessionId || !eventId) return NextResponse.json({ success: false, error: "sessionId and eventId are required" }, { status: 400 });
+
+        const sessionRef = adminDb.collection("students").doc(user.uid).collection("assessmentSessions").doc(sessionId);
+        const initialSnapshot = await sessionRef.get();
+        if (!initialSnapshot.exists) return NextResponse.json({ success: false, error: "Session not found" }, { status: 404 });
+        const initial = initialSnapshot.data() as StoredQuizSession;
+        if (initial.kind !== "mastery" && initial.kind !== "weekly") {
+            return NextResponse.json({ success: false, error: "This endpoint only evaluates mastery and weekly sessions" }, { status: 400 });
+        }
+        if (initial.eventIds?.includes(eventId)) return NextResponse.json(currentResponse(initial, true));
+
+        const currentQuestion = initial.questions[initial.currentQuestionIndex];
+        if (action !== "remedialComplete" && (!currentQuestion || body.questionId !== currentQuestion.id)) {
+            return NextResponse.json({ success: false, error: "Question is no longer current" }, { status: 409 });
+        }
+        if (action === "answer" && !["A", "B", "C", "D"].includes(body.optionId)) {
+            return NextResponse.json({ success: false, error: "Select one answer option" }, { status: 400 });
         }
 
-        const token = authHeader.split("Bearer ")[1];
-        const decodedToken = await adminAuth.verifyIdToken(token);
-        const uid = decodedToken.uid;
+        const remedialTag = currentQuestion?.prerequisiteTag ?? currentQuestion?.microTag ?? initial.remedialTag;
+        const remedialConcept = remedialTag ? await getPublishedConcept(remedialTag) : undefined;
+        const config = await getAssessmentConfig();
+        let outcome: EvaluationOutcome = currentResponse(initial);
 
-        const body: EvaluateRequest = await request.json();
-        const { sessionId, questionId, answer, timeTakenSeconds, requestHint } = body;
-
-        if (!sessionId || !questionId) {
-            return NextResponse.json(
-                { success: false, error: "Missing sessionId or questionId" },
-                { status: 400 }
-            );
-        }
-
-        // Get quiz session
-        const sessionRef = adminDb
-            .collection("students")
-            .doc(uid)
-            .collection("quizSessions")
-            .doc(sessionId);
-
-        const sessionDoc = await sessionRef.get();
-
-        if (!sessionDoc.exists) {
-            return NextResponse.json(
-                { success: false, error: "Session not found" },
-                { status: 404 }
-            );
-        }
-
-        const session = sessionDoc.data() as QuizSession;
-
-        // Find the question
-        const question = session.questions.find((q) => q.id === questionId);
-        if (!question) {
-            return NextResponse.json(
-                { success: false, error: "Question not found" },
-                { status: 404 }
-            );
-        }
-
-        // Handle hint request
-        if (requestHint) {
-            await sessionRef.update({
-                totalHintsUsed: FieldValue.increment(1),
-            });
-
-            return NextResponse.json({
-                success: true,
-                hint: question.hint,
-            });
-        }
-
-        // Count previous attempts for this question
-        const previousAttempts = (session.attempts || []).filter(
-            (a: QuizAttempt) => a.questionId === questionId
-        );
-        const attemptNumber = previousAttempts.length + 1;
-
-        // Check if answer is correct (case-insensitive, trimmed)
-        const normalizedAnswer = answer.trim().toLowerCase();
-        const normalizedCorrect = question.correctAnswer.trim().toLowerCase();
-        const isCorrect = normalizedAnswer === normalizedCorrect;
-        const isLastAttempt = attemptNumber >= MAX_ATTEMPTS_PER_QUESTION;
-
-        // Generate encouraging feedback with reasoning
-        const feedback = await generateFeedback(
-            question.question,
-            answer,
-            question.correctAnswer,
-            isCorrect,
-            attemptNumber,
-            isLastAttempt
-        );
-
-        // Create attempt record
-        const attempt: QuizAttempt = {
-            id: `attempt_${Date.now()}`,
-            studentUid: uid,
-            topicId: session.topicId,
-            questionId,
-            answer,
-            isCorrect,
-            hintsUsed: session.totalHintsUsed,
-            timeTakenSeconds,
-            attemptNumber,
-            createdAt: new Date(),
-        };
-
-        // Determine if should move to next question
-        const shouldMoveNext = isCorrect || attemptNumber >= MAX_ATTEMPTS_PER_QUESTION;
-
-        // Update session
-        const updates: Record<string, unknown> = {
-            attempts: FieldValue.arrayUnion(attempt),
-            totalTimeSeconds: FieldValue.increment(timeTakenSeconds),
-        };
-
-        if (isCorrect) {
-            updates.score = FieldValue.increment(1);
-        }
-
-        if (shouldMoveNext) {
-            updates.currentQuestionIndex = session.currentQuestionIndex + 1;
-        }
-
-        // Evaluate adaptive logic if moving to next question or finished
-        let levelChanged = false;
-        let newLevel: number | undefined = undefined;
-        let direction: "up" | "down" | null = null;
-
-        if (shouldMoveNext) {
-            const stateRef = adminDb.collection("students").doc(uid).collection("studentProgress").doc("adaptiveState");
-            const stateDoc = await stateRef.get();
-            
-            if (stateDoc.exists) {
-                const state = stateDoc.data() as StudentAdaptiveState;
-                let c_streak = state.correct_streak || 0;
-                let w_streak = state.wrong_streak || 0;
-                let a_level = state.adaptive_level || 2;
-                
-                if (isCorrect) {
-                    c_streak += 1;
-                    w_streak = 0;
-                    if (c_streak >= 3 && a_level < 5) {
-                        a_level += 1;
-                        c_streak = 0;
-                        levelChanged = true;
-                        direction = "up";
-                    }
-                } else {
-                    w_streak += 1;
-                    c_streak = 0;
-                    if (w_streak >= 2 && a_level > 1) {
-                        a_level -= 1;
-                        w_streak = 0;
-                        levelChanged = true;
-                        direction = "down";
-                    }
-                }
-                
-                if (levelChanged) newLevel = a_level;
-                
-                await stateRef.update({
-                    correct_streak: c_streak,
-                    wrong_streak: w_streak,
-                    adaptive_level: a_level,
-                    last_level_change: direction || state.last_level_change,
-                    updatedAt: FieldValue.serverTimestamp()
-                });
-
-                if (levelChanged) {
-                    await adminDb.collection("students").doc(uid).update({ adaptive_level: a_level });
-                }
+        await adminDb.runTransaction(async (transaction) => {
+            const snapshot = await transaction.get(sessionRef);
+            const session = snapshot.data() as StoredQuizSession | undefined;
+            if (!session) throw new Error("SESSION_NOT_FOUND");
+            if (session.eventIds?.includes(eventId)) {
+                outcome = currentResponse(session, true);
+                return;
             }
-        }
+            if (session.status === "completed") {
+                outcome = currentResponse(session);
+                return;
+            }
 
-        // Check if quiz is complete
-        const isLastQuestion = session.currentQuestionIndex >= session.questions.length - 1;
-        const quizComplete = shouldMoveNext && isLastQuestion;
-
-        if (quizComplete) {
-            updates.completedAt = FieldValue.serverTimestamp();
-        }
-
-        await sessionRef.update(updates);
-
-        // If quiz complete, calculate results
-        if (quizComplete) {
-            // Fetch updated session to get accurate counts
-            const updatedDoc = await sessionRef.get();
-            const updatedSession = updatedDoc.data() as QuizSession;
-
-            const allAttempts = [...(updatedSession.attempts || []), attempt];
-            const correctCount = allAttempts.filter((a) => a.isCorrect).length;
-            const totalTime = updatedSession.totalTimeSeconds + timeTakenSeconds;
-            const avgTime = totalTime / session.questions.length;
-
-            const understandingLevel = calculateUnderstanding({
-                totalQuestions: session.questions.length,
-                correctAnswers: isCorrect ? session.score + 1 : session.score,
-                hintsUsed: updatedSession.totalHintsUsed,
-                totalTimeSeconds: totalTime,
-                averageTimePerQuestion: avgTime,
-            });
-
-            const summary = generateUnderstandingSummary(understandingLevel, session.topicName);
-
-            const result: QuizResult = {
-                sessionId,
-                studentUid: uid,
-                topicId: session.topicId,
-                topicName: session.topicName,
-                score: isCorrect ? session.score + 1 : session.score,
-                maxScore: session.questions.length,
-                percentage: ((isCorrect ? session.score + 1 : session.score) / session.questions.length) * 100,
-                totalHintsUsed: updatedSession.totalHintsUsed,
-                totalTimeSeconds: totalTime,
-                understandingLevel,
-                feedback: summary.message,
-                completedAt: new Date(),
-            };
-
-            // Store result
-            await adminDb
-                .collection("students")
-                .doc(uid)
-                .collection("quizResults")
-                .doc(sessionId)
-                .set({
-                    ...result,
-                    completedAt: FieldValue.serverTimestamp(),
-                });
-
-            // Update topic progress with understanding level
-            await adminDb
-                .collection("students")
-                .doc(uid)
-                .collection("topicProgress")
-                .doc(session.topicId)
-                .update({
-                    understandingLevel,
-                    quizCompleted: true,
-                    quizScore: result.score,
-                    quizMaxScore: result.maxScore,
+            const question = session.questions[session.currentQuestionIndex];
+            const eventIds = [...(session.eventIds ?? []), eventId];
+            if (action === "hint") {
+                if (session.status !== "active") throw new Error("REMEDIATION_REQUIRED");
+                const alreadyUsed = session.hintedQuestionIds?.includes(question.id) ?? false;
+                const delta = scoreDelta("hint", alreadyUsed);
+                const score = session.score + delta;
+                transaction.update(sessionRef, {
+                    eventIds,
+                    score,
+                    hintedQuestionIds: alreadyUsed ? session.hintedQuestionIds : [...session.hintedQuestionIds, question.id],
                     updatedAt: FieldValue.serverTimestamp(),
                 });
+                outcome = {
+                    success: true,
+                    action,
+                    hint: localized(question.hint, session.locale),
+                    score,
+                    scoreDelta: delta,
+                    status: session.status,
+                    completed: false,
+                    question: toClientQuestion(question, session.locale),
+                    questionNumber: session.currentQuestionIndex + 1,
+                    totalQuestions: session.questions.length,
+                };
+                return;
+            }
 
-            return NextResponse.json({
-                success: true,
-                isCorrect,
-                feedback,
-                attemptNumber,
-                shouldMoveNext,
-                quizComplete: true,
-                result,
-                levelChanged,
-                newLevel,
-                direction
+            if (action === "remedialComplete") {
+                if (session.status !== "remedial_required") throw new Error("NO_REMEDIATION_PENDING");
+                const nextIndex = session.currentQuestionIndex + 1;
+                const completed = nextIndex >= session.questions.length;
+                transaction.update(sessionRef, {
+                    eventIds,
+                    currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex,
+                    status: completed ? "completed" : "active",
+                    remedialTag: null,
+                    ...(completed ? { completedAt: FieldValue.serverTimestamp() } : {}),
+                    updatedAt: FieldValue.serverTimestamp(),
+                });
+                outcome = await completeOrContinue(transaction, sessionRef, { ...session, eventIds, currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex, status: completed ? "completed" : "active", remedialTag: null }, user.uid, config, 0, action);
+                return;
+            }
+
+            if (session.status !== "active") throw new Error("REMEDIATION_REQUIRED");
+            if (question.id !== body.questionId) throw new Error("STALE_QUESTION");
+            const correct = body.optionId === question.correctOptionId;
+            const delta = scoreDelta(correct ? "correct" : "incorrect");
+            const score = session.score + delta;
+            const answer: StoredAnswer = {
+                eventId,
+                questionId: question.id,
+                microTag: question.microTag,
+                difficulty: question.difficulty,
+                optionId: body.optionId,
+                isCorrect: correct,
+                scoreDelta: delta,
+                answeredAt: new Date(),
+            };
+            const answers = [...(session.answers ?? []), answer];
+
+            if (!correct) {
+                transaction.update(sessionRef, {
+                    eventIds,
+                    answers,
+                    score,
+                    status: "remedial_required",
+                    remedialTag,
+                    updatedAt: FieldValue.serverTimestamp(),
+                });
+                outcome = {
+                    success: true,
+                    action,
+                    isCorrect: false,
+                    explanation: localized(question.explanation, session.locale),
+                    score,
+                    scoreDelta: delta,
+                    status: "remedial_required",
+                    completed: false,
+                    totalQuestions: session.questions.length,
+                    questionNumber: session.currentQuestionIndex + 1,
+                    remedial: remedialConcept ? {
+                        microTag: remedialConcept.microTag,
+                        title: localized(remedialConcept.title, session.locale),
+                        concept: localized(remedialConcept.concept, session.locale),
+                        visualKind: remedialConcept.visualKind,
+                        imageUrl: remedialConcept.imageUrl,
+                    } : undefined,
+                };
+                return;
+            }
+
+            const nextIndex = session.currentQuestionIndex + 1;
+            const completed = nextIndex >= session.questions.length;
+            const updated: StoredQuizSession = {
+                ...session,
+                eventIds,
+                answers,
+                score,
+                currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex,
+                status: completed ? "completed" : "active",
+            };
+            transaction.update(sessionRef, {
+                eventIds,
+                answers,
+                score,
+                currentQuestionIndex: updated.currentQuestionIndex,
+                status: updated.status,
+                ...(completed ? { completedAt: FieldValue.serverTimestamp() } : {}),
+                updatedAt: FieldValue.serverTimestamp(),
             });
-        }
-
-        return NextResponse.json({
-            success: true,
-            isCorrect,
-            feedback,
-            hint: !isCorrect && attemptNumber < MAX_ATTEMPTS_PER_QUESTION ? undefined : undefined,
-            attemptNumber,
-            shouldMoveNext,
-            quizComplete: false,
-            levelChanged,
-            newLevel,
-            direction
+            outcome = await completeOrContinue(transaction, sessionRef, updated, user.uid, config, delta, action, true, localized(question.explanation, session.locale));
         });
+
+        return NextResponse.json(outcome);
     } catch (error) {
-        console.error("Evaluate API error:", error);
-        return NextResponse.json(
-            { success: false, error: "Failed to evaluate answer" },
-            { status: 500 }
-        );
+        console.error("Quiz evaluation error", error);
+        const auth = authErrorResponse(error);
+        const message = error instanceof Error ? error.message : "";
+        const conflict = ["REMEDIATION_REQUIRED", "NO_REMEDIATION_PENDING", "STALE_QUESTION"].includes(message);
+        return auth
+            ? NextResponse.json(auth.body, { status: auth.status })
+            : NextResponse.json({ success: false, error: conflict ? "Complete the current remediation step first" : "Failed to evaluate answer" }, { status: conflict ? 409 : 500 });
     }
+}
+
+async function completeOrContinue(
+    transaction: FirebaseFirestore.Transaction,
+    _sessionRef: FirebaseFirestore.DocumentReference,
+    session: StoredQuizSession,
+    uid: string,
+    config: Awaited<ReturnType<typeof getAssessmentConfig>>,
+    delta: number,
+    action: "answer" | "remedialComplete",
+    isCorrect?: boolean,
+    explanation?: string,
+): Promise<EvaluationOutcome> {
+    if (session.status !== "completed") {
+        return {
+            success: true,
+            action,
+            isCorrect,
+            explanation,
+            score: session.score,
+            scoreDelta: delta,
+            status: session.status,
+            completed: false,
+            question: toClientQuestion(session.questions[session.currentQuestionIndex], session.locale),
+            questionNumber: session.currentQuestionIndex + 1,
+            totalQuestions: session.questions.length,
+        };
+    }
+
+    const percentage = Math.round(masteryPercentage(session.score, session.maxScore));
+    const mastered = isMastered(session.score, session.maxScore, config.masteryThresholdPercent);
+    const studentRef = adminDb.collection("students").doc(uid);
+    const understandingLevel = percentage >= 85 ? "EXCELLENT" : percentage >= 70 ? "GOOD" : percentage >= 50 ? "AVERAGE" : "WEAK";
+    transaction.set(studentRef.collection("quizResults").doc(session.id), {
+        sessionId: session.id,
+        topicName: session.kind === "weekly" ? "Weekly Review" : session.microTag,
+        score: session.score,
+        maxScore: session.maxScore,
+        percentage,
+        totalHintsUsed: session.hintedQuestionIds.length,
+        totalTimeSeconds: 0,
+        understandingLevel,
+        feedback: mastered ? "Mastery threshold reached." : "Review the prerequisite and try a fresh session.",
+        completedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+    if (session.kind === "weekly") {
+        transaction.set(studentRef, {
+            lastWeeklyAssessmentAt: FieldValue.serverTimestamp(),
+            nextWeeklyAssessmentAt: addDays(new Date(), config.weeklyIntervalDays),
+            weeklyScorePercent: percentage,
+            updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+    } else {
+        transaction.set(studentRef.collection("conceptProgress").doc(session.microTag), {
+            microTag: session.microTag,
+            score: session.score,
+            maxScore: session.maxScore,
+            percentage,
+            mastered,
+            lastSessionId: session.id,
+            completedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+        transaction.set(studentRef.collection("topicProgress").doc(session.microTag), {
+            topicId: session.microTag,
+            topicName: session.microTag,
+            classLevel: session.classLevel,
+            understood: mastered,
+            understandingLevel,
+            completedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+    }
+
+    return {
+        success: true,
+        action,
+        isCorrect,
+        explanation,
+        score: session.score,
+        scoreDelta: delta,
+        status: "completed",
+        completed: true,
+        mastered,
+        percentage,
+        totalQuestions: session.questions.length,
+    };
 }

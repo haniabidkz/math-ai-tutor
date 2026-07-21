@@ -2,7 +2,7 @@
 
 export type ClassLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
-export type UserRole = "student" | "parent" | "teacher";
+export type UserRole = "student" | "parent" | "teacher" | "super_admin";
 
 export type UnderstandingLevel = "WEAK" | "AVERAGE" | "GOOD" | "EXCELLENT";
 
