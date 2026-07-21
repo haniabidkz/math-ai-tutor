@@ -1,22 +1,31 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { adminStorage } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
+import { adminDb } from "@/lib/firebase-admin";
 import { authErrorResponse, requireSuperAdmin } from "@/lib/server-auth";
+
+const MAX_FIRESTORE_IMAGE_BYTES = 640 * 1024;
 
 export async function POST(request: NextRequest) {
     try {
-        await requireSuperAdmin(request);
+        const admin = await requireSuperAdmin(request);
         const form = await request.formData();
         const image = form.get("image");
         if (!(image instanceof File)) return NextResponse.json({ success: false, error: "Image is required" }, { status: 400 });
-        if (!image.type.startsWith("image/") || image.size > 2 * 1024 * 1024) return NextResponse.json({ success: false, error: "Use an image smaller than 2 MB" }, { status: 400 });
-        const token = randomUUID();
-        const path = `concept-images/${Date.now()}-${image.name.replace(/[^a-zA-Z0-9._-]/g, "-")}`;
-        const bucket = adminStorage.bucket();
-        await bucket.file(path).save(Buffer.from(await image.arrayBuffer()), {
-            metadata: { contentType: image.type, metadata: { firebaseStorageDownloadTokens: token } },
+        if (!image.type.startsWith("image/") || image.size > MAX_FIRESTORE_IMAGE_BYTES) {
+            return NextResponse.json({ success: false, error: "Use an image smaller than 640 KB" }, { status: 400 });
+        }
+
+        const id = randomUUID();
+        await adminDb.collection("mediaAssets").doc(id).set({
+            filename: image.name.replace(/[^a-zA-Z0-9._-]/g, "-"),
+            contentType: image.type,
+            data: Buffer.from(await image.arrayBuffer()).toString("base64"),
+            size: image.size,
+            createdBy: admin.uid,
+            createdAt: FieldValue.serverTimestamp(),
         });
-        const url = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+        const url = new URL(`/api/assets/${id}`, request.url).toString();
         return NextResponse.json({ success: true, url });
     } catch (error) {
         const auth = authErrorResponse(error);
