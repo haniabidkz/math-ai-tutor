@@ -12,15 +12,17 @@ const keys = [
     "FIREBASE_ADMIN_PRIVATE_KEY",
 ];
 
-const command = "npx";
+const command = process.execPath;
+const vercelCli = `${process.cwd()}/node_modules/vercel/dist/vc.js`;
 for (const target of ["preview", "production"]) {
     for (const key of keys) {
         const value = process.env[key];
         if (!value) throw new Error(`Missing ${key}`);
-        const result = spawnSync(command, ["vercel", "env", "add", key, target, "--force", "--yes"], {
-            cwd: process.cwd(), input: value, encoding: "utf8", windowsHide: true, shell: process.platform === "win32",
+        const deployValue = key === "FIREBASE_ADMIN_PRIVATE_KEY" ? value.replace(/\n/g, "\\n") : value;
+        const result = spawnSync(command, [vercelCli, "env", "add", key, target, `--value=${deployValue}`, "--force", "--yes"], {
+            cwd: process.cwd(), encoding: "utf8", windowsHide: true,
         });
-        if (result.status !== 0) throw new Error(result.error?.message || result.stderr || result.stdout || `Failed to set ${key}`);
+        if (result.status !== 0) throw new Error(result.error?.message || `${result.stderr}\n${result.stdout}` || `Failed to set ${key}`);
         console.log(`Set ${key} for ${target}.`);
     }
 }
