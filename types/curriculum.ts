@@ -66,7 +66,7 @@ export interface AssessmentConfig {
 }
 
 export const DEFAULT_ASSESSMENT_CONFIG: AssessmentConfig = {
-    diagnosticQuestionCount: 24,
+    diagnosticQuestionCount: 15,
     masteryQuestionCount: 10,
     weeklyQuestionCount: 8,
     weeklyIntervalDays: 7,

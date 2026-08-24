@@ -11,7 +11,7 @@ import {
 import type { StoredQuizSession } from "@/lib/assessment-session";
 import { getClassConcepts, getConcept } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
-import { authErrorResponse, requireVerifiedUser } from "@/lib/server-auth";
+import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { Difficulty, Locale, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
 
 function parseLocale(value: unknown): Locale {
@@ -23,22 +23,35 @@ function parseClass(value: unknown): StudentClassLevel | null {
     return parsed === 6 || parsed === 7 || parsed === 8 ? parsed : null;
 }
 
-async function weeklyQuestions(classLevel: StudentClassLevel, weakTags: string[], count: number) {
+async function weeklyQuestions(classLevel: StudentClassLevel, weakTags: string[], count: number, excludedIds: string[]) {
     const tags = [...weakTags, ...getClassConcepts(classLevel).map((concept) => concept.microTag)];
     const uniqueTags = [...new Set(tags)];
     const selected: QuestionBankItem[] = [];
     for (let index = 0; selected.length < count && uniqueTags.length; index += 1) {
         const microTag = uniqueTags[index % uniqueTags.length];
-        const question = await selectQuestion({ microTag, usedIds: selected.map((item) => item.id) });
+        const question = await selectQuestion({ microTag, usedIds: [...excludedIds, ...selected.map((item) => item.id)] });
         if (!selected.some((item) => item.id === question.id)) selected.push(question);
         if (index > count * uniqueTags.length) break;
     }
     return selected;
 }
 
+async function mostRecentQuestionIds(
+    studentUid: string,
+    kind: "mastery" | "weekly",
+    microTag: string,
+): Promise<string[]> {
+    const snapshot = await adminDb.collection("students").doc(studentUid).collection("assessmentSessions").get();
+    const previous = snapshot.docs
+        .map((document) => document.data() as StoredQuizSession & { startedAt?: { toMillis?: () => number } })
+        .filter((session) => session.kind === kind && session.microTag === microTag)
+        .sort((left, right) => (right.startedAt?.toMillis?.() ?? 0) - (left.startedAt?.toMillis?.() ?? 0))[0];
+    return previous?.questions?.map((question) => question.id) ?? [];
+}
+
 export async function POST(request: NextRequest) {
     try {
-        const user = await requireVerifiedUser(request, ["student"]);
+        const user = await requireUser(request, ["student"]);
         const body = await request.json();
         const profileSnapshot = await adminDb.collection("students").doc(user.uid).get();
         const profile = profileSnapshot.data() ?? {};
@@ -56,9 +69,10 @@ export async function POST(request: NextRequest) {
             microTag = byTopic?.microTag ?? microTag;
         }
 
+        const previousQuestionIds = await mostRecentQuestionIds(user.uid, kind, kind === "weekly" ? "weekly-review" : microTag);
         const questions = kind === "weekly"
-            ? await weeklyQuestions(classLevel, profile.diagnosticProfile?.weakMicroTags ?? [], config.weeklyQuestionCount)
-            : await selectQuizQuestions(microTag, config.masteryQuestionCount, preferredDifficulty);
+            ? await weeklyQuestions(classLevel, profile.diagnosticProfile?.weakMicroTags ?? [], config.weeklyQuestionCount, previousQuestionIds)
+            : await selectQuizQuestions(microTag, config.masteryQuestionCount, preferredDifficulty, previousQuestionIds);
         if (!questions.length) return NextResponse.json({ success: false, error: "No published questions are available" }, { status: 409 });
         if (kind === "weekly") microTag = "weekly-review";
         else if (!(await getPublishedConcept(microTag))) return NextResponse.json({ success: false, error: "Concept not found" }, { status: 404 });
@@ -111,7 +125,7 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
     try {
-        const user = await requireVerifiedUser(request, ["student"]);
+        const user = await requireUser(request, ["student"]);
         const sessionId = request.nextUrl.searchParams.get("sessionId");
         if (!sessionId) return NextResponse.json({ success: false, error: "sessionId is required" }, { status: 400 });
         const snapshot = await adminDb.collection("students").doc(user.uid).collection("assessmentSessions").doc(sessionId).get();

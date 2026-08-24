@@ -1,4 +1,4 @@
-import type { Difficulty, LocalizedText, StudentClassLevel } from "./curriculum";
+import type { Difficulty, LocalizedText, StudentClassLevel, SupportedClassLevel } from "./curriculum";
 
 export type AssessmentKind = "diagnostic" | "mastery" | "weekly";
 export type AssessmentSessionStatus =
@@ -20,10 +20,14 @@ export interface AssessmentAnswerEvent {
 
 export interface DiagnosticProfile {
     assessedClassLevel: StudentClassLevel;
+    mathLevel: SupportedClassLevel;
     baselineDifficulty: Difficulty;
     strongMicroTags: string[];
     weakMicroTags: string[];
+    weakMicroTag: string | null;
+    weakTopic: LocalizedText | null;
     recommendedMicroTag: string;
+    recommendedTopic: LocalizedText;
     accuracyPercent: number;
 }
 

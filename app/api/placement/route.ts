@@ -4,9 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { addDays, nextDiagnosticDifficulty } from "@/lib/adaptive-engine";
 import { getAssessmentConfig, selectQuestion, toClientQuestion } from "@/lib/assessment-content";
 import { buildDiagnosticProfile, type StoredAnswer } from "@/lib/assessment-session";
-import { getDiagnosticPool } from "@/lib/curriculum";
+import { getClassConcepts, getDiagnosticConceptSequence, normalizeDiagnosticQuestionCount } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
-import { authErrorResponse, requireVerifiedUser } from "@/lib/server-auth";
+import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { Difficulty, Locale, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
 
 interface PlacementSession {
@@ -35,7 +35,7 @@ function parseLocale(value: unknown): Locale {
 
 export async function POST(request: NextRequest) {
     try {
-        const user = await requireVerifiedUser(request, ["student"]);
+        const user = await requireUser(request, ["student"]);
         const body = await request.json();
         const profileSnapshot = await adminDb.collection("students").doc(user.uid).get();
         const classLevel = parseClass(body.classLevel) ?? parseClass(profileSnapshot.data()?.class);
@@ -43,8 +43,9 @@ export async function POST(request: NextRequest) {
 
         const locale = parseLocale(body.locale);
         const config = await getAssessmentConfig();
-        const pool = getDiagnosticPool(classLevel);
-        const firstQuestion = await selectQuestion({ microTag: pool[0].microTag, difficulty: "medium" });
+        const questionCount = normalizeDiagnosticQuestionCount(config.diagnosticQuestionCount);
+        const sequence = getDiagnosticConceptSequence(classLevel, questionCount);
+        const firstQuestion = await selectQuestion({ microTag: sequence[0].microTag, difficulty: "medium" });
         const sessionId = `diagnostic_${randomUUID()}`;
         const session: PlacementSession = {
             id: sessionId,
@@ -54,7 +55,7 @@ export async function POST(request: NextRequest) {
             status: "active",
             currentDifficulty: "medium",
             currentQuestionIndex: 0,
-            questionCount: config.diagnosticQuestionCount,
+            questionCount,
             score: 0,
             questions: [firstQuestion],
             answers: [],
@@ -85,7 +86,7 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
     try {
-        const user = await requireVerifiedUser(request, ["student"]);
+        const user = await requireUser(request, ["student"]);
         const body = await request.json();
         const { sessionId, eventId, questionId, optionId } = body;
         if (![sessionId, eventId, questionId, optionId].every((value) => typeof value === "string" && value)) {
@@ -114,15 +115,15 @@ export async function PATCH(request: NextRequest) {
         } satisfies StoredAnswer];
         const nextDifficulty = nextDiagnosticDifficulty(initial.currentDifficulty, answers.map((answer) => answer.isCorrect));
         const completed = answers.length >= initial.questionCount;
-        const pool = getDiagnosticPool(initial.classLevel);
-        const nextConcept = pool[answers.length % pool.length];
+        const sequence = getDiagnosticConceptSequence(initial.classLevel, initial.questionCount);
+        const nextConcept = sequence[answers.length];
         const nextQuestion = completed ? null : await selectQuestion({
             microTag: nextConcept.microTag,
             difficulty: nextDifficulty,
             usedIds: initial.questions.map((question) => question.id),
         });
         const profile = completed
-            ? buildDiagnosticProfile(answers, initial.classLevel, pool[0].microTag, nextDifficulty)
+            ? buildDiagnosticProfile(answers, initial.classLevel, getClassConcepts(initial.classLevel)[0].microTag, nextDifficulty)
             : null;
         let duplicate = false;
 

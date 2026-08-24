@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { onAuthStateChanged, signOut, type User } from "firebase/auth";
+import { onAuthStateChanged, type User } from "firebase/auth";
 import ReactMarkdown from "react-markdown";
 import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, RotateCcw, XCircle } from "lucide-react";
 import { ConceptGraphic } from "@/components/concept-graphic";
@@ -52,7 +52,6 @@ function LearnContent() {
         setLocale(storedLocale); setDifficulty(selectedDifficulty);
         return onAuthStateChanged(auth, async (currentUser) => {
             if (!currentUser) return router.replace("/login?role=student");
-            if (!currentUser.emailVerified) { await signOut(auth); return router.replace("/login?role=student&verify=1"); }
             setUser(currentUser); await loadLesson(currentUser, storedLocale, 1);
         });
     }, [router]);

@@ -5,8 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
     createUserWithEmailAndPassword,
-    sendEmailVerification,
-    signOut,
     signInWithEmailAndPassword,
 } from "firebase/auth";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
@@ -21,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Loader2, AlertCircle, CheckCircle2, Mail, Lock, User, GraduationCap, ArrowRight, BookOpen, Users2, School } from "lucide-react";
+import { ArrowLeft, Loader2, AlertCircle, Mail, Lock, User, GraduationCap, ArrowRight, BookOpen, Users2, School } from "lucide-react";
 
 function LoginContent() {
     const router = useRouter();
@@ -32,7 +30,6 @@ function LoginContent() {
     const [isSignUp, setIsSignUp] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
-    const [verificationSent, setVerificationSent] = useState(false);
 
     // Form fields
     const [email, setEmail] = useState("");
@@ -70,18 +67,9 @@ function LoginContent() {
 
                 const collection = role === "student" ? "students" : `${role}s`;
                 await setDoc(doc(db, collection, uid), profileData);
-                await sendEmailVerification(userCredential.user);
-                await signOut(auth);
-                setVerificationSent(true);
-                setIsSignUp(false);
+                router.replace(role === "student" ? "/placement" : `/${role}-dashboard`);
             } else {
                 const credential = await signInWithEmailAndPassword(auth, email, password);
-                if (!credential.user.emailVerified) {
-                    await sendEmailVerification(credential.user);
-                    await signOut(auth);
-                    setVerificationSent(true);
-                    return;
-                }
                 const token = await credential.user.getIdTokenResult(true);
                 const redirectPath = token.claims.super_admin === true
                     ? "/super-admin"
@@ -228,18 +216,6 @@ function LoginContent() {
                         </CardHeader>
                         <CardContent className="px-8 pb-8">
                             <form onSubmit={handleSubmit} className="space-y-4 pt-4">
-                                <AnimatePresence mode="popLayout">
-                                    {verificationSent && (
-                                        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-                                            <Alert className="border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
-                                                <CheckCircle2 className="h-4 w-4" />
-                                                <AlertDescription>
-                                                    Verification email sent. Open the link in your inbox, then sign in again.
-                                                </AlertDescription>
-                                            </Alert>
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
                                 <AnimatePresence mode="popLayout">
                                     {error && (
                                         <motion.div

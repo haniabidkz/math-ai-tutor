@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRuntimeConcepts } from "@/lib/assessment-content";
 import { adminDb } from "@/lib/firebase-admin";
-import { authErrorResponse, requireVerifiedUser } from "@/lib/server-auth";
+import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { StudentClassLevel } from "@/types/curriculum";
 
 export async function GET(request: NextRequest) {
     try {
-        const user = await requireVerifiedUser(request, ["student"]);
+        const user = await requireUser(request, ["student"]);
         const studentRef = adminDb.collection("students").doc(user.uid);
         const [profileSnapshot, progressSnapshot, concepts] = await Promise.all([
             studentRef.get(), studentRef.collection("conceptProgress").get(), getRuntimeConcepts(),

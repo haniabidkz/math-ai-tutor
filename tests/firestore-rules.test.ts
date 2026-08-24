@@ -35,9 +35,11 @@ describeRules("Firestore security rules", () => {
 
     afterAll(async () => environment.cleanup());
 
-    it("blocks unverified users from published content", async () => {
+    it("allows an unverified signed-in student to read published content and their profile", async () => {
         const db = environment.authenticatedContext("student-a", { email: "student@example.com", email_verified: false }).firestore();
-        await assertFails(getDoc(doc(db, "questions/question-a")));
+        await assertSucceeds(getDoc(doc(db, "questions/question-a")));
+        await assertSucceeds(getDoc(doc(db, "students/student-a")));
+        await assertFails(getDoc(doc(db, "students/student-b")));
     });
 
     it("allows a verified student to read only their own profile", async () => {
@@ -46,8 +48,8 @@ describeRules("Firestore security rules", () => {
         await assertFails(getDoc(doc(db, "students/student-b")));
     });
 
-    it("allows a linked parent to read the child and progress", async () => {
-        const db = environment.authenticatedContext("parent-a", { email: "parent@example.com", email_verified: true }).firestore();
+    it("allows an unverified linked parent to read the child and progress", async () => {
+        const db = environment.authenticatedContext("parent-a", { email: "parent@example.com", email_verified: false }).firestore();
         await assertSucceeds(getDoc(doc(db, "students/student-a")));
         const children = await assertSucceeds(getDocs(query(collection(db, "students"), where("parentEmail", "==", "parent@example.com"))));
         expect(children.docs.map((child) => child.id)).toEqual(["student-a"]);
@@ -55,8 +57,8 @@ describeRules("Firestore security rules", () => {
         await assertFails(getDoc(doc(db, "students/student-b")));
     });
 
-    it("allows a verified teacher to read students without granting writes", async () => {
-        const db = environment.authenticatedContext("teacher-a", { email: "teacher@example.com", email_verified: true }).firestore();
+    it("allows an unverified teacher to read students without granting writes", async () => {
+        const db = environment.authenticatedContext("teacher-a", { email: "teacher@example.com", email_verified: false }).firestore();
         await assertSucceeds(getDocs(collection(db, "students")));
         await assertFails(setDoc(doc(db, "students/student-a"), { name: "Changed" }, { merge: true }));
     });

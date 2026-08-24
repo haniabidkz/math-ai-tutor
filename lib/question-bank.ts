@@ -4,8 +4,9 @@ import type { Difficulty, LocalizedOption, MicroConcept, QuestionBankItem } from
 const optionIds: LocalizedOption["id"][] = ["A", "B", "C", "D"];
 
 function difficultyFor(index: number): Difficulty {
-    if (index < 4) return "easy";
-    if (index < 7) return "medium";
+    const position = index % 10;
+    if (position < 4) return "easy";
+    if (position < 7) return "medium";
     return "hard";
 }
 
@@ -137,7 +138,7 @@ function makeQuestion(concept: MicroConcept, index: number): QuestionBankItem {
 }
 
 export const QUESTION_BANK: QuestionBankItem[] = MICRO_CONCEPTS.flatMap((concept) =>
-    Array.from({ length: 10 }, (_, index) => makeQuestion(concept, index))
+    Array.from({ length: 20 }, (_, index) => makeQuestion(concept, index))
 );
 
 export function getQuestionsForConcept(microTag: string, difficulty?: Difficulty) {

@@ -1,4 +1,6 @@
 import type { Difficulty, Locale, QuestionBankItem } from "@/types/curriculum";
+import { getClassConcepts, getConcept } from "@/lib/curriculum";
+import type { DiagnosticProfile } from "@/types/assessment";
 
 export interface StoredAnswer {
     eventId: string;
@@ -35,7 +37,7 @@ export function buildDiagnosticProfile(
     classLevel: 6 | 7 | 8,
     fallbackMicroTag: string,
     baselineDifficulty: Difficulty,
-) {
+): DiagnosticProfile {
     const grouped = new Map<string, boolean[]>();
     for (const answer of answers) {
         grouped.set(answer.microTag, [...(grouped.get(answer.microTag) ?? []), answer.isCorrect]);
@@ -47,12 +49,46 @@ export function buildDiagnosticProfile(
         (accuracy >= 0.7 ? strongMicroTags : weakMicroTags).push(microTag);
     }
     const correct = answers.filter((answer) => answer.isCorrect).length;
+    const currentClassAnswers = answers.filter((answer) => getConcept(answer.microTag)?.classLevel === classLevel);
+    const currentClassAccuracy = currentClassAnswers.length
+        ? currentClassAnswers.filter((answer) => answer.isCorrect).length / currentClassAnswers.length
+        : 0;
+    const mathLevel = currentClassAccuracy >= 0.6 ? classLevel : (classLevel - 1) as DiagnosticProfile["mathLevel"];
+    const weakAnswers = answers.filter((answer) => !answer.isCorrect);
+    const weakAnswer = weakAnswers.find((answer) => getConcept(answer.microTag)?.classLevel === classLevel)
+        ?? weakAnswers[0];
+    const weakConcept = weakAnswer ? getConcept(weakAnswer.microTag) : undefined;
+    const currentConcepts = getClassConcepts(classLevel);
+    let recommendedConcept = weakConcept?.classLevel === classLevel
+        ? currentConcepts.find((concept) => concept.topicId === weakConcept.topicId)
+        : undefined;
+
+    if (!recommendedConcept && weakConcept) {
+        recommendedConcept = currentConcepts.find((concept) => {
+            let prerequisite = concept.prerequisiteTag;
+            while (prerequisite) {
+                if (prerequisite === weakConcept.microTag) return true;
+                prerequisite = getConcept(prerequisite)?.prerequisiteTag ?? null;
+            }
+            return false;
+        });
+    }
+
+    recommendedConcept ??= getConcept(fallbackMicroTag)?.classLevel === classLevel
+        ? getConcept(fallbackMicroTag)
+        : currentConcepts[0];
+    if (!recommendedConcept) throw new Error(`No learning concept is available for Class ${classLevel}`);
+
     return {
         assessedClassLevel: classLevel,
+        mathLevel,
         baselineDifficulty,
         strongMicroTags,
         weakMicroTags,
-        recommendedMicroTag: weakMicroTags[0] ?? fallbackMicroTag,
+        weakMicroTag: weakConcept?.microTag ?? null,
+        weakTopic: weakConcept?.topicTitle ?? null,
+        recommendedMicroTag: recommendedConcept.microTag,
+        recommendedTopic: recommendedConcept.topicTitle,
         accuracyPercent: answers.length ? Math.round((correct / answers.length) * 100) : 0,
     };
 }

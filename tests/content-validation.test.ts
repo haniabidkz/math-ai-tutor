@@ -6,13 +6,13 @@ import { validateContentBank } from "@/lib/content-validation";
 describe("MVP content bank", () => {
     it("contains the expected MVP coverage", () => {
         expect(MICRO_CONCEPTS).toHaveLength(48);
-        expect(QUESTION_BANK).toHaveLength(480);
+        expect(QUESTION_BANK).toHaveLength(960);
     });
 
-    it("contains ten localized questions per concept", () => {
+    it("contains twenty localized questions per concept", () => {
         for (const concept of MICRO_CONCEPTS) {
             const questions = QUESTION_BANK.filter((question) => question.microTag === concept.microTag);
-            expect(questions).toHaveLength(10);
+            expect(questions).toHaveLength(20);
             expect(questions.every((question) => question.question.english && question.question.romanUrdu)).toBe(true);
         }
     });

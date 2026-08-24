@@ -4,9 +4,9 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function verified() { return signedIn() && request.auth.token.email_verified == true; }
     function superAdmin() { return verified() && request.auth.token.super_admin == true; }
-    function owner(uid) { return verified() && request.auth.uid == uid; }
-    function teacher() { return verified() && exists(/databases/$(database)/documents/teachers/$(request.auth.uid)); }
-    function parent() { return verified() && exists(/databases/$(database)/documents/parents/$(request.auth.uid)); }
+    function owner(uid) { return signedIn() && request.auth.uid == uid; }
+    function teacher() { return signedIn() && exists(/databases/$(database)/documents/teachers/$(request.auth.uid)); }
+    function parent() { return signedIn() && exists(/databases/$(database)/documents/parents/$(request.auth.uid)); }
     function parentOf(uid) {
       return parent()
         && get(/databases/$(database)/documents/students/$(uid)).data.parentEmail == request.auth.token.email;
@@ -34,9 +34,9 @@ service cloud.firestore {
       allow update, delete: if superAdmin();
     }
     match /admins/{uid} { allow read: if owner(uid) && superAdmin(); allow write: if false; }
-    match /microConcepts/{id} { allow read: if verified(); allow write: if superAdmin(); }
-    match /questions/{id} { allow read: if verified() && resource.data.status == 'published'; allow write: if superAdmin(); }
-    match /assessmentConfigs/{id} { allow read: if verified(); allow write: if superAdmin(); }
+    match /microConcepts/{id} { allow read: if signedIn(); allow write: if superAdmin(); }
+    match /questions/{id} { allow read: if signedIn() && resource.data.status == 'published'; allow write: if superAdmin(); }
+    match /assessmentConfigs/{id} { allow read: if signedIn(); allow write: if superAdmin(); }
     match /auditLogs/{id} { allow read: if superAdmin(); allow write: if false; }
   }
 }

@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getPublishedConcept, localized } from "@/lib/assessment-content";
 import { getClassConcepts, getConcept } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
-import { authErrorResponse, requireVerifiedUser } from "@/lib/server-auth";
+import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { Locale, StudentClassLevel } from "@/types/curriculum";
 
 function resolveMicroTag(value: string, classLevel: number) {
@@ -16,7 +16,7 @@ function resolveMicroTag(value: string, classLevel: number) {
 
 export async function POST(request: NextRequest) {
     try {
-        await requireVerifiedUser(request, ["student"]);
+        await requireUser(request, ["student"]);
         const body = await request.json();
         const microTag = resolveMicroTag(String(body.microTag ?? body.topicId ?? ""), Number(body.classLevel));
         const locale: Locale = body.locale === "roman-urdu" || body.language === "roman-urdu" ? "roman-urdu" : "english";
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
     try {
-        const user = await requireVerifiedUser(request, ["student"]);
+        const user = await requireUser(request, ["student"]);
         const body = await request.json();
         const microTag = String(body.microTag ?? body.topicId ?? "");
         if (!microTag) return NextResponse.json({ success: false, error: "microTag is required" }, { status: 400 });

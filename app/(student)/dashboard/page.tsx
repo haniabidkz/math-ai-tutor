@@ -37,7 +37,6 @@ export default function StudentDashboard() {
         setLocale(localStorage.getItem("mathTutorLocale") === "roman-urdu" ? "roman-urdu" : "english");
         return onAuthStateChanged(auth, async (currentUser) => {
             if (!currentUser) return router.replace("/login?role=student");
-            if (!currentUser.emailVerified) { await signOut(auth); return router.replace("/login?role=student&verify=1"); }
             setUser(currentUser);
             try {
                 const response = await fetch("/api/progress", { headers: { Authorization: `Bearer ${await currentUser.getIdToken()}` } });

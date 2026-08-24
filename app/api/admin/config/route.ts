@@ -21,7 +21,7 @@ export async function PATCH(request: NextRequest) {
         const admin = await requireSuperAdmin(request);
         const body = await request.json();
         const config = {
-            diagnosticQuestionCount: Math.max(20, Math.min(25, Number(body.diagnosticQuestionCount))),
+            diagnosticQuestionCount: Math.max(12, Math.min(15, Number(body.diagnosticQuestionCount))),
             masteryQuestionCount: Math.max(5, Math.min(10, Number(body.masteryQuestionCount))),
             weeklyQuestionCount: Math.max(5, Math.min(10, Number(body.weeklyQuestionCount))),
             weeklyIntervalDays: Math.max(1, Number(body.weeklyIntervalDays)),

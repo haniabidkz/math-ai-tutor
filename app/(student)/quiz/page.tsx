@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { onAuthStateChanged, signOut, type User } from "firebase/auth";
+import { onAuthStateChanged, type User } from "firebase/auth";
 import { ArrowLeft, ArrowRight, CheckCircle2, HelpCircle, Lightbulb, RotateCcw, Trophy, XCircle } from "lucide-react";
 import { ConceptGraphic } from "@/components/concept-graphic";
 import { SessionControls } from "@/components/session-controls";
@@ -59,10 +59,6 @@ function QuizContent() {
         setLocale(storedLocale);
         return onAuthStateChanged(auth, async (currentUser) => {
             if (!currentUser) return router.replace("/login?role=student");
-            if (!currentUser.emailVerified) {
-                await signOut(auth);
-                return router.replace("/login?role=student&verify=1");
-            }
             setUser(currentUser);
             await startQuiz(currentUser, storedLocale);
         });

@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
-import { assertSuperAdminClaims, assertVerifiedClaims, AuthorizationError } from "@/lib/auth-claims";
+import { assertSuperAdminClaims, AuthorizationError } from "@/lib/auth-claims";
 import type { UserRole } from "@/types/user";
 
 export interface AuthenticatedUser {
@@ -24,9 +24,8 @@ async function resolveRole(uid: string, claimedRole?: UserRole): Promise<UserRol
     throw new AuthorizationError(403, "User profile is missing");
 }
 
-export async function requireVerifiedUser(request: NextRequest, roles?: UserRole[]): Promise<AuthenticatedUser> {
+export async function requireUser(request: NextRequest, roles?: UserRole[]): Promise<AuthenticatedUser> {
     const decoded = await adminAuth.verifyIdToken(bearerToken(request), true);
-    assertVerifiedClaims(decoded);
     const superAdmin = decoded.super_admin === true;
     const role = superAdmin ? "super_admin" : await resolveRole(decoded.uid, decoded.role as UserRole | undefined);
     if (roles && !roles.includes(role)) throw new AuthorizationError(403, "Role is not allowed");

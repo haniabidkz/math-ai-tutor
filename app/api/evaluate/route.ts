@@ -4,7 +4,7 @@ import { addDays, isMastered, masteryPercentage, scoreDelta } from "@/lib/adapti
 import { getAssessmentConfig, getPublishedConcept, localized, toClientQuestion } from "@/lib/assessment-content";
 import type { StoredAnswer, StoredQuizSession } from "@/lib/assessment-session";
 import { adminDb } from "@/lib/firebase-admin";
-import { authErrorResponse, requireVerifiedUser } from "@/lib/server-auth";
+import { authErrorResponse, requireUser } from "@/lib/server-auth";
 
 type EvaluationOutcome = {
     success: true;
@@ -48,7 +48,7 @@ function currentResponse(session: StoredQuizSession, duplicate = false): Evaluat
 
 export async function POST(request: NextRequest) {
     try {
-        const user = await requireVerifiedUser(request, ["student"]);
+        const user = await requireUser(request, ["student"]);
         const body = await request.json();
         const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
         const eventId = typeof body.eventId === "string" ? body.eventId : "";
