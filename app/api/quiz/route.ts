@@ -9,8 +9,9 @@ import {
     toClientQuestion,
 } from "@/lib/assessment-content";
 import type { StoredQuizSession } from "@/lib/assessment-session";
-import { getClassConcepts, getConcept } from "@/lib/curriculum";
+import { getClassConcepts, getConcept, isLearningConceptForClass } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
+import { buildQuestionHistory, type HistoricalQuestionSession } from "@/lib/question-history";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { Difficulty, Locale, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
 
@@ -23,30 +24,42 @@ function parseClass(value: unknown): StudentClassLevel | null {
     return parsed === 6 || parsed === 7 || parsed === 8 ? parsed : null;
 }
 
-async function weeklyQuestions(classLevel: StudentClassLevel, weakTags: string[], count: number, excludedIds: string[]) {
-    const tags = [...weakTags, ...getClassConcepts(classLevel).map((concept) => concept.microTag)];
+async function weeklyQuestions(
+    classLevel: StudentClassLevel,
+    weakTags: string[],
+    count: number,
+    excludedIds: string[],
+    previousAttemptIds: string[],
+) {
+    const classTags = getClassConcepts(classLevel).map((concept) => concept.microTag);
+    const eligibleTags = new Set(classTags);
+    const tags = [...weakTags.filter((microTag) => eligibleTags.has(microTag)), ...classTags];
     const uniqueTags = [...new Set(tags)];
     const selected: QuestionBankItem[] = [];
     for (let index = 0; selected.length < count && uniqueTags.length; index += 1) {
         const microTag = uniqueTags[index % uniqueTags.length];
-        const question = await selectQuestion({ microTag, usedIds: [...excludedIds, ...selected.map((item) => item.id)] });
+        const selectedIds = selected.map((item) => item.id);
+        const question = await selectQuestion({
+            microTag,
+            usedIds: [...excludedIds, ...selectedIds],
+            previousAttemptIds: [...previousAttemptIds, ...selectedIds],
+        });
         if (!selected.some((item) => item.id === question.id)) selected.push(question);
         if (index > count * uniqueTags.length) break;
     }
     return selected;
 }
 
-async function mostRecentQuestionIds(
+async function questionHistory(
     studentUid: string,
     kind: "mastery" | "weekly",
     microTag: string,
-): Promise<string[]> {
+) {
     const snapshot = await adminDb.collection("students").doc(studentUid).collection("assessmentSessions").get();
-    const previous = snapshot.docs
-        .map((document) => document.data() as StoredQuizSession & { startedAt?: { toMillis?: () => number } })
-        .filter((session) => session.kind === kind && session.microTag === microTag)
-        .sort((left, right) => (right.startedAt?.toMillis?.() ?? 0) - (left.startedAt?.toMillis?.() ?? 0))[0];
-    return previous?.questions?.map((question) => question.id) ?? [];
+    return buildQuestionHistory(
+        snapshot.docs.map((document) => document.data() as HistoricalQuestionSession),
+        (session) => session.kind === kind && session.microTag === microTag,
+    );
 }
 
 export async function POST(request: NextRequest) {
@@ -55,8 +68,8 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const profileSnapshot = await adminDb.collection("students").doc(user.uid).get();
         const profile = profileSnapshot.data() ?? {};
-        const classLevel = parseClass(profile.class) ?? parseClass(body.classLevel);
-        if (!classLevel) return NextResponse.json({ success: false, error: "Class must be 6, 7, or 8" }, { status: 400 });
+        const classLevel = parseClass(profile.class);
+        if (!classLevel) return NextResponse.json({ success: false, error: "Student profile class must be 6, 7, or 8" }, { status: 409 });
 
         const kind: "mastery" | "weekly" = body.kind === "weekly" ? "weekly" : "mastery";
         const locale = parseLocale(body.locale);
@@ -68,14 +81,32 @@ export async function POST(request: NextRequest) {
             const byTopic = getClassConcepts(classLevel).find((concept) => concept.topicId === microTag);
             microTag = byTopic?.microTag ?? microTag;
         }
+        if (kind === "mastery") {
+            const concept = await getPublishedConcept(microTag);
+            if (!concept) return NextResponse.json({ success: false, error: "Concept not found" }, { status: 404 });
+            if (!isLearningConceptForClass(concept, classLevel)) {
+                return NextResponse.json({ success: false, error: `This concept is not available for Class ${classLevel}` }, { status: 400 });
+            }
+        }
 
-        const previousQuestionIds = await mostRecentQuestionIds(user.uid, kind, kind === "weekly" ? "weekly-review" : microTag);
+        const history = await questionHistory(user.uid, kind, kind === "weekly" ? "weekly-review" : microTag);
         const questions = kind === "weekly"
-            ? await weeklyQuestions(classLevel, profile.diagnosticProfile?.weakMicroTags ?? [], config.weeklyQuestionCount, previousQuestionIds)
-            : await selectQuizQuestions(microTag, config.masteryQuestionCount, preferredDifficulty, previousQuestionIds);
+            ? await weeklyQuestions(
+                classLevel,
+                profile.diagnosticProfile?.weakMicroTags ?? [],
+                config.weeklyQuestionCount,
+                history.seenIds,
+                history.previousAttemptIds,
+            )
+            : await selectQuizQuestions(
+                microTag,
+                config.masteryQuestionCount,
+                preferredDifficulty,
+                history.seenIds,
+                history.previousAttemptIds,
+            );
         if (!questions.length) return NextResponse.json({ success: false, error: "No published questions are available" }, { status: 409 });
         if (kind === "weekly") microTag = "weekly-review";
-        else if (!(await getPublishedConcept(microTag))) return NextResponse.json({ success: false, error: "Concept not found" }, { status: 404 });
 
         const sessionId = `${kind}_${randomUUID()}`;
         const session: StoredQuizSession = {

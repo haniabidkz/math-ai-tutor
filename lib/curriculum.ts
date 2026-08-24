@@ -157,6 +157,10 @@ export function getClassConcepts(classLevel: StudentClassLevel): MicroConcept[] 
     return MICRO_CONCEPTS.filter((item) => item.classLevel === classLevel && !item.foundationOnly);
 }
 
+export function isLearningConceptForClass(concept: MicroConcept, classLevel: StudentClassLevel): boolean {
+    return concept.classLevel === classLevel && !concept.foundationOnly;
+}
+
 export function getTopicsForClass(classLevel: StudentClassLevel) {
     const concepts = getClassConcepts(classLevel);
     return Array.from(new Set(concepts.map((item) => item.topicId))).map((topicId) => ({

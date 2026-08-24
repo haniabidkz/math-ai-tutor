@@ -6,6 +6,7 @@ import { getAssessmentConfig, selectQuestion, toClientQuestion } from "@/lib/ass
 import { buildDiagnosticProfile, type StoredAnswer } from "@/lib/assessment-session";
 import { getClassConcepts, getDiagnosticConceptSequence, normalizeDiagnosticQuestionCount } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
+import { buildQuestionHistory, type HistoricalQuestionSession } from "@/lib/question-history";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { Difficulty, Locale, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
 
@@ -22,6 +23,8 @@ interface PlacementSession {
     questions: QuestionBankItem[];
     answers: StoredAnswer[];
     eventIds: string[];
+    seenQuestionIds?: string[];
+    previousAttemptQuestionIds?: string[];
 }
 
 function parseClass(value: unknown): StudentClassLevel | null {
@@ -33,19 +36,33 @@ function parseLocale(value: unknown): Locale {
     return value === "roman-urdu" ? "roman-urdu" : "english";
 }
 
+async function diagnosticHistory(studentUid: string) {
+    const snapshot = await adminDb.collection("students").doc(studentUid).collection("assessmentSessions").get();
+    return buildQuestionHistory(
+        snapshot.docs.map((document) => document.data() as HistoricalQuestionSession),
+        (session) => session.kind === "diagnostic",
+    );
+}
+
 export async function POST(request: NextRequest) {
     try {
         const user = await requireUser(request, ["student"]);
         const body = await request.json();
         const profileSnapshot = await adminDb.collection("students").doc(user.uid).get();
-        const classLevel = parseClass(body.classLevel) ?? parseClass(profileSnapshot.data()?.class);
-        if (!classLevel) return NextResponse.json({ success: false, error: "Class must be 6, 7, or 8" }, { status: 400 });
+        const classLevel = parseClass(profileSnapshot.data()?.class);
+        if (!classLevel) return NextResponse.json({ success: false, error: "Student profile class must be 6, 7, or 8" }, { status: 409 });
 
         const locale = parseLocale(body.locale);
         const config = await getAssessmentConfig();
         const questionCount = normalizeDiagnosticQuestionCount(config.diagnosticQuestionCount);
         const sequence = getDiagnosticConceptSequence(classLevel, questionCount);
-        const firstQuestion = await selectQuestion({ microTag: sequence[0].microTag, difficulty: "medium" });
+        const history = await diagnosticHistory(user.uid);
+        const firstQuestion = await selectQuestion({
+            microTag: sequence[0].microTag,
+            difficulty: "medium",
+            usedIds: history.seenIds,
+            previousAttemptIds: history.previousAttemptIds,
+        });
         const sessionId = `diagnostic_${randomUUID()}`;
         const session: PlacementSession = {
             id: sessionId,
@@ -60,6 +77,8 @@ export async function POST(request: NextRequest) {
             questions: [firstQuestion],
             answers: [],
             eventIds: [],
+            seenQuestionIds: history.seenIds,
+            previousAttemptQuestionIds: history.previousAttemptIds,
         };
 
         await adminDb.collection("students").doc(user.uid).collection("assessmentSessions").doc(sessionId).set({
@@ -120,7 +139,11 @@ export async function PATCH(request: NextRequest) {
         const nextQuestion = completed ? null : await selectQuestion({
             microTag: nextConcept.microTag,
             difficulty: nextDifficulty,
-            usedIds: initial.questions.map((question) => question.id),
+            usedIds: [...(initial.seenQuestionIds ?? []), ...initial.questions.map((question) => question.id)],
+            previousAttemptIds: [
+                ...(initial.previousAttemptQuestionIds ?? []),
+                ...initial.questions.map((question) => question.id),
+            ],
         });
         const profile = completed
             ? buildDiagnosticProfile(answers, initial.classLevel, getClassConcepts(initial.classLevel)[0].microTag, nextDifficulty)

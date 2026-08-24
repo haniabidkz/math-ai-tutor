@@ -53,24 +53,31 @@ export async function getPublishedConcept(microTag: string): Promise<MicroConcep
 }
 
 export async function getPublishedQuestions(microTag: string): Promise<QuestionBankItem[]> {
+    const concept = await getPublishedConcept(microTag);
+    if (!concept) return [];
     const snapshot = await adminDb.collection("questions").where("microTag", "==", microTag).get();
     const questions = snapshot.docs
         .map((doc) => ({ ...doc.data(), id: doc.id }) as QuestionBankItem)
-        .filter((question) => question.status === "published");
+        .filter((question) => question.status === "published" && question.classLevel === concept.classLevel);
 
     // The bundled bank keeps local development usable before the first idempotent seed.
-    return sortById(questions.length ? questions : QUESTION_BANK.filter((question) => question.microTag === microTag));
+    return sortById(questions.length ? questions : QUESTION_BANK.filter(
+        (question) => question.microTag === microTag && question.classLevel === concept.classLevel,
+    ));
 }
 
 export async function selectQuestion(options: {
     microTag: string;
     difficulty?: Difficulty;
     usedIds?: string[];
+    previousAttemptIds?: string[];
 }): Promise<QuestionBankItem> {
     const questions = await getPublishedQuestions(options.microTag);
     const unused = questions.filter((question) => !options.usedIds?.includes(question.id));
-    const preferred = unused.filter((question) => !options.difficulty || question.difficulty === options.difficulty);
-    const selected = preferred[0] ?? unused[0] ?? questions[0];
+    const nextCycle = questions.filter((question) => !options.previousAttemptIds?.includes(question.id));
+    const candidates = unused.length ? unused : nextCycle.length ? nextCycle : questions;
+    const preferred = candidates.filter((question) => !options.difficulty || question.difficulty === options.difficulty);
+    const selected = preferred[0] ?? candidates[0];
     if (!selected) throw new Error(`No published questions for ${options.microTag}`);
     return selected;
 }
@@ -80,9 +87,10 @@ export async function selectQuizQuestions(
     count: number,
     preferredDifficulty: Difficulty = "easy",
     excludedIds: string[] = [],
+    previousAttemptIds: string[] = [],
 ): Promise<QuestionBankItem[]> {
     const questions = await getPublishedQuestions(microTag);
-    return selectQuizQuestionSet(questions, count, preferredDifficulty, excludedIds);
+    return selectQuizQuestionSet(questions, count, preferredDifficulty, excludedIds, previousAttemptIds);
 }
 
 export async function getRuntimeConcepts() {

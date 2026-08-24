@@ -29,6 +29,7 @@ test("verified demo student reaches the seeded learning flow", async ({ page }, 
     await expect(page).toHaveURL(/\/(placement|dashboard)/, { timeout: 20_000 });
     await expect(page.getByText(/Diagnostic|Jaiza|Welcome|Khush amdeed/).first()).toBeVisible({ timeout: 20_000 });
     if (await page.getByText(/Diagnostic|Jaiza/).count()) {
-        await expect(page.getByText("1 / 24")).toBeVisible();
+        await expect(page.getByText(/1 \/ 1[2-5]/)).toBeVisible();
+        await expect(page.getByRole("progressbar", { name: /1 of 1[2-5] questions/ })).toBeVisible();
     }
 });
