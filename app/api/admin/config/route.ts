@@ -29,7 +29,7 @@ export async function PATCH(request: NextRequest) {
             misconceptionThreshold: Math.max(2, Math.min(5, Number(body.misconceptionThreshold) || DEFAULT_ASSESSMENT_CONFIG.misconceptionThreshold)),
             misconceptionPracticeCount: Math.max(1, Math.min(3, Number(body.misconceptionPracticeCount) || DEFAULT_ASSESSMENT_CONFIG.misconceptionPracticeCount)),
             scoreCorrect: 1,
-            scoreHint: -0.5,
+            scoreHint: 0,
             scoreIncorrect: -1,
         };
         await adminDb.collection("assessmentConfigs").doc("default").set({ ...config, updatedBy: admin.uid, updatedAt: FieldValue.serverTimestamp() }, { merge: true });

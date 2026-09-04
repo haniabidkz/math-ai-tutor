@@ -174,36 +174,3 @@ export function getDiagnosticPool(classLevel: StudentClassLevel): MicroConcept[]
     const previousClass = classLevel - 1;
     return MICRO_CONCEPTS.filter((item) => item.classLevel === previousClass || item.classLevel === classLevel);
 }
-
-function sampleEvenly(items: MicroConcept[], count: number): MicroConcept[] {
-    if (count >= items.length) return [...items];
-    return Array.from({ length: count }, (_, index) => items[Math.floor(index * items.length / count)]);
-}
-
-export function normalizeDiagnosticQuestionCount(value: number): number {
-    return Math.max(12, Math.min(15, Math.round(value)));
-}
-
-export function getDiagnosticConceptSequence(classLevel: StudentClassLevel, requestedCount: number): MicroConcept[] {
-    const count = normalizeDiagnosticQuestionCount(requestedCount);
-    const pool = getDiagnosticPool(classLevel);
-    const previous = pool.filter((concept) => concept.classLevel === classLevel - 1);
-    const current = pool.filter((concept) => concept.classLevel === classLevel);
-    const previousCount = Math.min(previous.length, Math.round(count * 0.4));
-    const currentCount = Math.min(current.length, count - previousCount);
-    const previousSelection = sampleEvenly(previous, previousCount);
-    const currentSelection = sampleEvenly(current, currentCount);
-    const sequence: MicroConcept[] = [];
-    const targetLength = previousSelection.length + currentSelection.length;
-
-    // Two foundation questions in every five keeps the assessment balanced without clustering grades.
-    while (sequence.length < targetLength) {
-        const usePrevious = sequence.length % 5 === 1 || sequence.length % 5 === 4;
-        const candidate = usePrevious
-            ? previousSelection.shift() ?? currentSelection.shift()
-            : currentSelection.shift() ?? previousSelection.shift();
-        if (candidate) sequence.push(candidate);
-    }
-
-    return sequence;
-}

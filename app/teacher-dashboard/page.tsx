@@ -12,6 +12,7 @@ import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/stat-card";
 import { EmptyState } from "@/components/empty-state";
+import { HomeworkAssigner } from "@/components/homework-assigner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -257,6 +258,7 @@ export default function TeacherDashboard() {
                         <TabsTrigger value="overview">Overview</TabsTrigger>
                         <TabsTrigger value="students">Students</TabsTrigger>
                         <TabsTrigger value="insights">Insights</TabsTrigger>
+                        <TabsTrigger value="homework">Homework</TabsTrigger>
                     </TabsList>
 
                     <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -411,6 +413,15 @@ export default function TeacherDashboard() {
                             </Accordion>
                         </CardContent>
                     </Card>
+                </TabsContent>
+
+                <TabsContent value="homework" className="animate-in fade-in-50">
+                    {user ? (
+                        <HomeworkAssigner
+                            getToken={() => user.getIdToken()}
+                            students={students.map((student) => ({ uid: student.uid, name: student.name, class: student.class }))}
+                        />
+                    ) : null}
                 </TabsContent>
 
                 <TabsContent value="insights" className="space-y-6 animate-in fade-in-50">

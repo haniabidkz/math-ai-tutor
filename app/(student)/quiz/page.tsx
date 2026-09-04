@@ -5,8 +5,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import {
-    Award, AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, Flame,
-    HelpCircle, Lightbulb, RotateCcw, Sparkles, Target, Trophy, XCircle,
+    Award, AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, CloudOff, Flame,
+    HelpCircle, Lightbulb, RefreshCw, RotateCcw, Sparkles, Target, Trophy, XCircle,
 } from "lucide-react";
 import { ConceptGraphic } from "@/components/concept-graphic";
 import { SessionControls } from "@/components/session-controls";
@@ -16,6 +16,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { auth } from "@/lib/firebase";
+import {
+    clearSessionQueue,
+    enqueueAnswer,
+    pendingForSession,
+    syncQueue,
+} from "@/lib/offline-queue";
 import type { ClientQuestion } from "@/lib/assessment-content";
 import type { Locale } from "@/types/curriculum";
 
@@ -24,6 +30,7 @@ interface QuizState {
     kind: "mastery" | "weekly";
     microTag: string;
     question?: ClientQuestion;
+    questions?: ClientQuestion[];
     questionNumber: number;
     totalQuestions: number;
     score: number;
@@ -60,6 +67,10 @@ const words = {
         startPractice: "Start targeted practice", practiceLabel: "Targeted practice",
         recheck: "Re-check question", xpEarned: "XP earned", streakLabel: "Day streak",
         newBadges: "New badges", totalXp: "Total XP",
+        offlineTitle: "You are offline", offlineBody: "Keep going. Your answers are saved on this device and will sync automatically.",
+        pendingOne: "answer waiting to sync", pendingMany: "answers waiting to sync",
+        syncing: "Syncing your answers...", syncNow: "Sync now",
+        offlineDone: "All questions answered offline", offlineDoneBody: "Reconnect to submit them and see your result.",
     },
     "roman-urdu": {
         exit: "Quiz band karein", question: "Sawal", hint: "Ishara lein", submit: "Jawab check karein", correct: "Durust",
@@ -71,6 +82,10 @@ const words = {
         startPractice: "Makhsoos mashq shuru karein", practiceLabel: "Makhsoos mashq",
         recheck: "Dobara jaanch ka sawal", xpEarned: "XP mila", streakLabel: "Din ka streak",
         newBadges: "Naye badges", totalXp: "Kul XP",
+        offlineTitle: "Aap offline hain", offlineBody: "Jari rakhein. Aap ke jawabat is device par mehfooz hain aur khud sync ho jayenge.",
+        pendingOne: "jawab sync hone ka muntazir", pendingMany: "jawabat sync hone ke muntazir",
+        syncing: "Aap ke jawabat sync ho rahe hain...", syncNow: "Ab sync karein",
+        offlineDone: "Tamam sawal offline hal ho gaye", offlineDoneBody: "Natija dekhne ke liye dobara connect karein.",
     },
 };
 
@@ -90,6 +105,10 @@ function QuizContent() {
     const [result, setResult] = useState<ResultState | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const [pendingCount, setPendingCount] = useState(0);
+    const [offline, setOffline] = useState(false);
+    const [syncing, setSyncing] = useState(false);
+    const [offlineFinished, setOfflineFinished] = useState(false);
     const t = words[locale];
 
     useEffect(() => {
@@ -124,11 +143,16 @@ function QuizContent() {
                     classLevel: Number(params.get("class") ?? 6),
                     difficulty: params.get("difficulty") ?? localStorage.getItem("mathTutorDifficulty") ?? "medium",
                     locale: selectedLocale,
+                    homeworkId: params.get("homeworkId") ?? undefined,
                     retryOf,
                 }),
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error);
+            // A fresh session invalidates anything still queued from an abandoned one.
+            clearSessionQueue(data.session.id);
+            setPendingCount(0);
+            setOfflineFinished(false);
             setQuiz(data.session);
         } catch {
             setError(words[selectedLocale].failed);
@@ -190,12 +214,138 @@ function QuizContent() {
             setHint("");
             setRemedial(null);
             if (data.status !== "misconception_practice") setMisconception(null);
-        } catch {
+        } catch (caught) {
+            // fetch only throws when the request never reached the server.
+            if (action === "answer" && caught instanceof TypeError && quiz.question) {
+                answerOffline(quiz, selected);
+                return;
+            }
             setError(t.failed);
         } finally {
             setLoading(false);
         }
     }
+
+    /** Stores the answer on the device and moves on using the locally held questions. */
+    function answerOffline(currentQuiz: QuizState, optionId: string) {
+        enqueueAnswer({
+            eventId: crypto.randomUUID(),
+            sessionId: currentQuiz.id,
+            questionId: currentQuiz.question!.id,
+            optionId,
+            position: currentQuiz.questionNumber - 1,
+            queuedAt: Date.now(),
+        });
+        setPendingCount(pendingForSession(currentQuiz.id).length);
+        setOffline(true);
+        setError("");
+
+        const next = currentQuiz.questions?.[currentQuiz.questionNumber];
+        if (next) {
+            setQuiz({ ...currentQuiz, question: next, questionNumber: currentQuiz.questionNumber + 1 });
+            setSelected("");
+            setHint("");
+            setFeedback("");
+            setMistake(null);
+        } else {
+            setOfflineFinished(true);
+        }
+    }
+
+    async function refreshSession(currentUser: User, sessionId: string) {
+        const response = await fetch("/api/quiz?sessionId=" + encodeURIComponent(sessionId), {
+            headers: { Authorization: "Bearer " + (await currentUser.getIdToken()) },
+        });
+        const data = await response.json();
+        if (!response.ok) return;
+        const session = data.session;
+        if (session.status === "completed") {
+            setOfflineFinished(false);
+            setResult({
+                percentage: Math.round((session.score / Math.max(1, session.maxScore)) * 100),
+                mastered: session.score / Math.max(1, session.maxScore) >= 0.7,
+            });
+            return;
+        }
+        setOfflineFinished(false);
+        setQuiz((current) => current ? {
+            ...current,
+            question: session.question ?? current.question,
+            questionNumber: session.questionNumber ?? current.questionNumber,
+            score: session.score ?? current.score,
+        } : current);
+    }
+
+    /** Replays queued answers oldest-first; the server de-duplicates by eventId. */
+    async function flushQueue(currentUser: User, sessionId: string) {
+        if (!pendingForSession(sessionId).length || syncing) return;
+        setSyncing(true);
+        try {
+            const token = await currentUser.getIdToken();
+            const outcome = await syncQueue(sessionId, async (item) => {
+                const response = await fetch("/api/evaluate", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+                    body: JSON.stringify({
+                        sessionId: item.sessionId,
+                        eventId: item.eventId,
+                        action: "answer",
+                        questionId: item.questionId,
+                        optionId: item.optionId,
+                    }),
+                });
+                // 409 means remediation is pending, so the answer stays queued for afterwards.
+                return { ok: response.ok, retryable: response.status >= 500 || response.status === 409 };
+            });
+            setPendingCount(pendingForSession(sessionId).length);
+            if (outcome.synced > 0 || outcome.outcome !== "offline") {
+                setOffline(false);
+                await refreshSession(currentUser, sessionId);
+            }
+        } catch {
+            setOffline(true);
+        } finally {
+            setSyncing(false);
+        }
+    }
+
+    useEffect(() => {
+        if (!user || !quiz) return;
+        setPendingCount(pendingForSession(quiz.id).length);
+        const goOnline = () => { setOffline(false); void flushQueue(user, quiz.id); };
+        const goOffline = () => setOffline(true);
+        window.addEventListener("online", goOnline);
+        window.addEventListener("offline", goOffline);
+        if (navigator.onLine) void flushQueue(user, quiz.id);
+        else setOffline(true);
+        return () => {
+            window.removeEventListener("online", goOnline);
+            window.removeEventListener("offline", goOffline);
+        };
+    }, [user, quiz?.id]);
+
+    if (offlineFinished && quiz) return (
+        <main className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+            <Card className="w-full max-w-lg rounded-lg border-t-4 border-t-amber-500 text-center">
+                <CardHeader>
+                    <CloudOff className="mx-auto mb-3 h-12 w-12 text-amber-500" />
+                    <CardTitle>{t.offlineDone}</CardTitle>
+                    <p className="text-muted-foreground">{t.offlineDoneBody}</p>
+                </CardHeader>
+                <CardContent>
+                    <p className="text-sm font-medium">
+                        {pendingCount} {pendingCount === 1 ? t.pendingOne : t.pendingMany}
+                    </p>
+                </CardContent>
+                <CardFooter className="grid gap-3">
+                    <Button onClick={() => user && flushQueue(user, quiz.id)} disabled={syncing}>
+                        <RefreshCw className={"mr-2 h-4 w-4 " + (syncing ? "animate-spin" : "")} />{syncing ? t.syncing : t.syncNow}
+                    </Button>
+                    <Button variant="outline" asChild><Link href="/dashboard">{t.dashboard}</Link></Button>
+                </CardFooter>
+            </Card>
+        </main>
+    );
 
     if (result && quiz) return (
         <main className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
@@ -297,6 +447,23 @@ function QuizContent() {
             </header>
             <main className="mx-auto max-w-3xl px-4 py-8">
                 {error ? <Alert variant="destructive" className="mb-5"><XCircle className="h-4 w-4" /><AlertDescription>{error}</AlertDescription></Alert> : null}
+                {offline || pendingCount > 0 ? (
+                    <Alert className="mb-5 border-slate-300 bg-slate-100">
+                        <CloudOff className="h-4 w-4 text-slate-700" />
+                        <AlertTitle className="text-slate-900">{offline ? t.offlineTitle : t.syncing}</AlertTitle>
+                        <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
+                            <span>
+                                {offline ? t.offlineBody : ""}
+                                {pendingCount > 0 ? " " + pendingCount + " " + (pendingCount === 1 ? t.pendingOne : t.pendingMany) + "." : ""}
+                            </span>
+                            {pendingCount > 0 ? (
+                                <Button size="sm" variant="outline" onClick={() => user && quiz && flushQueue(user, quiz.id)} disabled={syncing}>
+                                    <RefreshCw className={"mr-2 h-3.5 w-3.5 " + (syncing ? "animate-spin" : "")} />{t.syncNow}
+                                </Button>
+                            ) : null}
+                        </AlertDescription>
+                    </Alert>
+                ) : null}
                 {practice ? (
                     <Alert className="mb-5 border-amber-300 bg-amber-50">
                         <Target className="h-4 w-4 text-amber-700" />

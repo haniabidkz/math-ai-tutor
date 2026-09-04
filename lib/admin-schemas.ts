@@ -5,20 +5,23 @@ export const localizedInputSchema = z.object({
     romanUrdu: z.string().trim().min(1),
 });
 
-export const mistakeTypeSchema = z.enum([
-    "sign-error",
-    "operation-confusion",
-    "inverse-operation",
-    "coefficient-misread",
-    "ratio-order",
-    "partial-step",
-    "off-by-one",
-    "computation",
+export const mistakeTypeSchema = z.enum(["concept", "calculation", "sign", "operation", "carelessness"]);
+
+export const misconceptionTagSchema = z.enum([
+    "sign-direction",
+    "wrong-operation-choice",
+    "incomplete-inverse-operation",
+    "coefficient-vs-constant",
+    "ratio-order-reversed",
+    "stopped-before-final-step",
+    "off-by-one-count",
+    "arithmetic-slip",
 ]);
 
 export const optionAnalysisSchema = z.object({
     mistakeType: mistakeTypeSchema,
-    explanation: localizedInputSchema,
+    misconceptionTag: misconceptionTagSchema,
+    whyWrong: localizedInputSchema,
 });
 
 export const questionInputSchema = z.object({

@@ -19,7 +19,10 @@ export async function POST(request: NextRequest) {
     try {
         await requireUser(request, ["student"]);
         const body = await request.json();
-        const microTag = resolveMicroTag(String(body.microTag ?? body.topicId ?? ""), Number(body.classLevel));
+        const requested = String(body.microTag ?? body.topicId ?? "").trim();
+        // An empty tag reached Firestore as an invalid document path and surfaced as a 500.
+        if (!requested) return NextResponse.json({ success: false, error: "Choose a concept to learn" }, { status: 400 });
+        const microTag = resolveMicroTag(requested, Number(body.classLevel));
         const locale: Locale = body.locale === "roman-urdu" || body.language === "roman-urdu" ? "roman-urdu" : "english";
         const concept = await getPublishedConcept(microTag);
         if (!concept) return NextResponse.json({ success: false, error: "Published concept not found" }, { status: 404 });

@@ -55,6 +55,16 @@ export function nextStreak(state: Partial<StreakState> | null | undefined, today
     return { current: 1, longest: Math.max(longest, current, 1), lastActivityDate: todayKey };
 }
 
+/** Points for a topic are earned once per day; the id makes that idempotent. */
+export function xpAwardId(microTag: string, dateKey: string): string {
+    return `${microTag}__${dateKey}`;
+}
+
+/** Retries and same-day repeats of a topic earn no points. */
+export function isXpBlocked(input: { isRetry: boolean; alreadyAwardedToday: boolean }): boolean {
+    return input.isRetry || input.alreadyAwardedToday;
+}
+
 export interface LearnerStats {
     lessonsCompleted: number;
     quizzesCompleted: number;

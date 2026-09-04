@@ -71,11 +71,25 @@ export async function POST(request: NextRequest) {
         const classLevel = parseClass(profile.class);
         if (!classLevel) return NextResponse.json({ success: false, error: "Student profile class must be 6, 7, or 8" }, { status: 409 });
 
-        const kind: "mastery" | "weekly" = body.kind === "weekly" ? "weekly" : "mastery";
+        // Homework fixes the concept and the question count for this session.
+        const homeworkId = typeof body.homeworkId === "string" && body.homeworkId ? body.homeworkId : null;
+        let homework: FirebaseFirestore.DocumentData | null = null;
+        if (homeworkId) {
+            const snapshot = await adminDb.collection("homework").doc(homeworkId).get();
+            if (!snapshot.exists) return NextResponse.json({ success: false, error: "Homework not found" }, { status: 404 });
+            homework = snapshot.data() ?? null;
+            const assignedToClass = homework?.allStudents === true && Number(homework?.classLevel) === classLevel;
+            const assignedByName = Array.isArray(homework?.studentUids) && homework.studentUids.includes(user.uid);
+            if (!assignedToClass && !assignedByName) {
+                return NextResponse.json({ success: false, error: "This homework is not assigned to you" }, { status: 403 });
+            }
+        }
+
+        const kind: "mastery" | "weekly" = homeworkId ? "mastery" : body.kind === "weekly" ? "weekly" : "mastery";
         const locale = parseLocale(body.locale);
         const preferredDifficulty: Difficulty = body.difficulty === "easy" || body.difficulty === "hard" ? body.difficulty : "medium";
         const config = await getAssessmentConfig();
-        let microTag = String(body.microTag ?? body.topicId ?? "");
+        let microTag = String(homework?.microTag ?? body.microTag ?? body.topicId ?? "");
         if (!microTag && kind === "mastery") return NextResponse.json({ success: false, error: "microTag is required" }, { status: 400 });
         if (microTag && !getConcept(microTag)) {
             const byTopic = getClassConcepts(classLevel).find((concept) => concept.topicId === microTag);
@@ -100,7 +114,7 @@ export async function POST(request: NextRequest) {
             )
             : await selectQuizQuestions(
                 microTag,
-                config.masteryQuestionCount,
+                Number(homework?.questionCount ?? config.masteryQuestionCount),
                 preferredDifficulty,
                 history.seenIds,
                 history.previousAttemptIds,
@@ -126,6 +140,7 @@ export async function POST(request: NextRequest) {
             answers: [],
             retryOf: typeof body.retryOf === "string" ? body.retryOf : null,
             remedialTag: null,
+            homeworkId,
         };
         await adminDb.collection("students").doc(user.uid).collection("assessmentSessions").doc(sessionId).set({
             ...session,
@@ -133,13 +148,26 @@ export async function POST(request: NextRequest) {
             updatedAt: FieldValue.serverTimestamp(),
         });
 
+        if (homeworkId) {
+            await adminDb.collection("students").doc(user.uid).collection("homeworkProgress").doc(homeworkId).set({
+                homeworkId,
+                microTag,
+                sessionId,
+                startedAt: FieldValue.serverTimestamp(),
+                updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+        }
+
         return NextResponse.json({
             success: true,
             session: {
                 id: sessionId,
                 kind,
+                homeworkId,
                 microTag,
                 question: toClientQuestion(questions[0], locale),
+                // The whole set is sent so the student can keep answering without a network.
+                questions: questions.map((item) => toClientQuestion(item, locale)),
                 questionNumber: 1,
                 totalQuestions: questions.length,
                 score: 0,

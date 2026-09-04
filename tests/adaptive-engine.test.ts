@@ -23,10 +23,11 @@ describe("adaptive engine", () => {
         expect(nextDiagnosticDifficulty("medium", [false, false, true, true, true])).toBe("hard");
     });
 
-    it("applies scoring and makes hints idempotent", () => {
+    it("scores answers and never penalises a hint", () => {
         expect(scoreDelta("correct")).toBe(1);
         expect(scoreDelta("incorrect")).toBe(-1);
-        expect(scoreDelta("hint", false)).toBe(-0.5);
+        // Hints award no points but must never reduce marks or XP.
+        expect(scoreDelta("hint", false)).toBe(0);
         expect(scoreDelta("hint", true)).toBe(0);
     });
 

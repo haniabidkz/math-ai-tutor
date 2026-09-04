@@ -38,20 +38,25 @@ export interface LocalizedOption {
     romanUrdu: string;
 }
 
-/** Error families used to classify wrong options and detect repeated misconceptions. */
-export type MistakeType =
-    | "sign-error"
-    | "operation-confusion"
-    | "inverse-operation"
-    | "coefficient-misread"
-    | "ratio-order"
-    | "partial-step"
-    | "off-by-one"
-    | "computation";
+/** Broad error family a wrong option belongs to. */
+export type MistakeType = "concept" | "calculation" | "sign" | "operation" | "carelessness";
+
+/** The specific underlying misunderstanding; repeats of one tag become a misconception. */
+export type MisconceptionTag =
+    | "sign-direction"
+    | "wrong-operation-choice"
+    | "incomplete-inverse-operation"
+    | "coefficient-vs-constant"
+    | "ratio-order-reversed"
+    | "stopped-before-final-step"
+    | "off-by-one-count"
+    | "arithmetic-slip";
 
 export interface OptionAnalysis {
     mistakeType: MistakeType;
-    explanation: LocalizedText;
+    misconceptionTag: MisconceptionTag;
+    /** Very simple explanation of why this option is wrong. */
+    whyWrong: LocalizedText;
 }
 
 export type QuestionOptionAnalysis = Partial<Record<LocalizedOption["id"], OptionAnalysis>>;
@@ -96,7 +101,7 @@ export const DEFAULT_ASSESSMENT_CONFIG: AssessmentConfig = {
     weeklyIntervalDays: 7,
     masteryThresholdPercent: 70,
     scoreCorrect: 1,
-    scoreHint: -0.5,
+    scoreHint: 0,
     scoreIncorrect: -1,
     misconceptionThreshold: 3,
     misconceptionPracticeCount: 2,

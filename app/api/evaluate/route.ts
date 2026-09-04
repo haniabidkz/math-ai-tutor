@@ -13,19 +13,21 @@ import { adminDb } from "@/lib/firebase-admin";
 import {
     activityDateKey,
     BADGE_BY_ID,
+    isXpBlocked,
     newlyEarnedBadges,
     nextStreak,
+    xpAwardId,
     type StreakState,
 } from "@/lib/gamification";
 import {
     getOptionAnalysis,
     isPossibleMisconception,
     mistakeProfileId,
-    MISTAKE_TYPE_GUIDANCE,
+    MISCONCEPTIONS,
     MISTAKE_TYPE_LABELS,
 } from "@/lib/mistake-analysis";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
-import type { Locale, MistakeType, QuestionBankItem } from "@/types/curriculum";
+import type { Locale, MisconceptionTag, MistakeType, OptionAnalysis, QuestionBankItem } from "@/types/curriculum";
 
 type EvaluationOutcome = {
     success: true;
@@ -51,9 +53,9 @@ type EvaluationOutcome = {
         imageUrl?: string;
     };
     /** Mistake analysis for the option the student just chose. */
-    mistake?: { type: MistakeType; label: string; explanation: string };
-    /** Present once the same mistake type repeats often enough on one concept. */
-    misconception?: { microTag: string; type: MistakeType; label: string; guidance: string; practiceTotal: number };
+    mistake?: { type: MistakeType; tag: MisconceptionTag; label: string; whyWrong: string };
+    /** Present once the same mistake pattern repeats often enough on one concept. */
+    misconception?: { microTag: string; type: MistakeType; tag: MisconceptionTag; label: string; guidance: string; practiceTotal: number };
     /** Progress through the targeted practice queue that follows a misconception. */
     practice?: { number: number; total: number; isRecheck: boolean };
     xpEarned?: number;
@@ -92,8 +94,13 @@ function practiceProgress(session: StoredQuizSession, index: number): Evaluation
     return { number: index + 1, total, isRecheck: index === total - 1 };
 }
 
-function localizedMistake(type: MistakeType, explanation: string, locale: Locale) {
-    return { type, label: localized(MISTAKE_TYPE_LABELS[type], locale), explanation };
+function localizedMistake(analysis: OptionAnalysis, locale: Locale) {
+    return {
+        type: analysis.mistakeType,
+        tag: analysis.misconceptionTag,
+        label: localized(MISCONCEPTIONS[analysis.misconceptionTag].label, locale),
+        whyWrong: localized(analysis.whyWrong, locale),
+    };
 }
 
 /** Two targeted practice questions plus a final re-check, drawn from the same concept. */
@@ -157,6 +164,9 @@ export async function POST(request: NextRequest) {
             )
             : [];
 
+        // Points for one topic are awarded once per day, and never for a retry.
+        const awardRef = studentRef.collection("xpAwards").doc(xpAwardId(initial.microTag, activityDateKey()));
+
         let outcome: EvaluationOutcome = currentResponse(initial);
 
         await adminDb.runTransaction(async (transaction) => {
@@ -164,6 +174,7 @@ export async function POST(request: NextRequest) {
             // reward state are both loaded up front even when only one of them is needed.
             const snapshot = await transaction.get(sessionRef);
             const student = (await transaction.get(studentRef)).data() ?? {};
+            const alreadyAwardedToday = (await transaction.get(awardRef)).exists;
             const session = snapshot.data() as StoredQuizSession | undefined;
             if (!session) throw new Error("SESSION_NOT_FOUND");
             if (session.eventIds?.includes(eventId)) {
@@ -252,6 +263,7 @@ export async function POST(request: NextRequest) {
                     { ...session, eventIds, currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex, status: completed ? "completed" : "active", remedialTag: null },
                     user.uid,
                     student,
+                    { awardRef, alreadyAwardedToday },
                     config,
                     0,
                     action,
@@ -281,6 +293,7 @@ export async function POST(request: NextRequest) {
                     hintUsed,
                     practice: true,
                     mistakeType: correct ? null : getOptionAnalysis(question, body.optionId)?.mistakeType ?? null,
+                    misconceptionTag: correct ? null : getOptionAnalysis(question, body.optionId)?.misconceptionTag ?? null,
                 } satisfies StoredAnswer];
 
                 const analysis = correct ? null : getOptionAnalysis(question, body.optionId);
@@ -306,7 +319,7 @@ export async function POST(request: NextRequest) {
                         questionNumber: session.currentQuestionIndex + 1,
                         totalQuestions: session.questions.length,
                         practice: practiceProgress(session, index + 1),
-                        mistake: analysis ? localizedMistake(analysis.mistakeType, localized(analysis.explanation, session.locale), session.locale) : undefined,
+                        mistake: analysis ? localizedMistake(analysis, session.locale) : undefined,
                     };
                     return;
                 }
@@ -314,7 +327,7 @@ export async function POST(request: NextRequest) {
                 // Queue finished: clear the misconception and resume the main quiz.
                 if (isRecheck && correct && session.misconception) {
                     transaction.set(
-                        studentRef.collection("mistakeProfile").doc(mistakeProfileId(session.misconception.microTag, session.misconception.mistakeType)),
+                        studentRef.collection("mistakeProfile").doc(mistakeProfileId(session.misconception.microTag, session.misconception.misconceptionTag)),
                         { possibleMisconception: false, resolvedAt: FieldValue.serverTimestamp(), count: 0 },
                         { merge: true },
                     );
@@ -337,6 +350,7 @@ export async function POST(request: NextRequest) {
                     { ...session, eventIds, answers, currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex, status: completed ? "completed" : "active", practiceQueue: [], misconception: null },
                     user.uid,
                     student,
+                    { awardRef, alreadyAwardedToday },
                     config,
                     0,
                     action,
@@ -363,12 +377,15 @@ export async function POST(request: NextRequest) {
                 hintUsed,
                 practice: false,
                 mistakeType: analysis?.mistakeType ?? null,
+                misconceptionTag: analysis?.misconceptionTag ?? null,
             };
             const answers = [...(session.answers ?? []), answer];
 
             if (!correct) {
-                const mistakeType = analysis?.mistakeType ?? pendingAnalysis?.mistakeType ?? "computation";
-                const profileRef = studentRef.collection("mistakeProfile").doc(mistakeProfileId(question.microTag, mistakeType));
+                const resolved = analysis ?? pendingAnalysis;
+                const misconceptionTag: MisconceptionTag = resolved?.misconceptionTag ?? "arithmetic-slip";
+                const mistakeType: MistakeType = resolved?.mistakeType ?? MISCONCEPTIONS[misconceptionTag].mistakeType;
+                const profileRef = studentRef.collection("mistakeProfile").doc(mistakeProfileId(question.microTag, misconceptionTag));
                 const priorCount = Number((await transaction.get(profileRef)).data()?.count ?? 0);
                 const nextCount = priorCount + 1;
                 const misconception = isPossibleMisconception(nextCount, config.misconceptionThreshold);
@@ -378,6 +395,7 @@ export async function POST(request: NextRequest) {
                     questionId: question.id,
                     microTag: question.microTag,
                     mistakeType,
+                    misconceptionTag,
                     optionId: body.optionId,
                     classLevel: session.classLevel,
                     createdAt: FieldValue.serverTimestamp(),
@@ -385,6 +403,7 @@ export async function POST(request: NextRequest) {
                 transaction.set(profileRef, {
                     microTag: question.microTag,
                     mistakeType,
+                    misconceptionTag,
                     count: nextCount,
                     possibleMisconception: misconception,
                     lastSeenAt: FieldValue.serverTimestamp(),
@@ -398,7 +417,7 @@ export async function POST(request: NextRequest) {
                     status: "remedial_required",
                     remedialTag,
                     ...(misconception
-                        ? { misconception: { microTag: question.microTag, mistakeType }, practiceQueue: queue, practiceIndex: 0 }
+                        ? { misconception: { microTag: question.microTag, mistakeType, misconceptionTag }, practiceQueue: queue, practiceIndex: 0 }
                         : { misconception: null, practiceQueue: [], practiceIndex: 0 }),
                     updatedAt: FieldValue.serverTimestamp(),
                 });
@@ -421,14 +440,13 @@ export async function POST(request: NextRequest) {
                         visualKind: remedialConcept.visualKind,
                         imageUrl: remedialConcept.imageUrl,
                     } : undefined,
-                    mistake: analysis
-                        ? localizedMistake(mistakeType, localized(analysis.explanation, session.locale), session.locale)
-                        : undefined,
+                    mistake: resolved ? localizedMistake(resolved, session.locale) : undefined,
                     misconception: misconception && queue.length ? {
                         microTag: question.microTag,
                         type: mistakeType,
-                        label: localized(MISTAKE_TYPE_LABELS[mistakeType], session.locale),
-                        guidance: localized(MISTAKE_TYPE_GUIDANCE[mistakeType], session.locale),
+                        tag: misconceptionTag,
+                        label: localized(MISCONCEPTIONS[misconceptionTag].label, session.locale),
+                        guidance: localized(MISCONCEPTIONS[misconceptionTag].guidance, session.locale),
                         practiceTotal: queue.length,
                     } : undefined,
                 };
@@ -459,6 +477,7 @@ export async function POST(request: NextRequest) {
                 updated,
                 user.uid,
                 student,
+                { awardRef, alreadyAwardedToday },
                 config,
                 delta,
                 action,
@@ -484,6 +503,7 @@ function completeOrContinue(
     session: StoredQuizSession,
     uid: string,
     student: FirebaseFirestore.DocumentData,
+    award: { awardRef: FirebaseFirestore.DocumentReference; alreadyAwardedToday: boolean },
     config: Awaited<ReturnType<typeof getAssessmentConfig>>,
     delta: number,
     action: "answer" | "remedialComplete",
@@ -513,7 +533,11 @@ function completeOrContinue(
     const mastered = isMastered(session.score, session.maxScore, config.masteryThresholdPercent);
     const understandingLevel = percentage >= 85 ? "EXCELLENT" : percentage >= 70 ? "GOOD" : percentage >= 50 ? "AVERAGE" : "WEAK";
 
-    const xpEarned = sessionXp(session);
+    const xpBlocked = isXpBlocked({
+        isRetry: Boolean(session.retryOf),
+        alreadyAwardedToday: award.alreadyAwardedToday,
+    });
+    const xpEarned = xpBlocked ? 0 : sessionXp(session);
     const totalXp = Number(student.xp ?? 0) + xpEarned;
     const streak = nextStreak(student.streak as Partial<StreakState> | undefined, activityDateKey());
     const quizzesCompleted = Number(student.quizzesCompleted ?? 0) + 1;
@@ -546,6 +570,15 @@ function completeOrContinue(
         }, { merge: true });
     }
 
+    if (xpEarned > 0) {
+        transaction.set(award.awardRef, {
+            microTag: session.microTag,
+            sessionId: session.id,
+            xp: xpEarned,
+            awardedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+    }
+
     transaction.set(studentRef, {
         xp: totalXp,
         streak,
@@ -561,6 +594,17 @@ function completeOrContinue(
             : {}),
         updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
+
+    if (session.homeworkId) {
+        transaction.set(studentRef.collection("homeworkProgress").doc(session.homeworkId), {
+            homeworkId: session.homeworkId,
+            microTag: session.microTag,
+            sessionId: session.id,
+            percentage,
+            completedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+    }
 
     if (session.kind !== "weekly") {
         transaction.set(studentRef.collection("conceptProgress").doc(session.microTag), {

@@ -12,7 +12,7 @@ export default defineConfig({
         coverage: {
             provider: "v8",
             reporter: ["text", "json-summary"],
-            include: ["lib/adaptive-engine.ts", "lib/content-validation.ts", "lib/server-auth.ts", "lib/gamification.ts", "lib/mistake-analysis.ts"],
+            include: ["lib/adaptive-engine.ts", "lib/content-validation.ts", "lib/server-auth.ts", "lib/gamification.ts", "lib/mistake-analysis.ts", "lib/diagnostic-blueprint.ts", "lib/adaptive-recommendation.ts", "lib/offline-queue.ts", "lib/homework.ts"],
         },
     },
 });

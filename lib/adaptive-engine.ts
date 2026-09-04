@@ -12,10 +12,11 @@ export function nextDiagnosticDifficulty(current: Difficulty, recentAnswers: boo
     return current;
 }
 
-export function scoreDelta(event: "correct" | "incorrect" | "hint", hintAlreadyUsed = false): number {
+export function scoreDelta(event: "correct" | "incorrect" | "hint", _hintAlreadyUsed = false): number {
     if (event === "correct") return 1;
     if (event === "incorrect") return -1;
-    return hintAlreadyUsed ? 0 : -0.5;
+    // Hints are free: they award no XP but must never reduce score or marks.
+    return 0;
 }
 
 export function masteryPercentage(score: number, maxScore: number): number {

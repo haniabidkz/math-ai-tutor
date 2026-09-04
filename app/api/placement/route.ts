@@ -4,7 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { addDays, nextDiagnosticDifficulty } from "@/lib/adaptive-engine";
 import { getAssessmentConfig, selectQuestion, toClientQuestion } from "@/lib/assessment-content";
 import { buildDiagnosticProfile, type StoredAnswer } from "@/lib/assessment-session";
-import { getClassConcepts, getDiagnosticConceptSequence, normalizeDiagnosticQuestionCount } from "@/lib/curriculum";
+import { getClassConcepts } from "@/lib/curriculum";
+import { DIAGNOSTIC_QUESTION_COUNT, getDiagnosticConceptOrder } from "@/lib/diagnostic-blueprint";
+import { getOptionAnalysis, isPossibleMisconception, mistakeProfileId, MISCONCEPTIONS } from "@/lib/mistake-analysis";
 import { adminDb } from "@/lib/firebase-admin";
 import { buildQuestionHistory, type HistoricalQuestionSession } from "@/lib/question-history";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
@@ -53,9 +55,9 @@ export async function POST(request: NextRequest) {
         if (!classLevel) return NextResponse.json({ success: false, error: "Student profile class must be 6, 7, or 8" }, { status: 409 });
 
         const locale = parseLocale(body.locale);
-        const config = await getAssessmentConfig();
-        const questionCount = normalizeDiagnosticQuestionCount(config.diagnosticQuestionCount);
-        const sequence = getDiagnosticConceptSequence(classLevel, questionCount);
+        // The diagnostic is a fixed blueprint: five topics of three questions each.
+        const questionCount = DIAGNOSTIC_QUESTION_COUNT;
+        const sequence = getDiagnosticConceptOrder(classLevel);
         const history = await diagnosticHistory(user.uid);
         const firstQuestion = await selectQuestion({
             microTag: sequence[0].microTag,
@@ -122,6 +124,8 @@ export async function PATCH(request: NextRequest) {
         const current = initial.questions[initial.currentQuestionIndex];
         if (!current || current.id !== questionId) return NextResponse.json({ success: false, error: "Question is no longer current" }, { status: 409 });
         const isCorrect = optionId === current.correctOptionId;
+        // Analysis is recorded for the backend only; the diagnostic never shows it.
+        const analysis = isCorrect ? null : getOptionAnalysis(current, optionId);
         const answers = [...(initial.answers ?? []), {
             eventId,
             questionId,
@@ -131,10 +135,12 @@ export async function PATCH(request: NextRequest) {
             difficulty: current.difficulty,
             microTag: current.microTag,
             answeredAt: new Date(),
+            mistakeType: analysis?.mistakeType ?? null,
+            misconceptionTag: analysis?.misconceptionTag ?? null,
         } satisfies StoredAnswer];
+        const sequence = getDiagnosticConceptOrder(initial.classLevel);
         const nextDifficulty = nextDiagnosticDifficulty(initial.currentDifficulty, answers.map((answer) => answer.isCorrect));
-        const completed = answers.length >= initial.questionCount;
-        const sequence = getDiagnosticConceptSequence(initial.classLevel, initial.questionCount);
+        const completed = answers.length >= sequence.length;
         const nextConcept = sequence[answers.length];
         const nextQuestion = completed ? null : await selectQuestion({
             microTag: nextConcept.microTag,
@@ -150,8 +156,14 @@ export async function PATCH(request: NextRequest) {
             : null;
         let duplicate = false;
 
+        const studentRef = adminDb.collection("students").doc(user.uid);
+        const profileRef = analysis
+            ? studentRef.collection("mistakeProfile").doc(mistakeProfileId(current.microTag, analysis.misconceptionTag))
+            : null;
+
         await adminDb.runTransaction(async (transaction) => {
             const latestSnapshot = await transaction.get(sessionRef);
+            const priorMistakeCount = profileRef ? Number((await transaction.get(profileRef)).data()?.count ?? 0) : 0;
             const latest = latestSnapshot.data() as PlacementSession | undefined;
             if (!latest) throw new Error("Diagnostic session not found");
             if (latest.eventIds?.includes(eventId)) {
@@ -174,8 +186,31 @@ export async function PATCH(request: NextRequest) {
                 updatedAt: FieldValue.serverTimestamp(),
             });
 
+            if (analysis && profileRef) {
+                const nextCount = priorMistakeCount + 1;
+                transaction.set(studentRef.collection("mistakes").doc(`${sessionId}_${eventId}`), {
+                    sessionId,
+                    questionId,
+                    microTag: current.microTag,
+                    mistakeType: analysis.mistakeType,
+                    misconceptionTag: analysis.misconceptionTag,
+                    optionId,
+                    source: "diagnostic",
+                    classLevel: initial.classLevel,
+                    createdAt: FieldValue.serverTimestamp(),
+                }, { merge: true });
+                transaction.set(profileRef, {
+                    microTag: current.microTag,
+                    mistakeType: analysis.mistakeType,
+                    misconceptionTag: analysis.misconceptionTag,
+                    count: nextCount,
+                    possibleMisconception: isPossibleMisconception(nextCount),
+                    lastSeenAt: FieldValue.serverTimestamp(),
+                }, { merge: true });
+            }
+
             if (profile) {
-                transaction.set(adminDb.collection("students").doc(user.uid), {
+                transaction.set(studentRef, {
                     diagnosticCompleted: true,
                     placementCompleted: true,
                     diagnosticProfile: profile,

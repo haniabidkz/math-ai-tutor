@@ -1,3 +1,4 @@
+import type { OverallBand, TopicBand } from "@/lib/diagnostic-blueprint";
 import type { Difficulty, LocalizedText, StudentClassLevel, SupportedClassLevel } from "./curriculum";
 
 export type AssessmentKind = "diagnostic" | "mastery" | "weekly";
@@ -5,6 +6,7 @@ export type AssessmentSessionStatus =
     | "created"
     | "active"
     | "remedial_required"
+    | "misconception_practice"
     | "completed";
 
 export interface AssessmentAnswerEvent {
@@ -18,10 +20,24 @@ export interface AssessmentAnswerEvent {
     createdAt: Date;
 }
 
+/** One of the five diagnostic areas, scored out of three. */
+export interface DiagnosticTopicResult {
+    topicKey: string;
+    title: LocalizedText;
+    microTags: string[];
+    correct: number;
+    total: number;
+    band: TopicBand;
+}
+
 export interface DiagnosticProfile {
     assessedClassLevel: StudentClassLevel;
     mathLevel: SupportedClassLevel;
     baselineDifficulty: Difficulty;
+    topicResults: DiagnosticTopicResult[];
+    overallCorrect: number;
+    overallTotal: number;
+    overallBand: OverallBand;
     strongMicroTags: string[];
     weakMicroTags: string[];
     weakMicroTag: string | null;

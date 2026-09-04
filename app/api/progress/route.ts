@@ -2,15 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRuntimeConcepts } from "@/lib/assessment-content";
 import { adminDb } from "@/lib/firebase-admin";
 import { BADGES } from "@/lib/gamification";
+import { homeworkStatus, isOverdue, sortHomework } from "@/lib/homework";
+import { learningStatus, LEARNING_STATUS_LABELS, recommendNextLesson } from "@/lib/adaptive-recommendation";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { StudentClassLevel } from "@/types/curriculum";
+import type { StudentHomework } from "@/types/homework";
 
 export async function GET(request: NextRequest) {
     try {
         const user = await requireUser(request, ["student"]);
         const studentRef = adminDb.collection("students").doc(user.uid);
-        const [profileSnapshot, progressSnapshot, concepts] = await Promise.all([
-            studentRef.get(), studentRef.collection("conceptProgress").get(), getRuntimeConcepts(),
+        const [profileSnapshot, progressSnapshot, concepts, mistakeSnapshot, homeworkProgressSnapshot] = await Promise.all([
+            studentRef.get(),
+            studentRef.collection("conceptProgress").get(),
+            getRuntimeConcepts(),
+            studentRef.collection("mistakeProfile").where("possibleMisconception", "==", true).get(),
+            studentRef.collection("homeworkProgress").get(),
         ]);
         if (!profileSnapshot.exists) return NextResponse.json({ success: false, error: "Student profile not found" }, { status: 404 });
         const profile = profileSnapshot.data() ?? {};
@@ -40,11 +47,49 @@ export async function GET(request: NextRequest) {
         }));
         const nextWeekly = profile.nextWeeklyAssessmentAt?.toDate?.() ?? (profile.nextWeeklyAssessmentAt ? new Date(profile.nextWeeklyAssessmentAt) : null);
 
-        // The diagnostic recommendation leads until it is mastered, then the path continues in order.
-        const recommendedTag = profile.diagnosticProfile?.recommendedMicroTag;
-        const nextLesson = conceptItems.find((concept) => concept.microTag === recommendedTag && !concept.mastered && !concept.locked)
-            ?? conceptItems.find((concept) => !concept.mastered && !concept.locked)
-            ?? null;
+        // Open misconceptions, weak diagnostic topics and the ordered path all feed the recommendation.
+        const openMisconceptions = mistakeSnapshot.docs.map((doc) => ({
+            microTag: String(doc.data().microTag ?? ""),
+            misconceptionTag: String(doc.data().misconceptionTag ?? ""),
+            count: Number(doc.data().count ?? 0),
+        }));
+        const recommendation = recommendNextLesson({
+            concepts: conceptItems,
+            diagnosticProfile: profile.diagnosticProfile ?? null,
+            misconceptions: openMisconceptions,
+        });
+        const nextLesson = recommendation.concept;
+
+        // Homework assigned to this student, either by class or by name.
+        const [classWideHomework, namedHomework] = await Promise.all([
+            adminDb.collection("homework").where("classLevel", "==", classLevel).where("allStudents", "==", true).get(),
+            adminDb.collection("homework").where("studentUids", "array-contains", user.uid).get(),
+        ]);
+        const homeworkProgressById = new Map(homeworkProgressSnapshot.docs.map((doc) => [doc.id, doc.data()]));
+        const homeworkDocs = new Map<string, FirebaseFirestore.DocumentData>();
+        for (const doc of [...classWideHomework.docs, ...namedHomework.docs]) homeworkDocs.set(doc.id, doc.data());
+        const homework = sortHomework([...homeworkDocs.entries()].map(([id, data]) => {
+            const record = homeworkProgressById.get(id);
+            const status = homeworkStatus(record);
+            return {
+                id,
+                microTag: data.microTag,
+                title: data.title,
+                topicTitle: data.topicTitle,
+                classLevel: data.classLevel,
+                questionCount: data.questionCount,
+                dueDate: data.dueDate,
+                allStudents: data.allStudents === true,
+                studentUids: Array.isArray(data.studentUids) ? data.studentUids : [],
+                assignedByUid: data.assignedByUid,
+                assignedByEmail: data.assignedByEmail,
+                note: data.note,
+                status,
+                percentage: typeof record?.percentage === "number" ? record.percentage : null,
+                completedAt: record?.completedAt?.toDate?.()?.toISOString() ?? null,
+                overdue: isOverdue(data.dueDate, status),
+            } satisfies StudentHomework;
+        }));
 
         const earnedBadgeIds = new Set<string>(Array.isArray(profile.badgeIds) ? profile.badgeIds : []);
         const streak = {
@@ -52,6 +97,15 @@ export async function GET(request: NextRequest) {
             longest: Number(profile.streak?.longest ?? 0),
             lastActivityDate: profile.streak?.lastActivityDate ?? null,
         };
+
+        const masteredCount = conceptItems.filter((concept) => concept.mastered).length;
+        const status = learningStatus({
+            masteredCount,
+            totalCount: conceptItems.length,
+            openMisconceptions: openMisconceptions.length,
+            quizzesCompleted: Number(profile.quizzesCompleted ?? 0),
+            diagnosticOverallBand: profile.diagnosticProfile?.overallBand ?? null,
+        });
 
         return NextResponse.json({
             success: true,
@@ -76,6 +130,21 @@ export async function GET(request: NextRequest) {
                     title: nextLesson.title,
                     topicTitle: nextLesson.topicTitle,
                     percentage: nextLesson.percentage,
+                    reason: recommendation.reason,
+                }
+                : null,
+            homework,
+            learningStatus: {
+                key: status,
+                label: LEARNING_STATUS_LABELS[status],
+                openMisconceptions: openMisconceptions.length,
+            },
+            diagnostic: profile.diagnosticProfile
+                ? {
+                    topicResults: profile.diagnosticProfile.topicResults ?? [],
+                    overallBand: profile.diagnosticProfile.overallBand ?? null,
+                    overallCorrect: profile.diagnosticProfile.overallCorrect ?? null,
+                    overallTotal: profile.diagnosticProfile.overallTotal ?? null,
                 }
                 : null,
             topics,

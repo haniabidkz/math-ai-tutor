@@ -37,6 +37,8 @@ service cloud.firestore {
     match /microConcepts/{id} { allow read: if signedIn(); allow write: if superAdmin(); }
     match /questions/{id} { allow read: if signedIn() && resource.data.status == 'published'; allow write: if superAdmin(); }
     match /assessmentConfigs/{id} { allow read: if signedIn(); allow write: if superAdmin(); }
+    // Homework is created and removed through the server API; clients only read it.
+    match /homework/{id} { allow read: if signedIn(); allow write: if superAdmin(); }
     match /auditLogs/{id} { allow read: if superAdmin(); allow write: if false; }
   }
 }

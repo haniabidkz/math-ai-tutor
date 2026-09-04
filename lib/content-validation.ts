@@ -82,8 +82,8 @@ export function validateContentBank(
             const analysis = question.optionAnalysis?.[option.id];
             if (!analysis) {
                 errors.push(`${question.id}: option ${option.id} is missing mistake analysis`);
-            } else if (!analysis.explanation.english.trim() || !analysis.explanation.romanUrdu.trim()) {
-                errors.push(`${question.id}: option ${option.id} needs a bilingual mistake explanation`);
+            } else if (!analysis.whyWrong.english.trim() || !analysis.whyWrong.romanUrdu.trim()) {
+                errors.push(`${question.id}: option ${option.id} needs a bilingual why-wrong explanation`);
             }
         }
     }
