@@ -38,6 +38,24 @@ export interface LocalizedOption {
     romanUrdu: string;
 }
 
+/** Error families used to classify wrong options and detect repeated misconceptions. */
+export type MistakeType =
+    | "sign-error"
+    | "operation-confusion"
+    | "inverse-operation"
+    | "coefficient-misread"
+    | "ratio-order"
+    | "partial-step"
+    | "off-by-one"
+    | "computation";
+
+export interface OptionAnalysis {
+    mistakeType: MistakeType;
+    explanation: LocalizedText;
+}
+
+export type QuestionOptionAnalysis = Partial<Record<LocalizedOption["id"], OptionAnalysis>>;
+
 export interface QuestionBankItem {
     id: string;
     microTag: string;
@@ -49,6 +67,8 @@ export interface QuestionBankItem {
     correctOptionId: LocalizedOption["id"];
     hint: LocalizedText;
     explanation: LocalizedText;
+    /** Per-distractor mistake type and explanation; derived at runtime when absent. */
+    optionAnalysis?: QuestionOptionAnalysis;
     source: "sindh" | "oxford";
     status: ContentStatus;
     version: number;
@@ -63,6 +83,10 @@ export interface AssessmentConfig {
     scoreCorrect: number;
     scoreHint: number;
     scoreIncorrect: number;
+    /** Repeats of one mistake type on one concept before it counts as a misconception. */
+    misconceptionThreshold: number;
+    /** Targeted practice questions served before the re-check question. */
+    misconceptionPracticeCount: number;
 }
 
 export const DEFAULT_ASSESSMENT_CONFIG: AssessmentConfig = {
@@ -74,4 +98,6 @@ export const DEFAULT_ASSESSMENT_CONFIG: AssessmentConfig = {
     scoreCorrect: 1,
     scoreHint: -0.5,
     scoreIncorrect: -1,
+    misconceptionThreshold: 3,
+    misconceptionPracticeCount: 2,
 };

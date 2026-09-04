@@ -5,6 +5,22 @@ export const localizedInputSchema = z.object({
     romanUrdu: z.string().trim().min(1),
 });
 
+export const mistakeTypeSchema = z.enum([
+    "sign-error",
+    "operation-confusion",
+    "inverse-operation",
+    "coefficient-misread",
+    "ratio-order",
+    "partial-step",
+    "off-by-one",
+    "computation",
+]);
+
+export const optionAnalysisSchema = z.object({
+    mistakeType: mistakeTypeSchema,
+    explanation: localizedInputSchema,
+});
+
 export const questionInputSchema = z.object({
     id: z.string().trim().min(1).optional(),
     microTag: z.string().trim().min(1),
@@ -20,6 +36,7 @@ export const questionInputSchema = z.object({
     correctOptionId: z.enum(["A", "B", "C", "D"]),
     hint: localizedInputSchema,
     explanation: localizedInputSchema,
+    optionAnalysis: z.record(z.enum(["A", "B", "C", "D"]), optionAnalysisSchema).optional(),
     source: z.enum(["sindh", "oxford"]),
     status: z.enum(["draft", "published", "archived"]).default("draft"),
     version: z.number().int().positive().default(1),
@@ -29,6 +46,9 @@ export const questionInputSchema = z.object({
     }
     if (!question.options.some((option) => option.id === question.correctOptionId)) {
         context.addIssue({ code: "custom", message: "Correct option is missing", path: ["correctOptionId"] });
+    }
+    if (question.optionAnalysis?.[question.correctOptionId]) {
+        context.addIssue({ code: "custom", message: "The correct option cannot carry mistake analysis", path: ["optionAnalysis"] });
     }
 });
 

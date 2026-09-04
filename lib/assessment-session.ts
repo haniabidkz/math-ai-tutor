@@ -1,5 +1,6 @@
-import type { Difficulty, Locale, QuestionBankItem } from "@/types/curriculum";
+import type { Difficulty, Locale, MistakeType, QuestionBankItem } from "@/types/curriculum";
 import { getClassConcepts, getConcept } from "@/lib/curriculum";
+import { XP_FIRST_ATTEMPT_CORRECT, XP_QUIZ_COMPLETED } from "@/lib/gamification";
 import type { DiagnosticProfile } from "@/types/assessment";
 
 export interface StoredAnswer {
@@ -11,6 +12,17 @@ export interface StoredAnswer {
     isCorrect: boolean;
     scoreDelta: number;
     answeredAt: Date;
+    /** Set on wrong answers so mistake history can be rebuilt from the session. */
+    mistakeType?: MistakeType | null;
+    /** A hint was revealed for this question before answering, so it earns no XP. */
+    hintUsed?: boolean;
+    /** Answered inside a misconception practice queue; excluded from the mastery score. */
+    practice?: boolean;
+}
+
+export interface SessionMisconception {
+    microTag: string;
+    mistakeType: MistakeType;
 }
 
 export interface StoredQuizSession {
@@ -20,7 +32,7 @@ export interface StoredQuizSession {
     microTag: string;
     classLevel: 6 | 7 | 8;
     locale: Locale;
-    status: "active" | "remedial_required" | "completed";
+    status: "active" | "remedial_required" | "misconception_practice" | "completed";
     questions: QuestionBankItem[];
     currentQuestionIndex: number;
     score: number;
@@ -30,6 +42,18 @@ export interface StoredQuizSession {
     answers: StoredAnswer[];
     retryOf: string | null;
     remedialTag: string | null;
+    /** Targeted practice plus a re-check, served when a misconception is detected. */
+    practiceQueue?: QuestionBankItem[];
+    practiceIndex?: number;
+    misconception?: SessionMisconception | null;
+}
+
+/** XP is derived from the stored answers so replays and retries stay idempotent. */
+export function sessionXp(session: Pick<StoredQuizSession, "answers">): number {
+    const unaidedCorrect = (session.answers ?? []).filter(
+        (answer) => answer.isCorrect && !answer.hintUsed && !answer.practice,
+    ).length;
+    return XP_QUIZ_COMPLETED + unaidedCorrect * XP_FIRST_ATTEMPT_CORRECT;
 }
 
 export function buildDiagnosticProfile(

@@ -75,6 +75,17 @@ export function validateContentBank(
         const normalized = `${question.microTag}:${question.question.english.trim().toLowerCase()}`;
         if (normalizedQuestions.has(normalized)) errors.push(`${question.id}: duplicate question text`);
         normalizedQuestions.add(normalized);
+
+        // Every distractor must explain the mistake it represents.
+        for (const option of question.options) {
+            if (option.id === question.correctOptionId) continue;
+            const analysis = question.optionAnalysis?.[option.id];
+            if (!analysis) {
+                errors.push(`${question.id}: option ${option.id} is missing mistake analysis`);
+            } else if (!analysis.explanation.english.trim() || !analysis.explanation.romanUrdu.trim()) {
+                errors.push(`${question.id}: option ${option.id} needs a bilingual mistake explanation`);
+            }
+        }
     }
 
     for (const concept of concepts) {

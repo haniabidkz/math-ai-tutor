@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRuntimeConcepts } from "@/lib/assessment-content";
 import { adminDb } from "@/lib/firebase-admin";
+import { BADGES } from "@/lib/gamification";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { StudentClassLevel } from "@/types/curriculum";
 
@@ -38,9 +39,45 @@ export async function GET(request: NextRequest) {
             concepts: conceptItems.filter((concept) => concept.topicId === topicId),
         }));
         const nextWeekly = profile.nextWeeklyAssessmentAt?.toDate?.() ?? (profile.nextWeeklyAssessmentAt ? new Date(profile.nextWeeklyAssessmentAt) : null);
+
+        // The diagnostic recommendation leads until it is mastered, then the path continues in order.
+        const recommendedTag = profile.diagnosticProfile?.recommendedMicroTag;
+        const nextLesson = conceptItems.find((concept) => concept.microTag === recommendedTag && !concept.mastered && !concept.locked)
+            ?? conceptItems.find((concept) => !concept.mastered && !concept.locked)
+            ?? null;
+
+        const earnedBadgeIds = new Set<string>(Array.isArray(profile.badgeIds) ? profile.badgeIds : []);
+        const streak = {
+            current: Number(profile.streak?.current ?? 0),
+            longest: Number(profile.streak?.longest ?? 0),
+            lastActivityDate: profile.streak?.lastActivityDate ?? null,
+        };
+
         return NextResponse.json({
             success: true,
             profile: { name: profile.name, email: profile.email, classLevel, diagnosticCompleted: profile.diagnosticCompleted === true || profile.placementCompleted === true },
+            gamification: {
+                xp: Number(profile.xp ?? 0),
+                streak,
+                quizzesCompleted: Number(profile.quizzesCompleted ?? 0),
+                lessonsCompleted: Number(profile.lessonsCompleted ?? 0),
+                questionsAnswered: Number(profile.questionsAnswered ?? 0),
+                badges: BADGES.map((badge) => ({
+                    id: badge.id,
+                    title: badge.title,
+                    description: badge.description,
+                    icon: badge.icon,
+                    earned: earnedBadgeIds.has(badge.id),
+                })),
+            },
+            nextLesson: nextLesson
+                ? {
+                    microTag: nextLesson.microTag,
+                    title: nextLesson.title,
+                    topicTitle: nextLesson.topicTitle,
+                    percentage: nextLesson.percentage,
+                }
+                : null,
             topics,
             metrics: {
                 mastered: conceptItems.filter((concept) => concept.mastered).length,

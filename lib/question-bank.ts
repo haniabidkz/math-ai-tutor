@@ -1,4 +1,5 @@
 import { MICRO_CONCEPTS } from "@/lib/curriculum";
+import { buildOptionAnalysis } from "@/lib/mistake-analysis";
 import type { Difficulty, LocalizedOption, MicroConcept, QuestionBankItem } from "@/types/curriculum";
 
 const optionIds: LocalizedOption["id"][] = ["A", "B", "C", "D"];
@@ -117,7 +118,7 @@ function makeQuestion(concept: MicroConcept, index: number): QuestionBankItem {
     const options = numericOptions(correct, index);
     const correctOptionId = options.find((option) => option.english === String(correct))!.id;
 
-    return {
+    const item: QuestionBankItem = {
         id: `${concept.microTag}-${String(index + 1).padStart(2, "0")}`,
         microTag: concept.microTag,
         prerequisiteTag: concept.prerequisiteTag,
@@ -135,6 +136,8 @@ function makeQuestion(concept: MicroConcept, index: number): QuestionBankItem {
         status: "published",
         version: 1,
     };
+
+    return { ...item, optionAnalysis: buildOptionAnalysis(item) };
 }
 
 export const QUESTION_BANK: QuestionBankItem[] = MICRO_CONCEPTS.flatMap((concept) =>

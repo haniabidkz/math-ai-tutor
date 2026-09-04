@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getPublishedConcept, localized } from "@/lib/assessment-content";
 import { getClassConcepts, getConcept } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
+import { activityDateKey, newlyEarnedBadges, nextStreak, type StreakState } from "@/lib/gamification";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { Locale, StudentClassLevel } from "@/types/curriculum";
 
@@ -60,15 +61,55 @@ export async function PATCH(request: NextRequest) {
         const body = await request.json();
         const microTag = String(body.microTag ?? body.topicId ?? "");
         if (!microTag) return NextResponse.json({ success: false, error: "microTag is required" }, { status: 400 });
-        const ref = adminDb.collection("students").doc(user.uid).collection("lessonProgress").doc(microTag);
-        await ref.set({
-            microTag,
-            understood: body.understood === true,
-            teachingAttempts: FieldValue.increment(1),
-            needsHumanAttention: body.understood !== true && Number(body.teachingLevel ?? 1) >= 3,
-            updatedAt: FieldValue.serverTimestamp(),
-        }, { merge: true });
-        return NextResponse.json({ success: true });
+        const understood = body.understood === true;
+        const studentRef = adminDb.collection("students").doc(user.uid);
+        const ref = studentRef.collection("lessonProgress").doc(microTag);
+
+        const result = await adminDb.runTransaction(async (transaction) => {
+            const [lessonSnapshot, studentSnapshot] = await Promise.all([
+                transaction.get(ref),
+                transaction.get(studentRef),
+            ]);
+            const alreadyCompleted = lessonSnapshot.data()?.understood === true;
+            const student = studentSnapshot.data() ?? {};
+
+            transaction.set(ref, {
+                microTag,
+                understood,
+                teachingAttempts: FieldValue.increment(1),
+                needsHumanAttention: !understood && Number(body.teachingLevel ?? 1) >= 3,
+                updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+
+            // Only a concept finished for the first time counts toward lessons and streaks.
+            if (!understood || alreadyCompleted) return null;
+
+            const lessonsCompleted = Number(student.lessonsCompleted ?? 0) + 1;
+            const streak = nextStreak(student.streak as Partial<StreakState> | undefined, activityDateKey());
+            const freshBadges = newlyEarnedBadges({
+                lessonsCompleted,
+                quizzesCompleted: Number(student.quizzesCompleted ?? 0),
+                questionsAnswered: Number(student.questionsAnswered ?? 0),
+                currentStreak: streak.current,
+            }, Array.isArray(student.badgeIds) ? student.badgeIds : []);
+
+            for (const badgeId of freshBadges) {
+                transaction.set(studentRef.collection("badges").doc(badgeId), {
+                    badgeId,
+                    earnedAt: FieldValue.serverTimestamp(),
+                }, { merge: true });
+            }
+            transaction.set(studentRef, {
+                lessonsCompleted,
+                streak,
+                ...(freshBadges.length ? { badgeIds: FieldValue.arrayUnion(...freshBadges) } : {}),
+                updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+
+            return { streak: streak.current, newBadges: freshBadges };
+        });
+
+        return NextResponse.json({ success: true, ...(result ?? {}) });
     } catch (error) {
         const auth = authErrorResponse(error);
         return auth
