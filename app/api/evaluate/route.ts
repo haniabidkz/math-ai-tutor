@@ -27,6 +27,7 @@ import {
     MISTAKE_TYPE_LABELS,
 } from "@/lib/mistake-analysis";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
+import type { MistakePayload } from "@/types/assessment";
 import type { Locale, MisconceptionTag, MistakeType, OptionAnalysis, QuestionBankItem } from "@/types/curriculum";
 
 type EvaluationOutcome = {
@@ -53,7 +54,7 @@ type EvaluationOutcome = {
         imageUrl?: string;
     };
     /** Mistake analysis for the option the student just chose. */
-    mistake?: { type: MistakeType; tag: MisconceptionTag; label: string; whyWrong: string };
+    mistake?: MistakePayload;
     /** Present once the same mistake pattern repeats often enough on one concept. */
     misconception?: { microTag: string; type: MistakeType; tag: MisconceptionTag; label: string; guidance: string; practiceTotal: number };
     /** Progress through the targeted practice queue that follows a misconception. */
@@ -94,7 +95,7 @@ function practiceProgress(session: StoredQuizSession, index: number): Evaluation
     return { number: index + 1, total, isRecheck: index === total - 1 };
 }
 
-function localizedMistake(analysis: OptionAnalysis, locale: Locale) {
+function localizedMistake(analysis: OptionAnalysis, locale: Locale): MistakePayload {
     return {
         type: analysis.mistakeType,
         tag: analysis.misconceptionTag,

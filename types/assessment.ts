@@ -1,5 +1,5 @@
 import type { OverallBand, TopicBand } from "@/lib/diagnostic-blueprint";
-import type { Difficulty, LocalizedText, StudentClassLevel, SupportedClassLevel } from "./curriculum";
+import type { Difficulty, LocalizedText, MisconceptionTag, MistakeType, StudentClassLevel, SupportedClassLevel } from "./curriculum";
 
 export type AssessmentKind = "diagnostic" | "mastery" | "weekly";
 export type AssessmentSessionStatus =
@@ -54,4 +54,12 @@ export interface RemedialPayload {
     concept: LocalizedText;
     visualKind: string;
     imageUrl?: string;
+}
+
+/** Mistake analysis sent to the quiz screen for a wrong answer; shared so both sides agree. */
+export interface MistakePayload {
+    type: MistakeType;
+    tag: MisconceptionTag;
+    label: string;
+    whyWrong: string;
 }

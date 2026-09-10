@@ -23,6 +23,7 @@ import {
     syncQueue,
 } from "@/lib/offline-queue";
 import type { ClientQuestion } from "@/lib/assessment-content";
+import type { MistakePayload } from "@/types/assessment";
 import type { Locale } from "@/types/curriculum";
 
 interface QuizState {
@@ -44,7 +45,7 @@ interface RemedialState {
     imageUrl?: string;
 }
 
-interface MistakeState { type: string; label: string; explanation: string }
+type MistakeState = MistakePayload;
 interface MisconceptionState { microTag: string; type: string; label: string; guidance: string; practiceTotal: number }
 interface PracticeState { number: number; total: number; isRecheck: boolean }
 interface ResultState {
@@ -411,7 +412,7 @@ function QuizContent() {
                         <Alert className="border-rose-200 bg-rose-50">
                             <XCircle className="h-4 w-4 text-rose-700" />
                             <AlertTitle className="text-rose-900">{t.mistakeTitle}: {mistake.label}</AlertTitle>
-                            <AlertDescription className="text-rose-800">{mistake.explanation}</AlertDescription>
+                            <AlertDescription className="text-rose-800">{mistake.whyWrong}</AlertDescription>
                         </Alert>
                     ) : feedback ? (
                         <Alert><Lightbulb className="h-4 w-4" /><AlertDescription>{feedback}</AlertDescription></Alert>
@@ -504,7 +505,7 @@ function QuizContent() {
                                     <Alert className="mt-3 border-rose-200 bg-rose-50">
                                         <XCircle className="h-4 w-4 text-rose-700" />
                                         <AlertTitle className="text-rose-900">{t.mistakeTitle}: {mistake.label}</AlertTitle>
-                                        <AlertDescription className="text-rose-800">{mistake.explanation}</AlertDescription>
+                                        <AlertDescription className="text-rose-800">{mistake.whyWrong}</AlertDescription>
                                     </Alert>
                                 ) : null}
                                 {hint ? <Alert className="mt-3"><Lightbulb className="h-4 w-4" /><AlertTitle>{t.hint}</AlertTitle><AlertDescription>{hint}</AlertDescription></Alert> : null}
