@@ -5,7 +5,7 @@ import { getClassConcepts, getConcept } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
 import { activityDateKey, newlyEarnedBadges, nextStreak, type StreakState } from "@/lib/gamification";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
-import type { Locale, StudentClassLevel } from "@/types/curriculum";
+import type { Locale, MicroConcept, StudentClassLevel } from "@/types/curriculum";
 
 function resolveMicroTag(value: string, classLevel: number) {
     if (getConcept(value)) return value;
@@ -13,6 +13,37 @@ function resolveMicroTag(value: string, classLevel: number) {
         return getClassConcepts(classLevel as StudentClassLevel).find((concept) => concept.topicId === value)?.microTag ?? value;
     }
     return value;
+}
+
+const EXTRA_TIPS: Record<Locale, Record<1 | 2 | 3, string>> = {
+    english: {
+        1: "**Remember:** Write each step separately and check your answer at the end.",
+        2: "**Method:** Identify known values, choose one operation, then solve one step at a time.",
+        3: "**Deep check:** Substitute your answer back into the problem and verify every sign.",
+    },
+    "roman-urdu": {
+        1: "**Yaad rakhein:** Har qadam ko alag likhein aur akhir mein apna jawab check karein.",
+        2: "**Tareeqa:** Maloom qeemat pehchanein, aik amal chunein, phir qadam ba qadam hal karein.",
+        3: "**Gehri jaanch:** Apna jawab sawal mein wapas rakh kar tasdeeq karein aur nishan dobara check karein.",
+    },
+};
+
+function lessonMarkdown(concept: MicroConcept, prerequisite: MicroConcept | null, level: number, locale: Locale): string {
+    const tip = EXTRA_TIPS[locale][Math.max(1, Math.min(3, level)) as 1 | 2 | 3];
+    const before = prerequisite
+        ? locale === "roman-urdu"
+            ? `
+
+Is se pehle **${localized(prerequisite.title, locale)}** ko samajhna madadgar hai.`
+            : `
+
+It helps to understand **${localized(prerequisite.title, locale)}** first.`
+        : "";
+    return `## ${localized(concept.title, locale)}
+
+${localized(concept.concept, locale)}
+
+${tip}${before}`;
 }
 
 export async function POST(request: NextRequest) {
@@ -23,31 +54,28 @@ export async function POST(request: NextRequest) {
         // An empty tag reached Firestore as an invalid document path and surfaced as a 500.
         if (!requested) return NextResponse.json({ success: false, error: "Choose a concept to learn" }, { status: 400 });
         const microTag = resolveMicroTag(requested, Number(body.classLevel));
-        const locale: Locale = body.locale === "roman-urdu" || body.language === "roman-urdu" ? "roman-urdu" : "english";
         const concept = await getPublishedConcept(microTag);
         if (!concept) return NextResponse.json({ success: false, error: "Published concept not found" }, { status: 404 });
 
-        const title = localized(concept.title, locale);
-        const summary = localized(concept.concept, locale);
         const prerequisite = concept.prerequisiteTag ? await getPublishedConcept(concept.prerequisiteTag) : null;
         const level = Math.max(1, Math.min(3, Number(body.teachingLevel ?? 1)));
-        const extra = locale === "roman-urdu"
-            ? level === 1 ? "**Yaad rakhein:** Har qadam ko alag likhein aur akhir mein apna jawab check karein."
-                : level === 2 ? "**Tareeqa:** Maloom qeemat pehchanein, aik amal chunein, phir qadam ba qadam hal karein."
-                    : "**Gehri jaanch:** Apna jawab sawal mein wapas rakh kar tasdeeq karein aur nishan dobara check karein."
-            : level === 1 ? "**Remember:** Write each step separately and check your answer at the end."
-                : level === 2 ? "**Method:** Identify known values, choose one operation, then solve one step at a time."
-                    : "**Deep check:** Substitute your answer back into the problem and verify every sign.";
-        const content = `## ${title}\n\n${summary}\n\n${extra}${prerequisite ? `\n\n${locale === "roman-urdu" ? "Is se pehle" : "It helps to understand"} **${localized(prerequisite.title, locale)}** ${locale === "roman-urdu" ? "ko samajhna madadgar hai." : "first."}` : ""}`;
+
+        // The lesson is English; the same lesson in Roman Urdu is sent for the optional toggle.
+        const content = {
+            english: lessonMarkdown(concept, prerequisite ?? null, level, "english"),
+            romanUrdu: lessonMarkdown(concept, prerequisite ?? null, level, "roman-urdu"),
+        };
 
         return NextResponse.json({
             success: true,
             content,
             concept: {
-                ...concept,
-                title,
-                concept: summary,
-                topicTitle: localized(concept.topicTitle, locale),
+                microTag: concept.microTag,
+                title: concept.title.english,
+                topicTitle: concept.topicTitle.english,
+                concept: concept.concept,
+                visualKind: concept.visualKind,
+                imageUrl: concept.imageUrl,
             },
         });
     } catch (error) {

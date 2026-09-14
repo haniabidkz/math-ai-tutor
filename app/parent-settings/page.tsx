@@ -107,7 +107,7 @@ export default function ParentSettingsPage() {
                 </Card>
 
                 {/* How linking works */}
-                <Card className="border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 dark:border-blue-900">
+                <Card id="link-child" className="scroll-mt-24 border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 dark:border-blue-900">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-base text-blue-800 dark:text-blue-300">
                             <Info className="h-4 w-4" /> How Child Linking Works

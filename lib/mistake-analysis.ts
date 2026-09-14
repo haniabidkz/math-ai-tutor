@@ -167,18 +167,31 @@ export function getOptionAnalysis(
     const authored = question.optionAnalysis?.[optionId];
     if (authored) return authored;
 
-    const misconceptionTag = deriveMisconceptionTag(question, optionId);
-    const definition = MISCONCEPTIONS[misconceptionTag];
     const correct = question.options.find((item) => item.id === question.correctOptionId);
+    return analysisForTag(deriveMisconceptionTag(question, optionId), correct?.english ?? "");
+}
+
+/** The predefined reason for a misconception tag, completed with the correct answer. */
+export function analysisForTag(misconceptionTag: MisconceptionTag, correctAnswer: string): OptionAnalysis {
+    const definition = MISCONCEPTIONS[misconceptionTag];
+    const suffix = correctAnswer.trim();
     return {
         mistakeType: definition.mistakeType,
         misconceptionTag,
         whyWrong: text(
-            `${definition.whyWrong.english} The correct answer is ${correct?.english ?? ""}.`,
-            `${definition.whyWrong.romanUrdu} Durust jawab ${correct?.english ?? ""} hai.`,
+            suffix ? `${definition.whyWrong.english} The correct answer is ${suffix}.` : definition.whyWrong.english,
+            suffix ? `${definition.whyWrong.romanUrdu} Durust jawab ${suffix} hai.` : definition.whyWrong.romanUrdu,
         ),
     };
 }
+
+/** What the system would say about a distractor if no reason had been written for it. */
+export function suggestOptionAnalysis(question: QuestionBankItem, optionId: LocalizedOption["id"]): OptionAnalysis | null {
+    return getOptionAnalysis({ ...question, optionAnalysis: undefined }, optionId);
+}
+
+export const MISCONCEPTION_TAGS = Object.keys(MISCONCEPTIONS) as MisconceptionTag[];
+export const MISTAKE_TYPES = Object.keys(MISTAKE_TYPE_LABELS) as MistakeType[];
 
 /** Builds analysis for all three distractors, used when generating or seeding content. */
 export function buildOptionAnalysis(question: QuestionBankItem): QuestionOptionAnalysis {

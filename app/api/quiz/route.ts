@@ -8,16 +8,13 @@ import {
     selectQuizQuestions,
     toClientQuestion,
 } from "@/lib/assessment-content";
+import { chooseQuizDifficulty } from "@/lib/adaptive-engine";
 import type { StoredQuizSession } from "@/lib/assessment-session";
 import { getClassConcepts, getConcept, isLearningConceptForClass } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
 import { buildQuestionHistory, type HistoricalQuestionSession } from "@/lib/question-history";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { Difficulty, Locale, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
-
-function parseLocale(value: unknown): Locale {
-    return value === "roman-urdu" ? "roman-urdu" : "english";
-}
 
 function parseClass(value: unknown): StudentClassLevel | null {
     const parsed = Number(value);
@@ -86,8 +83,8 @@ export async function POST(request: NextRequest) {
         }
 
         const kind: "mastery" | "weekly" = homeworkId ? "mastery" : body.kind === "weekly" ? "weekly" : "mastery";
-        const locale = parseLocale(body.locale);
-        const preferredDifficulty: Difficulty = body.difficulty === "easy" || body.difficulty === "hard" ? body.difficulty : "medium";
+        // Questions are always English; Roman Urdu is offered per hint and explanation.
+        const locale: Locale = "english";
         const config = await getAssessmentConfig();
         let microTag = String(homework?.microTag ?? body.microTag ?? body.topicId ?? "");
         if (!microTag && kind === "mastery") return NextResponse.json({ success: false, error: "microTag is required" }, { status: 400 });
@@ -102,6 +99,16 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ success: false, error: `This concept is not available for Class ${classLevel}` }, { status: 400 });
             }
         }
+
+        // Students do not pick a level: it follows the diagnostic and their last result here.
+        const conceptProgress = kind === "mastery"
+            ? (await adminDb.collection("students").doc(user.uid).collection("conceptProgress").doc(microTag).get()).data()
+            : undefined;
+        const preferredDifficulty: Difficulty = chooseQuizDifficulty({
+            baseline: profile.diagnosticProfile?.baselineDifficulty ?? null,
+            adaptiveLevel: typeof profile.adaptive_level === "number" ? profile.adaptive_level : null,
+            conceptPercentage: typeof conceptProgress?.percentage === "number" ? conceptProgress.percentage : null,
+        });
 
         const history = await questionHistory(user.uid, kind, kind === "weekly" ? "weekly-review" : microTag);
         const questions = kind === "weekly"
@@ -201,7 +208,7 @@ export async function GET(request: NextRequest) {
                 maxScore: session.maxScore,
                 questionNumber: Math.min(session.currentQuestionIndex + 1, session.questions.length),
                 totalQuestions: session.questions.length,
-                question: session.status === "active" ? toClientQuestion(session.questions[session.currentQuestionIndex], session.locale) : undefined,
+                question: session.status === "active" ? toClientQuestion(session.questions[session.currentQuestionIndex], "english") : undefined,
                 remedialTag: session.remedialTag,
             },
         });

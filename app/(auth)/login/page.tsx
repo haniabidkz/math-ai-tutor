@@ -61,7 +61,8 @@ function LoginContent() {
                     updatedAt: serverTimestamp(),
                     ...(role === "student" && {
                         class: parseInt(classLevel),
-                        parentEmail: parentEmail || null,
+                        // Stored lowercase so the parent's dashboard can find this child by email.
+                        parentEmail: parentEmail.trim().toLowerCase() || null,
                     }),
                 };
 

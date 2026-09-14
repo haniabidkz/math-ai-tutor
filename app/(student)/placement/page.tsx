@@ -4,27 +4,25 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
 import { ArrowRight, CheckCircle2, Target, XCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { SessionControls } from "@/components/session-controls";
-import { auth, db } from "@/lib/firebase";
+import { auth } from "@/lib/firebase";
 import type { ClientQuestion } from "@/lib/assessment-content";
 import type { DiagnosticProfile } from "@/types/assessment";
-import type { Locale } from "@/types/curriculum";
 
-const copy = {
-    english: { title: "Diagnostic Assessment", preparing: "Preparing your diagnostic...", next: "Next question", error: "The diagnostic could not continue. Please try again.", complete: "Your learning path is ready", score: "Assessment accuracy", mathLevel: "Math Level", grade: "Enrolled Grade", weak: "Weak Topic", recommended: "Recommended Starting Topic", none: "No major weakness identified", start: "Start Learning" },
-    "roman-urdu": { title: "Tashkheesi Jaiza", preparing: "Aap ka jaiza tayar ho raha hai...", next: "Agla sawal", error: "Jaiza jari nahin reh saka. Dobara koshish karein.", complete: "Aap ka learning path tayar hai", score: "Jaizay ki durusti", mathLevel: "Math Level", grade: "Dakhla Class", weak: "Kamzor Topic", recommended: "Shuruati Topic", none: "Koi bari kamzori nahin mili", start: "Ab seekhna shuru karein" },
+const BAND_STYLES: Record<string, string> = {
+    strong: "bg-emerald-100 text-emerald-800",
+    "needs-practice": "bg-amber-100 text-amber-800",
+    weak: "bg-orange-100 text-orange-800",
+    "very-weak": "bg-red-100 text-red-800",
 };
 
 export default function PlacementPage() {
     const router = useRouter();
     const [user, setUser] = useState<User | null>(null);
-    const [locale, setLocale] = useState<Locale>("english");
     const [sessionId, setSessionId] = useState("");
     const [question, setQuestion] = useState<ClientQuestion | null>(null);
     const [questionNumber, setQuestionNumber] = useState(1);
@@ -34,27 +32,22 @@ export default function PlacementPage() {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
-    const t = copy[locale];
 
-    useEffect(() => {
-        setLocale(localStorage.getItem("mathTutorLocale") === "roman-urdu" ? "roman-urdu" : "english");
-        return onAuthStateChanged(auth, async (currentUser) => {
-            if (!currentUser) return router.replace("/login?role=student");
-            setUser(currentUser);
-            const profileSnapshot = await getDoc(doc(db, "students", currentUser.uid));
-            const classLevel = profileSnapshot.data()?.class ?? 6;
-            await start(currentUser, classLevel, localStorage.getItem("mathTutorLocale") === "roman-urdu" ? "roman-urdu" : "english");
-        });
-    }, [router]);
+    useEffect(() => onAuthStateChanged(auth, async (currentUser) => {
+        if (!currentUser) return router.replace("/login?role=student");
+        setUser(currentUser);
+        await start(currentUser);
+    }), [router]);
 
-    async function start(currentUser: User, classLevel: number, selectedLocale: Locale) {
+    async function start(currentUser: User) {
         setLoading(true);
         setError("");
         try {
+            // The class comes from the student's profile on the server.
             const response = await fetch("/api/placement", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${await currentUser.getIdToken()}` },
-                body: JSON.stringify({ classLevel, locale: selectedLocale }),
+                body: JSON.stringify({}),
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error);
@@ -63,7 +56,7 @@ export default function PlacementPage() {
             setQuestionNumber(data.questionNumber);
             setTotalQuestions(data.totalQuestions);
         } catch {
-            setError(copy[selectedLocale].error);
+            setError("The diagnostic could not start. Please try again.");
         } finally {
             setLoading(false);
         }
@@ -88,44 +81,98 @@ export default function PlacementPage() {
                 setSelected("");
             }
         } catch {
-            setError(t.error);
+            setError("The diagnostic could not continue. Please try again.");
         } finally {
             setSubmitting(false);
         }
     }
 
-    if (loading) return <div className="flex min-h-screen items-center justify-center bg-slate-50"><p className="font-medium text-slate-600">{t.preparing}</p></div>;
+    if (loading) return <div className="flex min-h-screen items-center justify-center bg-slate-50"><p className="font-medium text-slate-600">Preparing your diagnostic...</p></div>;
 
     if (profile) {
-        const weakTopic = profile.weakTopic ? profile.weakTopic[locale === "roman-urdu" ? "romanUrdu" : "english"] : t.none;
-        const recommendedTopic = profile.recommendedTopic[locale === "roman-urdu" ? "romanUrdu" : "english"];
         const learningUrl = `/learn?microTag=${encodeURIComponent(profile.recommendedMicroTag)}&class=${profile.assessedClassLevel}`;
         return (
-        <main className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
-            <Card className="w-full max-w-xl rounded-lg border-t-4 border-t-emerald-500">
-                <CardHeader><CheckCircle2 className="mb-3 h-12 w-12 text-emerald-600" /><CardTitle>{t.complete}</CardTitle></CardHeader>
-                <CardContent className="space-y-5">
-                    <div><span className="text-sm text-muted-foreground">{t.score}</span><p className="text-4xl font-bold">{profile.accuracyPercent}%</p></div>
-                    <dl className="grid gap-4 border-y py-5 sm:grid-cols-2">
-                        <div><dt className="text-sm text-muted-foreground">{t.mathLevel}</dt><dd className="mt-1 text-xl font-semibold">Class {profile.mathLevel}</dd></div>
-                        <div><dt className="text-sm text-muted-foreground">{t.grade}</dt><dd className="mt-1 text-xl font-semibold">Class {profile.assessedClassLevel}</dd></div>
-                        <div><dt className="text-sm text-muted-foreground">{t.weak}</dt><dd className="mt-1 font-semibold">{weakTopic}</dd></div>
-                        <div><dt className="text-sm text-muted-foreground">{t.recommended}</dt><dd className="mt-1 font-semibold">{recommendedTopic}</dd></div>
-                    </dl>
-                </CardContent>
-                <CardFooter><Button asChild size="lg" className="w-full"><Link href={learningUrl}>{t.start} {recommendedTopic} {locale === "english" ? "Now" : ""}<ArrowRight className="ml-2 h-4 w-4" /></Link></Button></CardFooter>
-            </Card>
-        </main>
+            <main className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+                <Card className="w-full max-w-2xl rounded-lg border-t-4 border-t-emerald-500">
+                    <CardHeader>
+                        <CheckCircle2 className="mb-3 h-12 w-12 text-emerald-600" />
+                        <CardTitle>Your learning path is ready</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-5">
+                        <div>
+                            <span className="text-sm text-muted-foreground">Diagnostic score</span>
+                            <p className="text-4xl font-bold">{profile.overallCorrect ?? 0} / {profile.overallTotal ?? totalQuestions}</p>
+                        </div>
+                        {profile.topicResults?.length ? (
+                            <div className="grid gap-2 sm:grid-cols-5">
+                                {profile.topicResults.map((topic) => (
+                                    <div key={topic.topicKey} className="rounded-lg border p-3">
+                                        <p className="text-xs font-semibold">{topic.title.english}</p>
+                                        <p className="mt-1 text-xs text-muted-foreground">{topic.correct} / {topic.total}</p>
+                                        <span className={`mt-2 inline-block rounded px-2 py-0.5 text-[10px] font-bold uppercase ${BAND_STYLES[topic.band] ?? ""}`}>
+                                            {topic.band.replace("-", " ")}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : null}
+                        <dl className="grid gap-4 border-y py-5 sm:grid-cols-2">
+                            <div><dt className="text-sm text-muted-foreground">Math level</dt><dd className="mt-1 text-xl font-semibold">Class {profile.mathLevel}</dd></div>
+                            <div><dt className="text-sm text-muted-foreground">Enrolled class</dt><dd className="mt-1 text-xl font-semibold">Class {profile.assessedClassLevel}</dd></div>
+                            <div><dt className="text-sm text-muted-foreground">Weakest topic</dt><dd className="mt-1 font-semibold">{profile.weakTopic?.english ?? "No major weakness identified"}</dd></div>
+                            <div><dt className="text-sm text-muted-foreground">Recommended starting topic</dt><dd className="mt-1 font-semibold">{profile.recommendedTopic.english}</dd></div>
+                        </dl>
+                    </CardContent>
+                    <CardFooter>
+                        <Button asChild size="lg" className="w-full">
+                            <Link href={learningUrl}>Start learning {profile.recommendedTopic.english}<ArrowRight className="ml-2 h-4 w-4" /></Link>
+                        </Button>
+                    </CardFooter>
+                </Card>
+            </main>
         );
     }
 
     return (
         <div className="min-h-screen bg-slate-50">
-            <header className="border-b bg-white"><div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-4"><div><p className="font-semibold">{t.title}</p><p className="text-xs text-muted-foreground">{questionNumber} / {totalQuestions}</p></div><SessionControls locale={locale} onLocaleChange={setLocale} /></div></header>
+            <header className="border-b bg-white">
+                <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-4">
+                    <div>
+                        <p className="font-semibold">Diagnostic Assessment</p>
+                        <p className="text-xs text-muted-foreground">{questionNumber} / {totalQuestions}</p>
+                    </div>
+                </div>
+            </header>
             <main className="mx-auto max-w-3xl px-4 py-8">
                 <Progress aria-label={`${questionNumber} of ${totalQuestions} questions`} value={(questionNumber / totalQuestions) * 100} className="mb-8 h-2" />
                 {error ? <Alert variant="destructive" className="mb-5"><XCircle className="h-4 w-4" /><AlertDescription>{error}</AlertDescription></Alert> : null}
-                {question ? <Card className="rounded-lg"><CardHeader><div className="flex items-center justify-between"><Target className="h-5 w-5 text-primary" /><span className="text-xs font-semibold uppercase text-muted-foreground">{question.difficulty}</span></div><CardTitle className="pt-4 text-xl leading-relaxed">{question.question}</CardTitle></CardHeader><CardContent className="grid gap-3">{question.options.map((option) => <Button key={option.id} type="button" variant={selected === option.id ? "default" : "outline"} className="h-auto min-h-12 justify-start whitespace-normal text-left" onClick={() => setSelected(option.id)}><span className="mr-3 font-bold">{option.id}</span>{option.text}</Button>)}</CardContent><CardFooter className="justify-end border-t pt-5"><Button onClick={submit} disabled={!selected || submitting}>{submitting ? "..." : t.next}<ArrowRight className="ml-2 h-4 w-4" /></Button></CardFooter></Card> : <Button onClick={() => user && start(user, 6, locale)}>Try again</Button>}
+                {question ? (
+                    <Card className="rounded-lg">
+                        <CardHeader>
+                            <div className="flex items-center justify-between">
+                                <Target className="h-5 w-5 text-primary" />
+                                <span className="text-xs font-semibold uppercase text-muted-foreground">{question.difficulty}</span>
+                            </div>
+                            <CardTitle className="pt-4 text-xl leading-relaxed">{question.question}</CardTitle>
+                        </CardHeader>
+                        <CardContent className="grid gap-3">
+                            {question.options.map((option) => (
+                                <Button
+                                    key={option.id}
+                                    type="button"
+                                    variant={selected === option.id ? "default" : "outline"}
+                                    className="h-auto min-h-12 justify-start whitespace-normal text-left"
+                                    onClick={() => setSelected(option.id)}
+                                >
+                                    <span className="mr-3 font-bold">{option.id}</span>{option.text}
+                                </Button>
+                            ))}
+                        </CardContent>
+                        <CardFooter className="justify-end border-t pt-5">
+                            <Button onClick={submit} disabled={!selected || submitting}>{submitting ? "..." : "Next question"}<ArrowRight className="ml-2 h-4 w-4" /></Button>
+                        </CardFooter>
+                    </Card>
+                ) : <Button onClick={() => user && start(user)}>Try again</Button>}
             </main>
         </div>
     );

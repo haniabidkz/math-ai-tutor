@@ -12,11 +12,34 @@ export function nextDiagnosticDifficulty(current: Difficulty, recentAnswers: boo
     return current;
 }
 
+/**
+ * Only correct answers move the score. Wrong answers and hints leave it unchanged,
+ * so a student's marks can never drop because of a mistake.
+ */
 export function scoreDelta(event: "correct" | "incorrect" | "hint", _hintAlreadyUsed = false): number {
-    if (event === "correct") return 1;
-    if (event === "incorrect") return -1;
-    // Hints are free: they award no XP but must never reduce score or marks.
-    return 0;
+    return event === "correct" ? 1 : 0;
+}
+
+/**
+ * Students no longer pick a difficulty. The level starts from their diagnostic baseline and
+ * shifts one step with how they last did on this concept.
+ */
+export function chooseQuizDifficulty(input: {
+    baseline?: Difficulty | null;
+    adaptiveLevel?: number | null;
+    conceptPercentage?: number | null;
+}): Difficulty {
+    const fromLevel = (level: number): Difficulty => (level <= 1 ? "easy" : level === 2 ? "medium" : "hard");
+    const start: Difficulty = input.baseline && difficultyOrder.includes(input.baseline)
+        ? input.baseline
+        : typeof input.adaptiveLevel === "number" && input.adaptiveLevel > 0
+            ? fromLevel(input.adaptiveLevel)
+            : "medium";
+    const index = difficultyOrder.indexOf(start);
+    const percentage = input.conceptPercentage;
+    if (typeof percentage === "number" && percentage >= 85) return difficultyOrder[Math.min(index + 1, 2)];
+    if (typeof percentage === "number" && percentage > 0 && percentage < 50) return difficultyOrder[Math.max(index - 1, 0)];
+    return start;
 }
 
 export function masteryPercentage(score: number, maxScore: number): number {

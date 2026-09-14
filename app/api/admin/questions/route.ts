@@ -5,9 +5,20 @@ import { adminDb } from "@/lib/firebase-admin";
 import { questionInputSchema } from "@/lib/admin-schemas";
 import { writeAuditLog } from "@/lib/admin-audit";
 import { getConcept } from "@/lib/curriculum";
+import { buildOptionAnalysis } from "@/lib/mistake-analysis";
+import type { QuestionBankItem } from "@/types/curriculum";
 import { authErrorResponse, requireSuperAdmin } from "@/lib/server-auth";
 
 type ParsedQuestion = ReturnType<typeof questionInputSchema.parse>;
+
+/**
+ * Every wrong option is saved with its analysis at creation time. Authored reasons are kept
+ * as written; any option left blank gets the predefined reason for its misconception tag.
+ */
+function withOptionAnalysis(item: ParsedQuestion) {
+    const optionAnalysis = buildOptionAnalysis(item as unknown as QuestionBankItem);
+    return { ...item, prerequisiteTag: item.prerequisiteTag ?? null, optionAnalysis };
+}
 
 async function requireMatchingConceptClasses(items: ParsedQuestion[]) {
     const microTags = [...new Set(items.map((item) => item.microTag))];
@@ -55,21 +66,24 @@ export async function POST(request: NextRequest) {
         const rawItems = Array.isArray(body.questions) ? body.questions : [body];
         if (!rawItems.length) return NextResponse.json({ success: false, error: "At least one question is required" }, { status: 400 });
         if (rawItems.length > 500) return NextResponse.json({ success: false, error: "Import limit is 500 questions" }, { status: 400 });
-        const parsed = rawItems.map((item: unknown) => questionInputSchema.parse(item));
+        const parsed = rawItems.map((item: unknown) => withOptionAnalysis(questionInputSchema.parse(item)));
         await requireMatchingConceptClasses(parsed);
         const batch = adminDb.batch();
         const ids: string[] = [];
         for (const item of parsed) {
             const id = item.id ?? `${item.microTag}-${randomUUID().slice(0, 8)}`;
             ids.push(id);
-            batch.set(adminDb.collection("questions").doc(id), {
+            const data = {
                 ...item,
                 id: FieldValue.delete(),
                 createdBy: admin.uid,
                 updatedBy: admin.uid,
                 createdAt: FieldValue.serverTimestamp(),
                 updatedAt: FieldValue.serverTimestamp(),
-            }, { merge: true });
+            };
+            // mergeFields replaces optionAnalysis whole, so a changed correct answer
+            // cannot leave a stale reason behind on the new correct option.
+            batch.set(adminDb.collection("questions").doc(id), data, { mergeFields: Object.keys(data) });
         }
         await batch.commit();
         await writeAuditLog({ actorUid: admin.uid, actorEmail: admin.email, action: parsed.length > 1 ? "questions.import" : "question.create", targetType: "question", targetId: ids.join(","), summary: `Created ${parsed.length} question(s)` });
@@ -85,9 +99,10 @@ export async function PATCH(request: NextRequest) {
         const admin = await requireSuperAdmin(request);
         const body = await request.json();
         if (!body.id) return NextResponse.json({ success: false, error: "Question id is required" }, { status: 400 });
-        const parsed = questionInputSchema.parse(body);
+        const parsed = withOptionAnalysis(questionInputSchema.parse(body));
         await requireMatchingConceptClasses([parsed]);
-        await adminDb.collection("questions").doc(body.id).set({ ...parsed, id: FieldValue.delete(), updatedBy: admin.uid, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+        const data = { ...parsed, id: FieldValue.delete(), updatedBy: admin.uid, updatedAt: FieldValue.serverTimestamp() };
+        await adminDb.collection("questions").doc(body.id).set(data, { mergeFields: Object.keys(data) });
         await writeAuditLog({ actorUid: admin.uid, actorEmail: admin.email, action: "question.update", targetType: "question", targetId: body.id, summary: `Updated ${body.id}` });
         return NextResponse.json({ success: true });
     } catch (error: unknown) {

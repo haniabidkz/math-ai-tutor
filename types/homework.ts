@@ -17,6 +17,9 @@ export interface HomeworkAssignment {
     assignedByUid: string;
     assignedByEmail: string;
     note?: string;
+    /** Set when several modules were assigned together as one packet. */
+    packetId?: string | null;
+    packetTitle?: string | null;
 }
 
 export interface StudentHomework extends HomeworkAssignment {

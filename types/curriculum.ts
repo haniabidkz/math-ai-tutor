@@ -102,7 +102,7 @@ export const DEFAULT_ASSESSMENT_CONFIG: AssessmentConfig = {
     masteryThresholdPercent: 70,
     scoreCorrect: 1,
     scoreHint: 0,
-    scoreIncorrect: -1,
+    scoreIncorrect: 0,
     misconceptionThreshold: 3,
     misconceptionPracticeCount: 2,
 };

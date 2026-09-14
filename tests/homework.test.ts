@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homeworkInputSchema, homeworkStatus, isOverdue, sortHomework } from "@/lib/homework";
+import { effectiveTeacherClasses, homeworkInputSchema, homeworkStatus, isOverdue, sortHomework } from "@/lib/homework";
 import {
     learningStatus,
     recommendNextLesson,
@@ -24,8 +24,19 @@ function concept(overrides: Partial<RecommendableConcept> & { microTag: string }
 describe("homework assignment input", () => {
     const valid = { microTag: "c7-coefficients", classLevel: 7 as const, questionCount: 5, dueDate: "2026-09-30", allStudents: true, studentUids: [] };
 
-    it("accepts a whole-class assignment", () => {
-        expect(homeworkInputSchema.parse(valid).microTag).toBe("c7-coefficients");
+    it("accepts a single module and normalises it to a list", () => {
+        expect(homeworkInputSchema.parse(valid).microTags).toEqual(["c7-coefficients"]);
+    });
+
+    it("accepts a packet of several modules", () => {
+        const packet = homeworkInputSchema.parse({ ...valid, microTag: undefined, microTags: ["c7-coefficients", "c7-term-segmentation"], packetTitle: "Week 3" });
+        expect(packet.microTags).toHaveLength(2);
+        expect(packet.packetTitle).toBe("Week 3");
+    });
+
+    it("rejects an empty packet and repeated modules", () => {
+        expect(() => homeworkInputSchema.parse({ ...valid, microTag: undefined, microTags: [] })).toThrow();
+        expect(() => homeworkInputSchema.parse({ ...valid, microTag: undefined, microTags: ["c7-coefficients", "c7-coefficients"] })).toThrow();
     });
 
     it("rejects a bad due date", () => {
@@ -40,6 +51,18 @@ describe("homework assignment input", () => {
     it("requires named students when the whole class is not assigned", () => {
         expect(() => homeworkInputSchema.parse({ ...valid, allStudents: false, studentUids: [] })).toThrow();
         expect(homeworkInputSchema.parse({ ...valid, allStudents: false, studentUids: ["uid-1"] }).studentUids).toEqual(["uid-1"]);
+    });
+});
+
+describe("teacher classes", () => {
+    it("uses the classes an admin assigned", () => {
+        expect(effectiveTeacherClasses([7, 8])).toEqual([7, 8]);
+        expect(effectiveTeacherClasses(["6", 6, 9])).toEqual([6]);
+    });
+
+    it("falls back to every class when none are assigned yet", () => {
+        expect(effectiveTeacherClasses(undefined)).toEqual([6, 7, 8]);
+        expect(effectiveTeacherClasses([])).toEqual([6, 7, 8]);
     });
 });
 

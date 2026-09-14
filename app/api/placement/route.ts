@@ -54,7 +54,8 @@ export async function POST(request: NextRequest) {
         const classLevel = parseClass(profileSnapshot.data()?.class);
         if (!classLevel) return NextResponse.json({ success: false, error: "Student profile class must be 6, 7, or 8" }, { status: 409 });
 
-        const locale = parseLocale(body.locale);
+        // The interface and questions are English; Roman Urdu is offered per hint and explanation.
+        const locale: Locale = "english";
         // The diagnostic is a fixed blueprint: five topics of three questions each.
         const questionCount = DIAGNOSTIC_QUESTION_COUNT;
         const sequence = getDiagnosticConceptOrder(classLevel);
@@ -131,7 +132,7 @@ export async function PATCH(request: NextRequest) {
             questionId,
             optionId,
             isCorrect,
-            scoreDelta: isCorrect ? 1 : -1,
+            scoreDelta: isCorrect ? 1 : 0,
             difficulty: current.difficulty,
             microTag: current.microTag,
             answeredAt: new Date(),
@@ -177,7 +178,7 @@ export async function PATCH(request: NextRequest) {
             transaction.update(sessionRef, {
                 answers,
                 eventIds: [...(latest.eventIds ?? []), eventId],
-                score: (latest.score ?? 0) + (isCorrect ? 1 : -1),
+                score: (latest.score ?? 0) + (isCorrect ? 1 : 0),
                 currentDifficulty: nextDifficulty,
                 currentQuestionIndex: completed ? latest.currentQuestionIndex : latest.currentQuestionIndex + 1,
                 questions: nextQuestion ? [...latest.questions, nextQuestion] : latest.questions,

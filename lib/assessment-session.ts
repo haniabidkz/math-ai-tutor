@@ -1,6 +1,7 @@
 import type { Difficulty, Locale, MisconceptionTag, MistakeType, QuestionBankItem } from "@/types/curriculum";
 import { getClassConcepts, getConcept } from "@/lib/curriculum";
 import { XP_FIRST_ATTEMPT_CORRECT, XP_QUIZ_COMPLETED } from "@/lib/gamification";
+import type { TimestampLike } from "@/lib/learner-metrics";
 import { getDiagnosticBlueprint, overallBand, topicBand, type TopicBand } from "@/lib/diagnostic-blueprint";
 import type { DiagnosticProfile, DiagnosticTopicResult } from "@/types/assessment";
 
@@ -47,6 +48,8 @@ export interface StoredQuizSession {
     remedialTag: string | null;
     /** Set when the session was started from an assigned homework. */
     homeworkId?: string | null;
+    /** Written by the server when the session is created; used to measure time spent. */
+    startedAt?: TimestampLike;
     /** Targeted practice plus a re-check, served when a misconception is detected. */
     practiceQueue?: QuestionBankItem[];
     practiceIndex?: number;

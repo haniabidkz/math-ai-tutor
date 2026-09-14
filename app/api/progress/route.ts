@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getRuntimeConcepts } from "@/lib/assessment-content";
 import { adminDb } from "@/lib/firebase-admin";
 import { BADGES } from "@/lib/gamification";
+import { buildConceptItems, selectActiveTopics } from "@/lib/learner-metrics";
 import { homeworkStatus, isOverdue, sortHomework } from "@/lib/homework";
 import { learningStatus, LEARNING_STATUS_LABELS, recommendNextLesson } from "@/lib/adaptive-recommendation";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
@@ -25,20 +26,7 @@ export async function GET(request: NextRequest) {
         if (![6, 7, 8].includes(classLevel)) return NextResponse.json({ success: false, error: "Student class must be 6, 7, or 8" }, { status: 409 });
         const progress = new Map(progressSnapshot.docs.map((doc) => [doc.id, doc.data()]));
         const strong = new Set<string>(profile.diagnosticProfile?.strongMicroTags ?? []);
-        const classConcepts = concepts
-            .filter((concept) => concept.classLevel === classLevel && !concept.foundationOnly)
-            .sort((left, right) => left.topicId.localeCompare(right.topicId) || left.order - right.order);
-        const conceptItems = classConcepts.map((concept) => {
-            const item = progress.get(concept.microTag);
-            const prerequisiteInClass = classConcepts.some((candidate) => candidate.microTag === concept.prerequisiteTag);
-            const prerequisiteMastered = !prerequisiteInClass || !concept.prerequisiteTag || progress.get(concept.prerequisiteTag)?.mastered === true || strong.has(concept.prerequisiteTag);
-            return {
-                ...concept,
-                mastered: item?.mastered === true,
-                percentage: Number(item?.percentage ?? 0),
-                locked: !prerequisiteMastered,
-            };
-        });
+        const conceptItems = buildConceptItems(concepts, classLevel, progress, strong);
         const topicIds = [...new Set(conceptItems.map((concept) => concept.topicId))];
         const topics = topicIds.map((topicId) => ({
             topicId,
@@ -84,6 +72,8 @@ export async function GET(request: NextRequest) {
                 assignedByUid: data.assignedByUid,
                 assignedByEmail: data.assignedByEmail,
                 note: data.note,
+                packetId: data.packetId ?? null,
+                packetTitle: data.packetTitle ?? null,
                 status,
                 percentage: typeof record?.percentage === "number" ? record.percentage : null,
                 completedAt: record?.completedAt?.toDate?.()?.toISOString() ?? null,
@@ -134,6 +124,15 @@ export async function GET(request: NextRequest) {
                 }
                 : null,
             homework,
+            // Exactly five topics to focus on, so the dashboard stays short and navigable.
+            activeTopics: selectActiveTopics(conceptItems, nextLesson?.microTag).map((concept) => ({
+                microTag: concept.microTag,
+                title: concept.title,
+                topicTitle: concept.topicTitle,
+                mastered: concept.mastered,
+                locked: concept.locked,
+                percentage: concept.percentage,
+            })),
             learningStatus: {
                 key: status,
                 label: LEARNING_STATUS_LABELS[status],

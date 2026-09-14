@@ -4,12 +4,13 @@ import { addDays, isMastered, masteryPercentage, scoreDelta } from "@/lib/adapti
 import {
     getAssessmentConfig,
     getPublishedConcept,
-    localized,
     selectQuizQuestions,
     toClientQuestion,
 } from "@/lib/assessment-content";
 import { sessionXp, type StoredAnswer, type StoredQuizSession } from "@/lib/assessment-session";
+import { getConcept } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
+import { sessionDurationSeconds } from "@/lib/learner-metrics";
 import {
     activityDateKey,
     BADGE_BY_ID,
@@ -24,19 +25,18 @@ import {
     isPossibleMisconception,
     mistakeProfileId,
     MISCONCEPTIONS,
-    MISTAKE_TYPE_LABELS,
 } from "@/lib/mistake-analysis";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { MistakePayload } from "@/types/assessment";
-import type { Locale, MisconceptionTag, MistakeType, OptionAnalysis, QuestionBankItem } from "@/types/curriculum";
+import type { LocalizedText, MisconceptionTag, MistakeType, OptionAnalysis, QuestionBankItem } from "@/types/curriculum";
 
 type EvaluationOutcome = {
     success: true;
     duplicate?: boolean;
     action: "hint" | "answer" | "remedialComplete";
     isCorrect?: boolean;
-    hint?: string;
-    explanation?: string;
+    hint?: LocalizedText;
+    explanation?: LocalizedText;
     score: number;
     scoreDelta: number;
     status: StoredQuizSession["status"];
@@ -48,15 +48,15 @@ type EvaluationOutcome = {
     totalQuestions: number;
     remedial?: {
         microTag: string;
-        title: string;
-        concept: string;
+        title: LocalizedText;
+        concept: LocalizedText;
         visualKind: string;
         imageUrl?: string;
     };
     /** Mistake analysis for the option the student just chose. */
     mistake?: MistakePayload;
     /** Present once the same mistake pattern repeats often enough on one concept. */
-    misconception?: { microTag: string; type: MistakeType; tag: MisconceptionTag; label: string; guidance: string; practiceTotal: number };
+    misconception?: { microTag: string; type: MistakeType; tag: MisconceptionTag; label: string; guidance: LocalizedText; practiceTotal: number };
     /** Progress through the targeted practice queue that follows a misconception. */
     practice?: { number: number; total: number; isRecheck: boolean };
     xpEarned?: number;
@@ -75,7 +75,7 @@ function currentResponse(session: StoredQuizSession, duplicate = false): Evaluat
         scoreDelta: 0,
         status: session.status,
         completed: session.status === "completed",
-        question: question ? toClientQuestion(question, session.locale) : undefined,
+        question: question ? toClientQuestion(question, "english") : undefined,
         questionNumber: Math.min(session.currentQuestionIndex + 1, session.questions.length),
         totalQuestions: session.questions.length,
     };
@@ -95,12 +95,12 @@ function practiceProgress(session: StoredQuizSession, index: number): Evaluation
     return { number: index + 1, total, isRecheck: index === total - 1 };
 }
 
-function localizedMistake(analysis: OptionAnalysis, locale: Locale): MistakePayload {
+function mistakePayload(analysis: OptionAnalysis): MistakePayload {
     return {
         type: analysis.mistakeType,
         tag: analysis.misconceptionTag,
-        label: localized(MISCONCEPTIONS[analysis.misconceptionTag].label, locale),
-        whyWrong: localized(analysis.whyWrong, locale),
+        label: MISCONCEPTIONS[analysis.misconceptionTag].label.english,
+        whyWrong: analysis.whyWrong,
     };
 }
 
@@ -205,12 +205,12 @@ export async function POST(request: NextRequest) {
                 outcome = {
                     success: true,
                     action,
-                    hint: localized(question.hint, session.locale),
+                    hint: question.hint,
                     score,
                     scoreDelta: delta,
                     status: session.status,
                     completed: false,
-                    question: toClientQuestion(question, session.locale),
+                    question: toClientQuestion(question, "english"),
                     questionNumber: session.currentQuestionIndex + 1,
                     totalQuestions: session.questions.length,
                     practice: session.status === "misconception_practice" ? practiceProgress(session, session.practiceIndex ?? 0) : undefined,
@@ -238,7 +238,7 @@ export async function POST(request: NextRequest) {
                         scoreDelta: 0,
                         status: "misconception_practice",
                         completed: false,
-                        question: toClientQuestion(queue[0], session.locale),
+                        question: toClientQuestion(queue[0], "english"),
                         questionNumber: session.currentQuestionIndex + 1,
                         totalQuestions: session.questions.length,
                         practice: practiceProgress({ ...session, practiceQueue: queue }, 0),
@@ -311,16 +311,16 @@ export async function POST(request: NextRequest) {
                         success: true,
                         action,
                         isCorrect: correct,
-                        explanation: localized(question.explanation, session.locale),
+                        explanation: question.explanation,
                         score: session.score,
                         scoreDelta: 0,
                         status: "misconception_practice",
                         completed: false,
-                        question: toClientQuestion(queue[index + 1], session.locale),
+                        question: toClientQuestion(queue[index + 1], "english"),
                         questionNumber: session.currentQuestionIndex + 1,
                         totalQuestions: session.questions.length,
                         practice: practiceProgress(session, index + 1),
-                        mistake: analysis ? localizedMistake(analysis, session.locale) : undefined,
+                        mistake: analysis ? mistakePayload(analysis) : undefined,
                     };
                     return;
                 }
@@ -356,7 +356,7 @@ export async function POST(request: NextRequest) {
                     0,
                     action,
                     correct,
-                    localized(question.explanation, session.locale),
+                    question.explanation,
                 );
                 return;
             }
@@ -427,7 +427,7 @@ export async function POST(request: NextRequest) {
                     success: true,
                     action,
                     isCorrect: false,
-                    explanation: localized(question.explanation, session.locale),
+                    explanation: question.explanation,
                     score,
                     scoreDelta: delta,
                     status: "remedial_required",
@@ -436,18 +436,18 @@ export async function POST(request: NextRequest) {
                     questionNumber: session.currentQuestionIndex + 1,
                     remedial: remedialConcept ? {
                         microTag: remedialConcept.microTag,
-                        title: localized(remedialConcept.title, session.locale),
-                        concept: localized(remedialConcept.concept, session.locale),
+                        title: remedialConcept.title,
+                        concept: remedialConcept.concept,
                         visualKind: remedialConcept.visualKind,
                         imageUrl: remedialConcept.imageUrl,
                     } : undefined,
-                    mistake: resolved ? localizedMistake(resolved, session.locale) : undefined,
+                    mistake: resolved ? mistakePayload(resolved) : undefined,
                     misconception: misconception && queue.length ? {
                         microTag: question.microTag,
                         type: mistakeType,
                         tag: misconceptionTag,
-                        label: localized(MISCONCEPTIONS[misconceptionTag].label, session.locale),
-                        guidance: localized(MISCONCEPTIONS[misconceptionTag].guidance, session.locale),
+                        label: MISCONCEPTIONS[misconceptionTag].label.english,
+                        guidance: MISCONCEPTIONS[misconceptionTag].guidance,
                         practiceTotal: queue.length,
                     } : undefined,
                 };
@@ -483,7 +483,7 @@ export async function POST(request: NextRequest) {
                 delta,
                 action,
                 true,
-                localized(question.explanation, session.locale),
+                question.explanation,
             );
         });
 
@@ -509,7 +509,7 @@ function completeOrContinue(
     delta: number,
     action: "answer" | "remedialComplete",
     isCorrect?: boolean,
-    explanation?: string,
+    explanation?: LocalizedText,
 ): EvaluationOutcome {
     const studentRef = adminDb.collection("students").doc(uid);
 
@@ -524,7 +524,7 @@ function completeOrContinue(
             scoreDelta: delta,
             status: session.status,
             completed: false,
-            question: question ? toClientQuestion(question, session.locale) : undefined,
+            question: question ? toClientQuestion(question, "english") : undefined,
             questionNumber: session.currentQuestionIndex + 1,
             totalQuestions: session.questions.length,
         };
@@ -532,6 +532,8 @@ function completeOrContinue(
 
     const percentage = Math.round(masteryPercentage(session.score, session.maxScore));
     const mastered = isMastered(session.score, session.maxScore, config.masteryThresholdPercent);
+    const topicName = session.kind === "weekly" ? "Weekly Review" : getConcept(session.microTag)?.title.english ?? session.microTag;
+    const timeSpentSeconds = sessionDurationSeconds(session.startedAt, Date.now());
     const understandingLevel = percentage >= 85 ? "EXCELLENT" : percentage >= 70 ? "GOOD" : percentage >= 50 ? "AVERAGE" : "WEAK";
 
     const xpBlocked = isXpBlocked({
@@ -552,12 +554,13 @@ function completeOrContinue(
 
     transaction.set(studentRef.collection("quizResults").doc(session.id), {
         sessionId: session.id,
-        topicName: session.kind === "weekly" ? "Weekly Review" : session.microTag,
+        topicName,
+        microTag: session.microTag,
         score: session.score,
         maxScore: session.maxScore,
         percentage,
         totalHintsUsed: session.hintedQuestionIds?.length ?? 0,
-        totalTimeSeconds: 0,
+        totalTimeSeconds: timeSpentSeconds,
         xpEarned,
         understandingLevel,
         feedback: mastered ? "Mastery threshold reached." : "Review the prerequisite and try a fresh session.",
@@ -620,7 +623,7 @@ function completeOrContinue(
         }, { merge: true });
         transaction.set(studentRef.collection("topicProgress").doc(session.microTag), {
             topicId: session.microTag,
-            topicName: session.microTag,
+            topicName,
             classLevel: session.classLevel,
             understood: mastered,
             understandingLevel,
@@ -648,8 +651,8 @@ function completeOrContinue(
             const badge = BADGE_BY_ID.get(id)!;
             return {
                 id,
-                title: localized(badge.title, session.locale),
-                description: localized(badge.description, session.locale),
+                title: badge.title.english,
+                description: badge.description.english,
                 icon: badge.icon,
             };
         }),

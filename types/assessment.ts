@@ -56,10 +56,13 @@ export interface RemedialPayload {
     imageUrl?: string;
 }
 
-/** Mistake analysis sent to the quiz screen for a wrong answer; shared so both sides agree. */
+/**
+ * Mistake analysis sent to the quiz screen for a wrong answer; shared so both sides agree.
+ * The reason is shown in English with Roman Urdu available on request.
+ */
 export interface MistakePayload {
     type: MistakeType;
     tag: MisconceptionTag;
     label: string;
-    whyWrong: string;
+    whyWrong: LocalizedText;
 }

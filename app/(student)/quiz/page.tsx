@@ -8,8 +8,8 @@ import {
     Award, AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, CloudOff, Flame,
     HelpCircle, Lightbulb, RefreshCw, RotateCcw, Sparkles, Target, Trophy, XCircle,
 } from "lucide-react";
+import { BilingualText } from "@/components/bilingual-text";
 import { ConceptGraphic } from "@/components/concept-graphic";
-import { SessionControls } from "@/components/session-controls";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ import {
 } from "@/lib/offline-queue";
 import type { ClientQuestion } from "@/lib/assessment-content";
 import type { MistakePayload } from "@/types/assessment";
-import type { Locale } from "@/types/curriculum";
+import type { LocalizedText } from "@/types/curriculum";
 
 interface QuizState {
     id: string;
@@ -39,15 +39,16 @@ interface QuizState {
 
 interface RemedialState {
     microTag: string;
-    title: string;
-    concept: string;
+    title: LocalizedText;
+    concept: LocalizedText;
     visualKind: string;
     imageUrl?: string;
 }
 
-type MistakeState = MistakePayload;
-interface MisconceptionState { microTag: string; type: string; label: string; guidance: string; practiceTotal: number }
+interface MisconceptionState { microTag: string; type: string; label: string; guidance: LocalizedText; practiceTotal: number }
 interface PracticeState { number: number; total: number; isRecheck: boolean }
+/** Feedback on the answer just submitted, shown above the next question. */
+interface LastAnswer { isCorrect: boolean; explanation?: LocalizedText; mistake?: MistakePayload }
 interface ResultState {
     percentage: number;
     mastered: boolean;
@@ -57,50 +58,17 @@ interface ResultState {
     newBadges?: Array<{ id: string; title: string; description: string; icon: string }>;
 }
 
-const words = {
-    english: {
-        exit: "Exit quiz", question: "Question", hint: "Use a hint", submit: "Check answer", correct: "Correct",
-        review: "Review this foundation", continue: "Continue quiz", complete: "Quiz complete",
-        mastered: "Concept mastered", practice: "Keep practicing", retry: "Start a fresh retry",
-        dashboard: "Dashboard", failed: "The quiz could not continue. Please try again.",
-        mistakeTitle: "What went wrong", misconceptionTitle: "This mistake keeps coming back",
-        misconceptionBody: "You have made this kind of mistake a few times on this concept. Here is the idea again, then a short set of practice questions.",
-        startPractice: "Start targeted practice", practiceLabel: "Targeted practice",
-        recheck: "Re-check question", xpEarned: "XP earned", streakLabel: "Day streak",
-        newBadges: "New badges", totalXp: "Total XP",
-        offlineTitle: "You are offline", offlineBody: "Keep going. Your answers are saved on this device and will sync automatically.",
-        pendingOne: "answer waiting to sync", pendingMany: "answers waiting to sync",
-        syncing: "Syncing your answers...", syncNow: "Sync now",
-        offlineDone: "All questions answered offline", offlineDoneBody: "Reconnect to submit them and see your result.",
-    },
-    "roman-urdu": {
-        exit: "Quiz band karein", question: "Sawal", hint: "Ishara lein", submit: "Jawab check karein", correct: "Durust",
-        review: "Is bunyaad ko dobara dekhein", continue: "Quiz jari rakhein", complete: "Quiz mukammal",
-        mastered: "Concept mukammal samajh aa gaya", practice: "Mazeed mashq karein", retry: "Nayi koshish shuru karein",
-        dashboard: "Dashboard", failed: "Quiz jari nahin reh saka. Dobara koshish karein.",
-        mistakeTitle: "Ghalti kahan hui", misconceptionTitle: "Yeh ghalti baar baar ho rahi hai",
-        misconceptionBody: "Aap is concept mein yeh ghalti kai baar kar chuke hain. Pehle khayal dobara samjhein, phir chhoti si mashq karein.",
-        startPractice: "Makhsoos mashq shuru karein", practiceLabel: "Makhsoos mashq",
-        recheck: "Dobara jaanch ka sawal", xpEarned: "XP mila", streakLabel: "Din ka streak",
-        newBadges: "Naye badges", totalXp: "Kul XP",
-        offlineTitle: "Aap offline hain", offlineBody: "Jari rakhein. Aap ke jawabat is device par mehfooz hain aur khud sync ho jayenge.",
-        pendingOne: "jawab sync hone ka muntazir", pendingMany: "jawabat sync hone ke muntazir",
-        syncing: "Aap ke jawabat sync ho rahe hain...", syncNow: "Ab sync karein",
-        offlineDone: "Tamam sawal offline hal ho gaye", offlineDoneBody: "Natija dekhne ke liye dobara connect karein.",
-    },
-};
-
 function QuizContent() {
     const router = useRouter();
     const params = useSearchParams();
     const [user, setUser] = useState<User | null>(null);
-    const [locale, setLocale] = useState<Locale>("english");
     const [quiz, setQuiz] = useState<QuizState | null>(null);
     const [selected, setSelected] = useState("");
-    const [hint, setHint] = useState("");
-    const [feedback, setFeedback] = useState("");
+    const [hint, setHint] = useState<LocalizedText | null>(null);
+    const [lastAnswer, setLastAnswer] = useState<LastAnswer | null>(null);
     const [remedial, setRemedial] = useState<RemedialState | null>(null);
-    const [mistake, setMistake] = useState<MistakeState | null>(null);
+    const [mistake, setMistake] = useState<MistakePayload | null>(null);
+    const [explanation, setExplanation] = useState<LocalizedText | null>(null);
     const [misconception, setMisconception] = useState<MisconceptionState | null>(null);
     const [practice, setPractice] = useState<PracticeState | null>(null);
     const [result, setResult] = useState<ResultState | null>(null);
@@ -110,40 +78,39 @@ function QuizContent() {
     const [offline, setOffline] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [offlineFinished, setOfflineFinished] = useState(false);
-    const t = words[locale];
 
-    useEffect(() => {
-        const storedLocale: Locale = localStorage.getItem("mathTutorLocale") === "roman-urdu" ? "roman-urdu" : "english";
-        setLocale(storedLocale);
-        return onAuthStateChanged(auth, async (currentUser) => {
-            if (!currentUser) return router.replace("/login?role=student");
-            setUser(currentUser);
-            await startQuiz(currentUser, storedLocale);
-        });
-    }, [router]);
+    useEffect(() => onAuthStateChanged(auth, async (currentUser) => {
+        if (!currentUser) return router.replace("/login?role=student");
+        setUser(currentUser);
+        await startQuiz(currentUser);
+    }), [router]);
 
-    async function startQuiz(currentUser: User, selectedLocale: Locale, retryOf?: string) {
+    function resetQuestionState() {
+        setSelected("");
+        setHint(null);
+        setMistake(null);
+        setExplanation(null);
+    }
+
+    async function startQuiz(currentUser: User, retryOf?: string) {
         setLoading(true);
         setError("");
         setQuiz(null);
         setResult(null);
         setRemedial(null);
-        setMistake(null);
         setMisconception(null);
         setPractice(null);
-        setSelected("");
-        setHint("");
-        setFeedback("");
+        setLastAnswer(null);
+        resetQuestionState();
         try {
             const response = await fetch("/api/quiz", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${await currentUser.getIdToken()}` },
+                // The level is chosen by the system from the student's results.
                 body: JSON.stringify({
                     kind: params.get("kind") === "weekly" ? "weekly" : "mastery",
                     microTag: params.get("microTag") ?? params.get("topicId"),
                     classLevel: Number(params.get("class") ?? 6),
-                    difficulty: params.get("difficulty") ?? localStorage.getItem("mathTutorDifficulty") ?? "medium",
-                    locale: selectedLocale,
                     homeworkId: params.get("homeworkId") ?? undefined,
                     retryOf,
                 }),
@@ -156,7 +123,7 @@ function QuizContent() {
             setOfflineFinished(false);
             setQuiz(data.session);
         } catch {
-            setError(words[selectedLocale].failed);
+            setError("The quiz could not start. Please try again.");
         } finally {
             setLoading(false);
         }
@@ -182,7 +149,7 @@ function QuizContent() {
             if (!response.ok) throw new Error(data.error);
 
             if (action === "hint") {
-                setHint(data.hint);
+                setHint(data.hint ?? null);
                 setQuiz({ ...quiz, score: data.score });
                 return;
             }
@@ -200,20 +167,20 @@ function QuizContent() {
             if (data.status === "remedial_required") {
                 setRemedial(data.remedial ?? null);
                 setMistake(data.mistake ?? null);
+                setExplanation(data.explanation ?? null);
                 setMisconception(data.misconception ?? null);
-                setFeedback(data.explanation ?? "");
                 setQuiz({ ...quiz, score: data.score });
                 return;
             }
 
-            // Active question or the next item in a targeted practice queue.
-            setFeedback(data.isCorrect ? data.explanation ?? t.correct : data.explanation ?? "");
-            setMistake(data.mistake ?? null);
+            // Next main question or the next item in a targeted practice queue.
+            setLastAnswer(action === "answer" && typeof data.isCorrect === "boolean"
+                ? { isCorrect: data.isCorrect, explanation: data.explanation, mistake: data.mistake }
+                : null);
             setPractice(data.status === "misconception_practice" ? data.practice ?? null : null);
             setQuiz({ ...quiz, question: data.question, questionNumber: data.questionNumber ?? quiz.questionNumber, score: data.score });
-            setSelected("");
-            setHint("");
             setRemedial(null);
+            resetQuestionState();
             if (data.status !== "misconception_practice") setMisconception(null);
         } catch (caught) {
             // fetch only throws when the request never reached the server.
@@ -221,7 +188,7 @@ function QuizContent() {
                 answerOffline(quiz, selected);
                 return;
             }
-            setError(t.failed);
+            setError("The quiz could not continue. Please try again.");
         } finally {
             setLoading(false);
         }
@@ -240,14 +207,12 @@ function QuizContent() {
         setPendingCount(pendingForSession(currentQuiz.id).length);
         setOffline(true);
         setError("");
+        setLastAnswer(null);
 
         const next = currentQuiz.questions?.[currentQuiz.questionNumber];
         if (next) {
             setQuiz({ ...currentQuiz, question: next, questionNumber: currentQuiz.questionNumber + 1 });
-            setSelected("");
-            setHint("");
-            setFeedback("");
-            setMistake(null);
+            resetQuestionState();
         } else {
             setOfflineFinished(true);
         }
@@ -330,19 +295,19 @@ function QuizContent() {
             <Card className="w-full max-w-lg rounded-lg border-t-4 border-t-amber-500 text-center">
                 <CardHeader>
                     <CloudOff className="mx-auto mb-3 h-12 w-12 text-amber-500" />
-                    <CardTitle>{t.offlineDone}</CardTitle>
-                    <p className="text-muted-foreground">{t.offlineDoneBody}</p>
+                    <CardTitle>All questions answered offline</CardTitle>
+                    <p className="text-muted-foreground">Reconnect to submit them and see your result.</p>
                 </CardHeader>
                 <CardContent>
                     <p className="text-sm font-medium">
-                        {pendingCount} {pendingCount === 1 ? t.pendingOne : t.pendingMany}
+                        {pendingCount} {pendingCount === 1 ? "answer" : "answers"} waiting to sync
                     </p>
                 </CardContent>
                 <CardFooter className="grid gap-3">
                     <Button onClick={() => user && flushQueue(user, quiz.id)} disabled={syncing}>
-                        <RefreshCw className={"mr-2 h-4 w-4 " + (syncing ? "animate-spin" : "")} />{syncing ? t.syncing : t.syncNow}
+                        <RefreshCw className={"mr-2 h-4 w-4 " + (syncing ? "animate-spin" : "")} />{syncing ? "Syncing your answers..." : "Sync now"}
                     </Button>
-                    <Button variant="outline" asChild><Link href="/dashboard">{t.dashboard}</Link></Button>
+                    <Button variant="outline" asChild><Link href="/dashboard">Dashboard</Link></Button>
                 </CardFooter>
             </Card>
         </main>
@@ -353,19 +318,19 @@ function QuizContent() {
             <Card className="w-full max-w-lg rounded-lg border-t-4 border-t-emerald-500 text-center">
                 <CardHeader>
                     <Trophy className="mx-auto mb-3 h-12 w-12 text-amber-500" />
-                    <CardTitle>{t.complete}</CardTitle>
-                    <p className="text-muted-foreground">{result.mastered ? t.mastered : t.practice}</p>
+                    <CardTitle>Quiz complete</CardTitle>
+                    <p className="text-muted-foreground">{result.mastered ? "Concept mastered" : "Keep practicing"}</p>
                 </CardHeader>
                 <CardContent className="space-y-5">
                     <p className="text-5xl font-bold text-primary">{result.percentage}%</p>
                     <div className="grid grid-cols-2 gap-3">
                         <div className="rounded-lg border bg-indigo-50 p-3">
-                            <p className="text-xs font-semibold uppercase text-indigo-700">{t.xpEarned}</p>
+                            <p className="text-xs font-semibold uppercase text-indigo-700">XP earned</p>
                             <p className="text-2xl font-bold text-indigo-900">+{result.xpEarned ?? 0}</p>
-                            {typeof result.totalXp === "number" ? <p className="text-xs text-indigo-700">{t.totalXp}: {result.totalXp}</p> : null}
+                            {typeof result.totalXp === "number" ? <p className="text-xs text-indigo-700">Total XP: {result.totalXp}</p> : null}
                         </div>
                         <div className="rounded-lg border bg-amber-50 p-3">
-                            <p className="text-xs font-semibold uppercase text-amber-700">{t.streakLabel}</p>
+                            <p className="text-xs font-semibold uppercase text-amber-700">Day streak</p>
                             <p className="flex items-center justify-center gap-1 text-2xl font-bold text-amber-900">
                                 <Flame className="h-5 w-5" />{result.streak ?? 0}
                             </p>
@@ -374,7 +339,7 @@ function QuizContent() {
                     {result.newBadges?.length ? (
                         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-left">
                             <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-emerald-800">
-                                <Sparkles className="h-4 w-4" />{t.newBadges}
+                                <Sparkles className="h-4 w-4" />New badges
                             </p>
                             <ul className="space-y-1">
                                 {result.newBadges.map((badge) => (
@@ -389,8 +354,8 @@ function QuizContent() {
                     ) : null}
                 </CardContent>
                 <CardFooter className="grid gap-3">
-                    <Button onClick={() => user && startQuiz(user, locale, quiz.id)}><RotateCcw className="mr-2 h-4 w-4" />{t.retry}</Button>
-                    <Button variant="outline" asChild><Link href="/dashboard">{t.dashboard}</Link></Button>
+                    <Button onClick={() => user && startQuiz(user, quiz.id)}><RotateCcw className="mr-2 h-4 w-4" />Start a fresh retry</Button>
+                    <Button variant="outline" asChild><Link href="/dashboard">Dashboard</Link></Button>
                 </CardFooter>
             </Card>
         </main>
@@ -403,34 +368,44 @@ function QuizContent() {
             <Card className="mx-auto max-w-2xl overflow-hidden rounded-lg">
                 <ConceptGraphic kind={remedial.visualKind} />
                 <CardHeader>
-                    <Badge variant="outline" className="w-fit"><HelpCircle className="mr-1 h-3 w-3" />{t.review}</Badge>
-                    <CardTitle>{remedial.title}</CardTitle>
+                    <Badge variant="outline" className="w-fit"><HelpCircle className="mr-1 h-3 w-3" />Review this foundation</Badge>
+                    <CardTitle>{remedial.title.english}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                    <p className="leading-7">{remedial.concept}</p>
                     {mistake ? (
                         <Alert className="border-rose-200 bg-rose-50">
                             <XCircle className="h-4 w-4 text-rose-700" />
-                            <AlertTitle className="text-rose-900">{t.mistakeTitle}: {mistake.label}</AlertTitle>
-                            <AlertDescription className="text-rose-800">{mistake.whyWrong}</AlertDescription>
+                            <AlertTitle className="text-rose-900">Why that answer is wrong: {mistake.label}</AlertTitle>
+                            <AlertDescription className="text-rose-800">
+                                <BilingualText text={mistake.whyWrong} />
+                            </AlertDescription>
                         </Alert>
-                    ) : feedback ? (
-                        <Alert><Lightbulb className="h-4 w-4" /><AlertDescription>{feedback}</AlertDescription></Alert>
                     ) : null}
+                    {explanation ? (
+                        <Alert>
+                            <Lightbulb className="h-4 w-4" />
+                            <AlertTitle>Explanation</AlertTitle>
+                            <AlertDescription><BilingualText text={explanation} /></AlertDescription>
+                        </Alert>
+                    ) : null}
+                    <div>
+                        <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Concept</p>
+                        <BilingualText text={remedial.concept} />
+                    </div>
                     {misconception ? (
                         <Alert className="border-amber-300 bg-amber-50">
                             <AlertTriangle className="h-4 w-4 text-amber-700" />
-                            <AlertTitle className="text-amber-900">{t.misconceptionTitle}</AlertTitle>
+                            <AlertTitle className="text-amber-900">This mistake keeps coming back</AlertTitle>
                             <AlertDescription className="space-y-2 text-amber-900">
-                                <p>{t.misconceptionBody}</p>
-                                <p className="font-medium">{misconception.guidance}</p>
+                                <p>You have made this kind of mistake a few times on this concept. Here is the idea again, then a short set of practice questions.</p>
+                                <BilingualText text={misconception.guidance} className="font-medium" />
                             </AlertDescription>
                         </Alert>
                     ) : null}
                 </CardContent>
                 <CardFooter>
                     <Button className="ml-auto" onClick={() => evaluate("remedialComplete")} disabled={loading}>
-                        {misconception ? t.startPractice : t.continue}<ArrowRight className="ml-2 h-4 w-4" />
+                        {misconception ? "Start targeted practice" : "Continue quiz"}<ArrowRight className="ml-2 h-4 w-4" />
                     </Button>
                 </CardFooter>
             </Card>
@@ -441,9 +416,8 @@ function QuizContent() {
     return (
         <div className="min-h-screen bg-slate-50">
             <header className="border-b bg-white">
-                <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 px-4 py-4">
-                    <Button variant="ghost" asChild><Link href="/dashboard"><ArrowLeft className="mr-2 h-4 w-4" />{t.exit}</Link></Button>
-                    <SessionControls locale={locale} onLocaleChange={(next) => { setLocale(next); if (user) void startQuiz(user, next, quiz?.id); }} />
+                <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-4">
+                    <Button variant="ghost" asChild><Link href="/dashboard"><ArrowLeft className="mr-2 h-4 w-4" />Exit quiz</Link></Button>
                 </div>
             </header>
             <main className="mx-auto max-w-3xl px-4 py-8">
@@ -451,15 +425,15 @@ function QuizContent() {
                 {offline || pendingCount > 0 ? (
                     <Alert className="mb-5 border-slate-300 bg-slate-100">
                         <CloudOff className="h-4 w-4 text-slate-700" />
-                        <AlertTitle className="text-slate-900">{offline ? t.offlineTitle : t.syncing}</AlertTitle>
+                        <AlertTitle className="text-slate-900">{offline ? "You are offline" : "Syncing your answers..."}</AlertTitle>
                         <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-slate-700">
                             <span>
-                                {offline ? t.offlineBody : ""}
-                                {pendingCount > 0 ? " " + pendingCount + " " + (pendingCount === 1 ? t.pendingOne : t.pendingMany) + "." : ""}
+                                {offline ? "Keep going. Your answers are saved on this device and will sync automatically." : ""}
+                                {pendingCount > 0 ? ` ${pendingCount} ${pendingCount === 1 ? "answer" : "answers"} waiting to sync.` : ""}
                             </span>
                             {pendingCount > 0 ? (
                                 <Button size="sm" variant="outline" onClick={() => user && quiz && flushQueue(user, quiz.id)} disabled={syncing}>
-                                    <RefreshCw className={"mr-2 h-3.5 w-3.5 " + (syncing ? "animate-spin" : "")} />{t.syncNow}
+                                    <RefreshCw className={"mr-2 h-3.5 w-3.5 " + (syncing ? "animate-spin" : "")} />Sync now
                                 </Button>
                             ) : null}
                         </AlertDescription>
@@ -469,24 +443,38 @@ function QuizContent() {
                     <Alert className="mb-5 border-amber-300 bg-amber-50">
                         <Target className="h-4 w-4 text-amber-700" />
                         <AlertTitle className="text-amber-900">
-                            {practice.isRecheck ? t.recheck : `${t.practiceLabel} ${practice.number} / ${practice.total}`}
+                            {practice.isRecheck ? "Re-check question" : `Targeted practice ${practice.number} / ${practice.total}`}
                         </AlertTitle>
                         {misconception ? <AlertDescription className="text-amber-800">{misconception.label}</AlertDescription> : null}
                     </Alert>
                 ) : null}
+                {lastAnswer ? (
+                    lastAnswer.isCorrect ? (
+                        <Alert className="mb-5 border-emerald-200 bg-emerald-50">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                            <AlertTitle className="text-emerald-900">Correct</AlertTitle>
+                            {lastAnswer.explanation ? (
+                                <AlertDescription className="text-emerald-900"><BilingualText text={lastAnswer.explanation} /></AlertDescription>
+                            ) : null}
+                        </Alert>
+                    ) : lastAnswer.mistake ? (
+                        <Alert className="mb-5 border-rose-200 bg-rose-50">
+                            <XCircle className="h-4 w-4 text-rose-700" />
+                            <AlertTitle className="text-rose-900">Why that answer is wrong: {lastAnswer.mistake.label}</AlertTitle>
+                            <AlertDescription className="text-rose-800"><BilingualText text={lastAnswer.mistake.whyWrong} /></AlertDescription>
+                        </Alert>
+                    ) : null
+                ) : null}
                 {quiz && question ? (
                     <>
                         <div className="mb-4 flex items-center justify-between text-sm">
-                            <span>{t.question} {quiz.questionNumber} / {quiz.totalQuestions}</span>
+                            <span>Question {quiz.questionNumber} / {quiz.totalQuestions}</span>
                             <span className="font-semibold">Score {quiz.score}</span>
                         </div>
                         <Progress value={(quiz.questionNumber / quiz.totalQuestions) * 100} className="mb-6 h-2" />
                         <Card className="rounded-lg">
                             <CardHeader>
-                                <div className="flex items-center justify-between">
-                                    <Badge variant="outline">{question.difficulty}</Badge>
-                                    <span className="text-xs text-muted-foreground">{question.microTag}</span>
-                                </div>
+                                <Badge variant="outline" className="w-fit capitalize">{question.difficulty}</Badge>
                                 <CardTitle className="pt-4 text-xl leading-relaxed">{question.question}</CardTitle>
                             </CardHeader>
                             <CardContent className="grid gap-3">
@@ -501,22 +489,21 @@ function QuizContent() {
                                         <span className="mr-3 font-bold">{option.id}</span>{option.text}
                                     </Button>
                                 ))}
-                                {mistake && practice ? (
-                                    <Alert className="mt-3 border-rose-200 bg-rose-50">
-                                        <XCircle className="h-4 w-4 text-rose-700" />
-                                        <AlertTitle className="text-rose-900">{t.mistakeTitle}: {mistake.label}</AlertTitle>
-                                        <AlertDescription className="text-rose-800">{mistake.whyWrong}</AlertDescription>
+                                {hint ? (
+                                    <Alert className="mt-3">
+                                        <Lightbulb className="h-4 w-4" />
+                                        <AlertTitle>Hint</AlertTitle>
+                                        <AlertDescription><BilingualText text={hint} /></AlertDescription>
                                     </Alert>
                                 ) : null}
-                                {hint ? <Alert className="mt-3"><Lightbulb className="h-4 w-4" /><AlertTitle>{t.hint}</AlertTitle><AlertDescription>{hint}</AlertDescription></Alert> : null}
                             </CardContent>
                             <CardFooter className="flex justify-between border-t pt-5">
-                                <Button variant="ghost" onClick={() => evaluate("hint")} disabled={loading || !!hint}><Lightbulb className="mr-2 h-4 w-4" />{t.hint}</Button>
-                                <Button onClick={() => evaluate("answer")} disabled={!selected || loading}>{t.submit}<CheckCircle2 className="ml-2 h-4 w-4" /></Button>
+                                <Button variant="ghost" onClick={() => evaluate("hint")} disabled={loading || !!hint}><Lightbulb className="mr-2 h-4 w-4" />Use a hint</Button>
+                                <Button onClick={() => evaluate("answer")} disabled={!selected || loading}>Check answer<CheckCircle2 className="ml-2 h-4 w-4" /></Button>
                             </CardFooter>
                         </Card>
                     </>
-                ) : <Button onClick={() => user && startQuiz(user, locale)}>Try again</Button>}
+                ) : <Button onClick={() => user && startQuiz(user)}>Try again</Button>}
             </main>
         </div>
     );

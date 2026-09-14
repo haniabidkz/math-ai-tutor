@@ -5,7 +5,7 @@ import { writeAuditLog } from "@/lib/admin-audit";
 import { getPublishedConcept } from "@/lib/assessment-content";
 import { getClassConcepts, isLearningConceptForClass } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
-import { homeworkInputSchema, homeworkStatus, isOverdue, sortHomework } from "@/lib/homework";
+import { ALL_CLASSES, effectiveTeacherClasses, homeworkInputSchema, homeworkStatus, isOverdue, sortHomework } from "@/lib/homework";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { StudentClassLevel } from "@/types/curriculum";
 import type { HomeworkAssignment, StudentHomework } from "@/types/homework";
@@ -24,6 +24,8 @@ function toAssignment(id: string, data: FirebaseFirestore.DocumentData): Homewor
         assignedByUid: data.assignedByUid,
         assignedByEmail: data.assignedByEmail,
         note: data.note,
+        packetId: data.packetId ?? null,
+        packetTitle: data.packetTitle ?? null,
     };
 }
 
@@ -66,11 +68,23 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ success: true, homework: await homeworkForStudent(user.uid, classLevel) });
         }
 
-        // Teachers and admins see every assignment, newest first.
-        const snapshot = await adminDb.collection("homework").orderBy("createdAt", "desc").limit(200).get();
+        // Teachers see their own classes; admins see every class.
+        const teacherDoc = user.role === "teacher" ? await adminDb.collection("teachers").doc(user.uid).get() : null;
+        const assignedClasses = teacherDoc?.data()?.assignedClasses;
+        const classes = user.role === "teacher" ? effectiveTeacherClasses(assignedClasses) : [...ALL_CLASSES];
+        const hasAssignedClasses = user.role !== "teacher" || (Array.isArray(assignedClasses) && assignedClasses.length > 0);
+
+        const [snapshot, ...counts] = await Promise.all([
+            adminDb.collection("homework").orderBy("createdAt", "desc").limit(200).get(),
+            ...classes.map((level) => adminDb.collection("students").where("class", "==", level).count().get()),
+        ]);
         return NextResponse.json({
             success: true,
-            homework: snapshot.docs.map((doc) => toAssignment(doc.id, doc.data())),
+            myClasses: classes.map((classLevel, index) => ({ classLevel, students: counts[index].data().count })),
+            hasAssignedClasses,
+            homework: snapshot.docs
+                .map((doc) => toAssignment(doc.id, doc.data()))
+                .filter((item) => classes.includes(item.classLevel)),
         });
     } catch (error) {
         const auth = authErrorResponse(error);
@@ -85,43 +99,65 @@ export async function POST(request: NextRequest) {
         const user = await requireUser(request, ["teacher", "super_admin"]);
         const parsed = homeworkInputSchema.parse(await request.json());
 
-        const concept = await getPublishedConcept(parsed.microTag);
-        if (!concept) return NextResponse.json({ success: false, error: "Concept not found" }, { status: 404 });
-        // Any topic may be assigned, but it has to belong to the class being assigned.
-        if (!isLearningConceptForClass(concept, parsed.classLevel)) {
-            const available = getClassConcepts(parsed.classLevel).length;
-            return NextResponse.json({
-                success: false,
-                error: `${concept.microTag} is not a Class ${parsed.classLevel} concept (${available} available)`,
-            }, { status: 400 });
+        if (user.role === "teacher") {
+            const teacher = await adminDb.collection("teachers").doc(user.uid).get();
+            const allowed = effectiveTeacherClasses(teacher.data()?.assignedClasses);
+            if (!allowed.includes(parsed.classLevel)) {
+                return NextResponse.json({
+                    success: false,
+                    error: `You can assign homework to your classes only (Class ${allowed.join(", ")}).`,
+                }, { status: 403 });
+            }
         }
 
-        const id = `hw_${randomUUID()}`;
-        await adminDb.collection("homework").doc(id).set({
-            microTag: concept.microTag,
-            title: concept.title,
-            topicTitle: concept.topicTitle,
-            classLevel: parsed.classLevel,
-            questionCount: parsed.questionCount,
-            dueDate: parsed.dueDate,
-            allStudents: parsed.allStudents,
-            studentUids: parsed.allStudents ? [] : parsed.studentUids,
-            assignedByUid: user.uid,
-            assignedByEmail: user.email,
-            ...(parsed.note ? { note: parsed.note } : {}),
-            createdAt: FieldValue.serverTimestamp(),
-        });
+        // Every module in a packet must exist and belong to the class being assigned.
+        const concepts = await Promise.all(parsed.microTags.map((microTag) => getPublishedConcept(microTag)));
+        for (const [index, concept] of concepts.entries()) {
+            if (!concept) return NextResponse.json({ success: false, error: `Module ${parsed.microTags[index]} was not found` }, { status: 404 });
+            if (!isLearningConceptForClass(concept, parsed.classLevel)) {
+                const available = getClassConcepts(parsed.classLevel).length;
+                return NextResponse.json({
+                    success: false,
+                    error: `${concept.microTag} is not a Class ${parsed.classLevel} module (${available} available)`,
+                }, { status: 400 });
+            }
+        }
+
+        const packetId = concepts.length > 1 ? `packet_${randomUUID()}` : null;
+        const packetTitle = packetId ? parsed.packetTitle || `${concepts.length}-module homework packet` : null;
+        const batch = adminDb.batch();
+        const ids: string[] = [];
+        for (const concept of concepts) {
+            const id = `hw_${randomUUID()}`;
+            ids.push(id);
+            batch.set(adminDb.collection("homework").doc(id), {
+                microTag: concept!.microTag,
+                title: concept!.title,
+                topicTitle: concept!.topicTitle,
+                classLevel: parsed.classLevel,
+                questionCount: parsed.questionCount,
+                dueDate: parsed.dueDate,
+                allStudents: parsed.allStudents,
+                studentUids: parsed.allStudents ? [] : parsed.studentUids,
+                assignedByUid: user.uid,
+                assignedByEmail: user.email,
+                ...(packetId ? { packetId, packetTitle } : {}),
+                ...(parsed.note ? { note: parsed.note } : {}),
+                createdAt: FieldValue.serverTimestamp(),
+            });
+        }
+        await batch.commit();
 
         await writeAuditLog({
             actorUid: user.uid,
             actorEmail: user.email,
-            action: "homework.assign",
+            action: packetId ? "homework.assignPacket" : "homework.assign",
             targetType: "homework",
-            targetId: id,
-            summary: `Assigned ${concept.microTag} to Class ${parsed.classLevel} (due ${parsed.dueDate})`,
+            targetId: ids.join(","),
+            summary: `Assigned ${parsed.microTags.join(", ")} to Class ${parsed.classLevel} (due ${parsed.dueDate})`,
         });
 
-        return NextResponse.json({ success: true, id }, { status: 201 });
+        return NextResponse.json({ success: true, id: ids[0], ids, packetId }, { status: 201 });
     } catch (error: unknown) {
         const auth = authErrorResponse(error);
         if (auth) return NextResponse.json(auth.body, { status: auth.status });

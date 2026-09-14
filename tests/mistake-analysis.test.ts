@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+    analysisForTag,
     buildOptionAnalysis,
     deriveMisconceptionTag,
     getOptionAnalysis,
     isPossibleMisconception,
     MISCONCEPTIONS,
     mistakeProfileId,
+    suggestOptionAnalysis,
 } from "@/lib/mistake-analysis";
 import { getQuestionsForConcept, QUESTION_BANK } from "@/lib/question-bank";
 import type { MistakeType, QuestionBankItem } from "@/types/curriculum";
@@ -95,6 +97,23 @@ describe("option analysis", () => {
             expect(entry.whyWrong.english.length).toBeGreaterThan(0);
             expect(entry.whyWrong.romanUrdu.length).toBeGreaterThan(0);
         }
+    });
+});
+
+describe("admin pre-fill", () => {
+    it("builds the predefined reason for a chosen tag, including the correct answer", () => {
+        const analysis = analysisForTag("ratio-order-reversed", "12");
+        expect(analysis.mistakeType).toBe("concept");
+        expect(analysis.whyWrong.english).toContain("The correct answer is 12.");
+        expect(analysis.whyWrong.romanUrdu).toContain("Durust jawab 12 hai.");
+    });
+
+    it("suggests from the options even when a reason was already written", () => {
+        const authored = question({
+            optionAnalysis: { B: { mistakeType: "operation", misconceptionTag: "wrong-operation-choice", whyWrong: { english: "Mine", romanUrdu: "Mera" } } },
+        });
+        expect(suggestOptionAnalysis(authored, "B")?.misconceptionTag).toBe("sign-direction");
+        expect(suggestOptionAnalysis(authored, "A")).toBeNull();
     });
 });
 

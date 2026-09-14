@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     addDays,
+    chooseQuizDifficulty,
     isMastered,
     isWeeklyAssessmentDue,
     masteryPercentage,
@@ -23,12 +24,23 @@ describe("adaptive engine", () => {
         expect(nextDiagnosticDifficulty("medium", [false, false, true, true, true])).toBe("hard");
     });
 
-    it("scores answers and never penalises a hint", () => {
+    it("rewards correct answers and never deducts for mistakes or hints", () => {
         expect(scoreDelta("correct")).toBe(1);
-        expect(scoreDelta("incorrect")).toBe(-1);
-        // Hints award no points but must never reduce marks or XP.
+        expect(scoreDelta("incorrect")).toBe(0);
         expect(scoreDelta("hint", false)).toBe(0);
         expect(scoreDelta("hint", true)).toBe(0);
+    });
+
+    it("chooses the quiz level without asking the student", () => {
+        expect(chooseQuizDifficulty({})).toBe("medium");
+        expect(chooseQuizDifficulty({ baseline: "easy" })).toBe("easy");
+        expect(chooseQuizDifficulty({ adaptiveLevel: 1 })).toBe("easy");
+        expect(chooseQuizDifficulty({ adaptiveLevel: 5 })).toBe("hard");
+        // A strong last result steps up; a weak one steps down.
+        expect(chooseQuizDifficulty({ baseline: "medium", conceptPercentage: 90 })).toBe("hard");
+        expect(chooseQuizDifficulty({ baseline: "medium", conceptPercentage: 30 })).toBe("easy");
+        expect(chooseQuizDifficulty({ baseline: "hard", conceptPercentage: 95 })).toBe("hard");
+        expect(chooseQuizDifficulty({ baseline: "easy", conceptPercentage: 10 })).toBe("easy");
     });
 
     it("clamps mastery percentages and enforces threshold", () => {

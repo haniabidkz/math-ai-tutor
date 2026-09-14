@@ -16,6 +16,24 @@ function bearerToken(request: NextRequest) {
     return header.slice(7);
 }
 
+/**
+ * Firebase rejects expired or malformed tokens with its own error type. Those used to fall
+ * through as HTTP 500, which hid the real cause behind "Failed to update config".
+ */
+async function verifyToken(request: NextRequest) {
+    const token = bearerToken(request);
+    try {
+        return await adminAuth.verifyIdToken(token, true);
+    } catch (error) {
+        const code = String((error as { code?: string }).code ?? "");
+        if (code === "auth/id-token-expired" || code === "auth/id-token-revoked") {
+            throw new AuthorizationError(401, "Your session expired. Please sign in again.");
+        }
+        if (code.startsWith("auth/")) throw new AuthorizationError(401, "Authentication required");
+        throw error;
+    }
+}
+
 async function resolveRole(uid: string, claimedRole?: UserRole): Promise<UserRole> {
     if (claimedRole) return claimedRole;
     for (const [collection, role] of [["students", "student"], ["parents", "parent"], ["teachers", "teacher"]] as const) {
@@ -25,7 +43,7 @@ async function resolveRole(uid: string, claimedRole?: UserRole): Promise<UserRol
 }
 
 export async function requireUser(request: NextRequest, roles?: UserRole[]): Promise<AuthenticatedUser> {
-    const decoded = await adminAuth.verifyIdToken(bearerToken(request), true);
+    const decoded = await verifyToken(request);
     const superAdmin = decoded.super_admin === true;
     const role = superAdmin ? "super_admin" : await resolveRole(decoded.uid, decoded.role as UserRole | undefined);
     if (roles && !roles.includes(role)) throw new AuthorizationError(403, "Role is not allowed");
@@ -33,7 +51,7 @@ export async function requireUser(request: NextRequest, roles?: UserRole[]): Pro
 }
 
 export async function requireSuperAdmin(request: NextRequest): Promise<AuthenticatedUser> {
-    const decoded = await adminAuth.verifyIdToken(bearerToken(request), true);
+    const decoded = await verifyToken(request);
     assertSuperAdminClaims(decoded);
     return { uid: decoded.uid, email: decoded.email ?? "", role: "super_admin", superAdmin: true };
 }
