@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
     BookOpen, Download, FileUp, Gauge, LayoutDashboard, LogOut,
-    Pencil, RefreshCw, Save, Settings, ShieldCheck, Trash2, Upload, Users,
+    Pencil, RefreshCw, Save, Settings, ShieldCheck, Trash2, Users,
 } from "lucide-react";
+import { ConceptEditor, type ConceptPayload } from "@/components/admin/concept-editor";
 import { QuestionEditor, type QuestionPayload } from "@/components/admin/question-editor";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -14,11 +15,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CONFIG_LIMITS, EDITABLE_CONFIG_KEYS } from "@/lib/config-validation";
 import { auth } from "@/lib/firebase";
-import type { AssessmentConfig, ContentStatus, MicroConcept, QuestionBankItem } from "@/types/curriculum";
+import type { AssessmentConfig, MicroConcept, QuestionBankItem } from "@/types/curriculum";
 
 interface Overview {
     metrics: Record<string, number>;
@@ -36,12 +36,6 @@ interface ManagedUser {
     isTeacher?: boolean;
     assignedClasses?: number[];
 }
-
-const blankConcept = () => ({
-    microTag: "", prerequisiteTag: "", classLevel: 6, topicId: "", topicEnglish: "", topicRomanUrdu: "",
-    titleEnglish: "", titleRomanUrdu: "", conceptEnglish: "", conceptRomanUrdu: "", family: "algebra",
-    visualKind: "expression", imageUrl: "", order: 0, status: "draft" as ContentStatus,
-});
 
 /**
  * Every call asks Firebase for the current ID token. Tokens expire after an hour, and the
@@ -75,7 +69,8 @@ export default function SuperAdminPage() {
     const [configDraft, setConfigDraft] = useState<Record<string, string>>({});
     const [editingQuestion, setEditingQuestion] = useState<QuestionBankItem | null>(null);
     const [editorKey, setEditorKey] = useState(0);
-    const [conceptForm, setConceptForm] = useState(blankConcept());
+    const [editingConcept, setEditingConcept] = useState<MicroConcept | null>(null);
+    const [conceptEditorKey, setConceptEditorKey] = useState(0);
     const [filter, setFilter] = useState("");
     const [busy, setBusy] = useState(true);
     const [error, setError] = useState("");
@@ -176,33 +171,29 @@ export default function SuperAdminPage() {
         const anchor = document.createElement("a"); anchor.href = url; anchor.download = "math-ai-tutor-questions.json"; anchor.click(); URL.revokeObjectURL(url);
     }
 
-    async function saveConcept() {
-        const payload = {
-            microTag: conceptForm.microTag, prerequisiteTag: conceptForm.prerequisiteTag || null,
-            classLevel: Number(conceptForm.classLevel), topicId: conceptForm.topicId,
-            topicTitle: { english: conceptForm.topicEnglish, romanUrdu: conceptForm.topicRomanUrdu },
-            title: { english: conceptForm.titleEnglish, romanUrdu: conceptForm.titleRomanUrdu },
-            concept: { english: conceptForm.conceptEnglish, romanUrdu: conceptForm.conceptRomanUrdu },
-            family: conceptForm.family, visualKind: conceptForm.visualKind, imageUrl: conceptForm.imageUrl,
-            order: Number(conceptForm.order), status: conceptForm.status,
-        };
-        try { await api("/api/admin/concepts", jsonInit("POST", payload)); setConceptForm(blankConcept()); await loadAll(); showNotice("Concept saved."); }
-        catch (caught) { fail(caught, "Concept could not be saved"); }
+    async function saveConcept(payload: ConceptPayload) {
+        try {
+            await api("/api/admin/concepts", jsonInit("POST", payload));
+            setEditingConcept(null);
+            await loadAll();
+            showNotice(payload.isNew ? `Concept ${payload.microTag} created.` : `Concept ${payload.microTag} updated.`);
+            return true;
+        } catch (caught) {
+            fail(caught, "Concept could not be saved");
+            return false;
+        }
     }
 
     function editConcept(concept: MicroConcept) {
-        setConceptForm({
-            microTag: concept.microTag, prerequisiteTag: concept.prerequisiteTag ?? "", classLevel: concept.classLevel, topicId: concept.topicId,
-            topicEnglish: concept.topicTitle.english, topicRomanUrdu: concept.topicTitle.romanUrdu, titleEnglish: concept.title.english,
-            titleRomanUrdu: concept.title.romanUrdu, conceptEnglish: concept.concept.english, conceptRomanUrdu: concept.concept.romanUrdu,
-            family: concept.family, visualKind: concept.visualKind, imageUrl: concept.imageUrl ?? "", order: concept.order, status: concept.status,
-        });
+        setEditingConcept(concept);
+        setConceptEditorKey((key) => key + 1);
+        window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
-    async function uploadImage(file: File) {
+    async function uploadImage(file: File): Promise<string | null> {
         const form = new FormData(); form.set("image", file);
-        try { const data = await api("/api/admin/upload", { method: "POST", body: form }); setConceptForm((current) => ({ ...current, imageUrl: data.url })); showNotice("Image uploaded."); }
-        catch (caught) { fail(caught, "Upload failed"); }
+        try { const data = await api("/api/admin/upload", { method: "POST", body: form }); showNotice("Image uploaded."); return data.url as string; }
+        catch (caught) { fail(caught, "Upload failed"); return null; }
     }
 
     async function userAction(uid: string, action: "disable" | "revoke" | "class" | "assignedClasses", value?: boolean | number | number[]) {
@@ -333,32 +324,15 @@ export default function SuperAdminPage() {
 
                     <TabsContent value="curriculum" className="space-y-5">
                         <section className="bg-white p-4">
-                            <h2 className="mb-4 font-semibold">Curriculum editor</h2>
-                            <div className="grid gap-3 md:grid-cols-4">
-                                <Field label="Micro tag" value={conceptForm.microTag} onChange={(value) => setConceptForm({ ...conceptForm, microTag: value })} />
-                                <SelectField label="Prerequisite" value={conceptForm.prerequisiteTag} options={[["", "None"], ...concepts.map((concept) => [concept.microTag, concept.title.english])]} onChange={(value) => setConceptForm({ ...conceptForm, prerequisiteTag: value })} />
-                                <Field label="Class" type="number" value={String(conceptForm.classLevel)} onChange={(value) => setConceptForm({ ...conceptForm, classLevel: Number(value) })} />
-                                <Field label="Topic ID" value={conceptForm.topicId} onChange={(value) => setConceptForm({ ...conceptForm, topicId: value })} />
-                                <Field label="Topic (English)" value={conceptForm.topicEnglish} onChange={(value) => setConceptForm({ ...conceptForm, topicEnglish: value })} />
-                                <Field label="Topic (Roman Urdu)" value={conceptForm.topicRomanUrdu} onChange={(value) => setConceptForm({ ...conceptForm, topicRomanUrdu: value })} />
-                                <Field label="Title (English)" value={conceptForm.titleEnglish} onChange={(value) => setConceptForm({ ...conceptForm, titleEnglish: value })} />
-                                <Field label="Title (Roman Urdu)" value={conceptForm.titleRomanUrdu} onChange={(value) => setConceptForm({ ...conceptForm, titleRomanUrdu: value })} />
-                                <Field label="Summary (English)" value={conceptForm.conceptEnglish} onChange={(value) => setConceptForm({ ...conceptForm, conceptEnglish: value })} />
-                                <Field label="Summary (Roman Urdu)" value={conceptForm.conceptRomanUrdu} onChange={(value) => setConceptForm({ ...conceptForm, conceptRomanUrdu: value })} />
-                                <SelectField label="Family" value={conceptForm.family} options={[["foundation", "Foundation"], ["integer", "Integer"], ["algebra", "Algebra"], ["equation", "Equation"], ["ratio", "Ratio"]]} onChange={(value) => setConceptForm({ ...conceptForm, family: value })} />
-                                <SelectField label="Visual" value={conceptForm.visualKind} options={[["number-line", "Number line"], ["fraction", "Fraction"], ["expression", "Expression"], ["balance", "Balance"], ["ratio", "Ratio"], ["pattern", "Pattern"]]} onChange={(value) => setConceptForm({ ...conceptForm, visualKind: value })} />
-                                <Field label="Image URL" value={conceptForm.imageUrl} onChange={(value) => setConceptForm({ ...conceptForm, imageUrl: value })} />
-                                <Label className="flex cursor-pointer items-end gap-2 rounded-md border p-2 text-sm">
-                                    <Upload className="h-4 w-4" />Upload image
-                                    <Input type="file" accept="image/*" className="hidden" onChange={(event) => event.target.files?.[0] && uploadImage(event.target.files[0])} />
-                                </Label>
-                                <Field label="Order" type="number" value={String(conceptForm.order)} onChange={(value) => setConceptForm({ ...conceptForm, order: Number(value) })} />
-                                <SelectField label="Status" value={conceptForm.status} options={[["draft", "Draft"], ["published", "Published"], ["archived", "Archived"]]} onChange={(value) => setConceptForm({ ...conceptForm, status: value as ContentStatus })} />
-                            </div>
-                            <div className="mt-4 flex gap-2">
-                                <Button onClick={saveConcept}><Save className="mr-2 h-4 w-4" />Save concept</Button>
-                                <Button variant="outline" onClick={() => setConceptForm(blankConcept())}>Clear</Button>
-                            </div>
+                            <h2 className="mb-4 font-semibold">{editingConcept ? `Editing ${editingConcept.title.english}` : "New concept"}</h2>
+                            <ConceptEditor
+                                key={conceptEditorKey}
+                                concepts={concepts}
+                                editing={editingConcept}
+                                onSave={saveConcept}
+                                onUploadImage={uploadImage}
+                                onClear={() => { setEditingConcept(null); setConceptEditorKey((key) => key + 1); }}
+                            />
                         </section>
                         <section className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
                             {concepts.map((concept) => (
@@ -454,22 +428,6 @@ export default function SuperAdminPage() {
                     </TabsContent>
                 </Tabs>
             </main>
-        </div>
-    );
-}
-
-function Field({ label, value, onChange, type = "text", disabled = false }: { label: string; value: string; onChange: (value: string) => void; type?: string; disabled?: boolean }) {
-    return <div className="space-y-1"><Label>{label}</Label><Input type={type} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></div>;
-}
-
-function SelectField({ label, value, options, onChange }: { label: string; value: string; options: string[][]; onChange: (value: string) => void }) {
-    return (
-        <div className="space-y-1">
-            <Label>{label}</Label>
-            <Select value={value || undefined} onValueChange={(next) => onChange(next === "none" ? "" : next)}>
-                <SelectTrigger className="w-full"><SelectValue placeholder={`Select ${label}`} /></SelectTrigger>
-                <SelectContent>{options.map(([id, title]) => <SelectItem key={id || "none"} value={id || "none"}>{title}</SelectItem>)}</SelectContent>
-            </Select>
         </div>
     );
 }

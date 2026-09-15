@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Plus, Save, Wand2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -321,14 +321,17 @@ export function QuestionEditor({
 }
 
 function Field({ label, value, onChange, type = "text", disabled = false }: { label: string; value: string; onChange: (value: string) => void; type?: string; disabled?: boolean }) {
-    return <div className="space-y-1"><Label>{label}</Label><Input type={type} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></div>;
+    const id = useId();
+    return <div className="space-y-1"><Label htmlFor={id}>{label}</Label><Input id={id} type={type} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} /></div>;
 }
 
 function TextArea({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+    const id = useId();
     return (
         <div className="space-y-1">
-            <Label>{label}</Label>
+            <Label htmlFor={id}>{label}</Label>
             <textarea
+                id={id}
                 className="min-h-16 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
@@ -338,11 +341,12 @@ function TextArea({ label, value, onChange }: { label: string; value: string; on
 }
 
 function SelectField({ label, value, options, onChange }: { label: string; value: string; options: string[][]; onChange: (value: string) => void }) {
+    const id = useId();
     return (
         <div className="space-y-1">
-            <Label>{label}</Label>
+            <Label htmlFor={id}>{label}</Label>
             <Select value={value || undefined} onValueChange={onChange}>
-                <SelectTrigger className="w-full bg-white"><SelectValue placeholder={`Select ${label.toLowerCase()}`} /></SelectTrigger>
+                <SelectTrigger id={id} className="w-full bg-white"><SelectValue placeholder={`Select ${label.toLowerCase()}`} /></SelectTrigger>
                 <SelectContent>{options.map(([id, title]) => <SelectItem key={id} value={id}>{title}</SelectItem>)}</SelectContent>
             </Select>
         </div>
