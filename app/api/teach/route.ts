@@ -39,9 +39,14 @@ Is se pehle **${localized(prerequisite.title, locale)}** ko samajhna madadgar ha
 
 It helps to understand **${localized(prerequisite.title, locale)}** first.`
         : "";
+    const example = concept.example
+        ? `
+
+**${locale === "roman-urdu" ? "Misaal" : "Example"}:** ${localized(concept.example, locale)}`
+        : "";
     return `## ${localized(concept.title, locale)}
 
-${localized(concept.concept, locale)}
+${localized(concept.concept, locale)}${example}
 
 ${tip}${before}`;
 }

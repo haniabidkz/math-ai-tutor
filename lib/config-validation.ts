@@ -9,10 +9,22 @@ export const CONFIG_LIMITS = {
     masteryThresholdPercent: { min: 50, max: 100, label: "Mastery threshold (%)" },
     misconceptionThreshold: { min: 2, max: 5, label: "Repeats before a misconception" },
     misconceptionPracticeCount: { min: 1, max: 3, label: "Practice questions per misconception" },
+    quotaMicroEasy: { min: 1, max: 30, label: "Micro-topic: easy" },
+    quotaMicroMedium: { min: 1, max: 30, label: "Micro-topic: medium" },
+    quotaMicroHard: { min: 1, max: 30, label: "Micro-topic: hard" },
+    quotaSubEasy: { min: 1, max: 30, label: "Sub-topic: easy" },
+    quotaSubMedium: { min: 1, max: 30, label: "Sub-topic: medium" },
+    quotaSubHard: { min: 1, max: 30, label: "Sub-topic: hard" },
+    quotaMainEasy: { min: 1, max: 30, label: "Main topic: easy" },
+    quotaMainMedium: { min: 1, max: 30, label: "Main topic: medium" },
+    quotaMainHard: { min: 1, max: 30, label: "Main topic: hard" },
 } as const;
 
 export type EditableConfigKey = keyof typeof CONFIG_LIMITS;
 export const EDITABLE_CONFIG_KEYS = Object.keys(CONFIG_LIMITS) as EditableConfigKey[];
+/** AI Studio question counts, shown as their own table in Configuration. */
+export const QUOTA_CONFIG_KEYS = EDITABLE_CONFIG_KEYS.filter((key) => key.startsWith("quota"));
+export const ASSESSMENT_CONFIG_KEYS = EDITABLE_CONFIG_KEYS.filter((key) => !key.startsWith("quota"));
 
 /** Values that are fixed by the product rules and never taken from the request. */
 const FIXED_VALUES: Pick<AssessmentConfig, "diagnosticQuestionCount" | "scoreCorrect" | "scoreHint" | "scoreIncorrect"> = {

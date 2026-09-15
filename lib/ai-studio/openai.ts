@@ -65,6 +65,7 @@ function mapOpenAiError(error: unknown): AiError {
     if (code === "insufficient_quota") return new AiError("no_credit", "The OpenAI account has no credit left. Add billing on platform.openai.com.");
     if (status === 429) return new AiError("rate_limited", "OpenAI is rate limiting requests. Wait a minute and retry.");
     if (status === 404 || code === "model_not_found") return new AiError("model_unavailable", `This OpenAI key cannot use the selected model. ${message}`);
+    if ((error as { name?: string }).name === "APIConnectionTimeoutError") return new AiError("failed", "OpenAI took too long to answer. Try again.");
     return new AiError("failed", message);
 }
 
@@ -84,7 +85,9 @@ export async function completeJson<T>(input: {
     temperature?: number;
     maxOutputTokens?: number;
 }): Promise<JsonCompletion<T>> {
-    const client = new OpenAI({ apiKey: apiKey() });
+    // No silent SDK retries: each Studio request must finish inside the 300-second function limit,
+    // and the browser retries a failed step itself.
+    const client = new OpenAI({ apiKey: apiKey(), timeout: 250_000, maxRetries: 0 });
     try {
         const response = await client.chat.completions.create({
             model: input.model,

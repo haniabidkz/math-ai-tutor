@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
     BookOpen, Download, FileUp, Gauge, LayoutDashboard, LogOut,
-    Pencil, RefreshCw, Save, Settings, ShieldCheck, Trash2, Users,
+    Pencil, RefreshCw, Save, Settings, ShieldCheck, Sparkles, Trash2, Users,
 } from "lucide-react";
+import { AiStudio } from "@/components/admin/ai-studio";
 import { ConceptEditor, type ConceptPayload } from "@/components/admin/concept-editor";
 import { QuestionEditor, type QuestionPayload } from "@/components/admin/question-editor";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -16,7 +17,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CONFIG_LIMITS, EDITABLE_CONFIG_KEYS } from "@/lib/config-validation";
+import { adminApi, jsonInit } from "@/lib/admin-api";
+import { ASSESSMENT_CONFIG_KEYS, CONFIG_LIMITS, EDITABLE_CONFIG_KEYS, QUOTA_CONFIG_KEYS, type EditableConfigKey } from "@/lib/config-validation";
 import { auth } from "@/lib/firebase";
 import type { AssessmentConfig, MicroConcept, QuestionBankItem } from "@/types/curriculum";
 
@@ -37,25 +39,7 @@ interface ManagedUser {
     assignedClasses?: number[];
 }
 
-/**
- * Every call asks Firebase for the current ID token. Tokens expire after an hour, and the
- * page used to hold the first one forever, so every save failed once it went stale.
- */
-async function api(path: string, init?: RequestInit) {
-    const current = auth.currentUser;
-    if (!current) throw new Error("You are signed out. Please sign in again.");
-    const token = await current.getIdToken();
-    const response = await fetch(path, { ...init, headers: { Authorization: `Bearer ${token}`, ...(init?.headers ?? {}) } });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error ?? (response.status === 401 ? "Your session expired. Please sign in again." : "Request failed"));
-    return data;
-}
-
-const jsonInit = (method: string, body: unknown): RequestInit => ({
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-});
+const api = adminApi;
 
 export default function SuperAdminPage() {
     const router = useRouter();
@@ -207,6 +191,22 @@ export default function SuperAdminPage() {
         void userAction(user.uid, "assignedClasses", next);
     }
 
+    function configInput(key: EditableConfigKey, ariaLabel?: string) {
+        const limits = CONFIG_LIMITS[key];
+        return (
+            <Input
+                id={`config-${key}`}
+                aria-label={ariaLabel}
+                type="number"
+                min={limits.min}
+                max={limits.max}
+                step={1}
+                value={configDraft[key] ?? ""}
+                onChange={(event) => setConfigDraft((current) => ({ ...current, [key]: event.target.value }))}
+            />
+        );
+    }
+
     async function saveConfig() {
         try {
             const data = await api("/api/admin/config", jsonInit("PATCH", configDraft));
@@ -240,9 +240,14 @@ export default function SuperAdminPage() {
                         <TabsTrigger value="overview"><LayoutDashboard className="mr-2 h-4 w-4" />Overview</TabsTrigger>
                         <TabsTrigger value="questions"><BookOpen className="mr-2 h-4 w-4" />Questions</TabsTrigger>
                         <TabsTrigger value="curriculum"><Gauge className="mr-2 h-4 w-4" />Curriculum</TabsTrigger>
+                        <TabsTrigger value="ai-studio"><Sparkles className="mr-2 h-4 w-4" />AI Studio</TabsTrigger>
                         <TabsTrigger value="users"><Users className="mr-2 h-4 w-4" />Users</TabsTrigger>
                         <TabsTrigger value="config"><Settings className="mr-2 h-4 w-4" />Configuration</TabsTrigger>
                     </TabsList>
+
+                    <TabsContent value="ai-studio">
+                        <AiStudio concepts={concepts} config={config} onPublished={() => loadAll()} />
+                    </TabsContent>
 
                     <TabsContent value="overview" className="space-y-5">
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
@@ -346,6 +351,7 @@ export default function SuperAdminPage() {
                                     </CardHeader>
                                     <CardContent className="text-sm text-muted-foreground">
                                         <p className="font-mono text-xs">{concept.microTag}</p>
+                                        {concept.subTopic ? <p className="mt-2">Sub-topic: {concept.subTopic.english}</p> : null}
                                         <p className="mt-2">Prerequisite: {concept.prerequisiteTag ?? "None"}</p>
                                     </CardContent>
                                 </Card>
@@ -398,20 +404,12 @@ export default function SuperAdminPage() {
                             <h2 className="mb-4 font-semibold">Assessment configuration</h2>
                             {config ? (
                                 <div className="grid gap-4 sm:grid-cols-2">
-                                    {EDITABLE_CONFIG_KEYS.map((key) => {
+                                    {ASSESSMENT_CONFIG_KEYS.map((key) => {
                                         const limits = CONFIG_LIMITS[key];
                                         return (
                                             <div key={key} className="space-y-1">
                                                 <Label htmlFor={`config-${key}`}>{limits.label}</Label>
-                                                <Input
-                                                    id={`config-${key}`}
-                                                    type="number"
-                                                    min={limits.min}
-                                                    max={limits.max}
-                                                    step={1}
-                                                    value={configDraft[key] ?? ""}
-                                                    onChange={(event) => setConfigDraft((current) => ({ ...current, [key]: event.target.value }))}
-                                                />
+                                                {configInput(key)}
                                                 <p className="text-xs text-muted-foreground">Allowed: {limits.min} to {limits.max}. Saved value: {config[key]}.</p>
                                             </div>
                                         );
@@ -420,6 +418,27 @@ export default function SuperAdminPage() {
                                         <p><strong>Fixed by the product rules:</strong></p>
                                         <p>Diagnostic test: {config.diagnosticQuestionCount} questions (5 topics × 3).</p>
                                         <p>Scoring: +1 for a correct answer. Wrong answers and hints never deduct marks.</p>
+                                    </div>
+                                    <div className="space-y-2 sm:col-span-2">
+                                        <h3 className="font-semibold">AI Studio question counts</h3>
+                                        <p className="text-xs text-muted-foreground">Exact questions the AI must write per difficulty. A pool with any other count cannot be approved. Allowed: 1 to 30 each.</p>
+                                        <div className="overflow-auto">
+                                            <table className="w-full min-w-[420px] text-left text-sm">
+                                                <thead><tr><th className="p-2">Level</th><th className="p-2">Easy</th><th className="p-2">Medium</th><th className="p-2">Hard</th><th className="p-2">Total</th></tr></thead>
+                                                <tbody>
+                                                    {(["Micro", "Sub", "Main"] as const).map((prefix) => {
+                                                        const keys = QUOTA_CONFIG_KEYS.filter((key) => key.startsWith(`quota${prefix}`));
+                                                        return (
+                                                            <tr key={prefix}>
+                                                                <td className="p-2 font-medium">{prefix === "Micro" ? "Micro-topic" : prefix === "Sub" ? "Sub-topic (checkpoint)" : "Main topic (mastery pool)"}</td>
+                                                                {keys.map((key) => <td key={key} className="p-2">{configInput(key, CONFIG_LIMITS[key].label)}</td>)}
+                                                                <td className="p-2">{keys.reduce((sum, key) => sum + (Number(configDraft[key]) || 0), 0)}</td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
                                     <Button onClick={saveConfig} className="w-fit"><Save className="mr-2 h-4 w-4" />Save configuration</Button>
                                 </div>

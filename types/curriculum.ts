@@ -27,6 +27,10 @@ export interface MicroConcept {
     family: ConceptFamily;
     visualKind: "number-line" | "fraction" | "expression" | "balance" | "ratio" | "pattern";
     imageUrl?: string;
+    /** A local real-life example shown with the lesson. */
+    example?: LocalizedText;
+    /** Optional grouping between the chapter (topic) and the micro-concept. */
+    subTopic?: LocalizedText;
     order: number;
     foundationOnly?: boolean;
     status: ContentStatus;
@@ -92,6 +96,16 @@ export interface AssessmentConfig {
     misconceptionThreshold: number;
     /** Targeted practice questions served before the re-check question. */
     misconceptionPracticeCount: number;
+    /** AI Studio: exact questions per difficulty for each generation level. */
+    quotaMicroEasy: number;
+    quotaMicroMedium: number;
+    quotaMicroHard: number;
+    quotaSubEasy: number;
+    quotaSubMedium: number;
+    quotaSubHard: number;
+    quotaMainEasy: number;
+    quotaMainMedium: number;
+    quotaMainHard: number;
 }
 
 export const DEFAULT_ASSESSMENT_CONFIG: AssessmentConfig = {
@@ -105,4 +119,13 @@ export const DEFAULT_ASSESSMENT_CONFIG: AssessmentConfig = {
     scoreIncorrect: 0,
     misconceptionThreshold: 3,
     misconceptionPracticeCount: 2,
+    quotaMicroEasy: 10,
+    quotaMicroMedium: 10,
+    quotaMicroHard: 10,
+    quotaSubEasy: 15,
+    quotaSubMedium: 20,
+    quotaSubHard: 10,
+    quotaMainEasy: 20,
+    quotaMainMedium: 20,
+    quotaMainHard: 20,
 };

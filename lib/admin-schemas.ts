@@ -66,6 +66,8 @@ export const conceptInputSchema = z.object({
     family: z.enum(["foundation", "integer", "algebra", "equation", "ratio"]),
     visualKind: z.enum(["number-line", "fraction", "expression", "balance", "ratio", "pattern"]),
     imageUrl: z.string().url().optional().or(z.literal("")),
+    example: localizedInputSchema.optional(),
+    subTopic: localizedInputSchema.optional(),
     order: z.number().int().min(0),
     foundationOnly: z.boolean().optional(),
     status: z.enum(["draft", "published", "archived"]),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONFIG_LIMITS, EDITABLE_CONFIG_KEYS, effectiveConfig, validateConfigInput } from "@/lib/config-validation";
+import { CONFIG_LIMITS, EDITABLE_CONFIG_KEYS, QUOTA_CONFIG_KEYS, effectiveConfig, validateConfigInput } from "@/lib/config-validation";
 
 const valid = {
     masteryQuestionCount: 8,
@@ -8,6 +8,9 @@ const valid = {
     masteryThresholdPercent: 75,
     misconceptionThreshold: 3,
     misconceptionPracticeCount: 2,
+    quotaMicroEasy: 10, quotaMicroMedium: 10, quotaMicroHard: 10,
+    quotaSubEasy: 15, quotaSubMedium: 20, quotaSubHard: 10,
+    quotaMainEasy: 20, quotaMainMedium: 20, quotaMainHard: 20,
 };
 
 describe("configuration validation", () => {
@@ -54,6 +57,15 @@ describe("effective configuration", () => {
             expect(config[key]).toBeGreaterThanOrEqual(CONFIG_LIMITS[key].min);
             expect(config[key]).toBeLessThanOrEqual(CONFIG_LIMITS[key].max);
         }
+    });
+
+    it("gives settings saved before AI Studio the question counts from the specification", () => {
+        const config = effectiveConfig({ masteryQuestionCount: 7 });
+        expect(QUOTA_CONFIG_KEYS).toHaveLength(9);
+        expect([config.quotaMicroEasy, config.quotaMicroMedium, config.quotaMicroHard]).toEqual([10, 10, 10]);
+        expect([config.quotaSubEasy, config.quotaSubMedium, config.quotaSubHard]).toEqual([15, 20, 10]);
+        expect([config.quotaMainEasy, config.quotaMainMedium, config.quotaMainHard]).toEqual([20, 20, 20]);
+        expect(validateConfigInput({ ...valid, quotaSubHard: 0 }).ok).toBe(false);
     });
 
     it("overrides the old negative scoring still stored in production", () => {
