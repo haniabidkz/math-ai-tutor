@@ -130,6 +130,33 @@ describe("JSON requests", () => {
             .rejects.toMatchObject({ code: "rate_limited", message: expect.stringContaining("Cerebras") });
     });
 
+    it("lets the next Gemini model answer when the first is busy", async () => {
+        const { completeJson } = await freshModule();
+        fake.respond = (_baseURL, params) => {
+            if (params.model === "gemini-3.8-flash") throw httpError(503, "The model is overloaded.");
+            return reply({ ok: true });
+        };
+        const result = await completeJson({ role: "generation", system: "s", user: "u", schemaName: "probe", schema });
+        expect(result.model).toBe("gemini-2.5-flash");
+        expect(fake.calls.map((call) => call.params.model)).toEqual(["gemini-3.8-flash", "gemini-2.5-flash"]);
+    });
+
+    it("says the service is busy when every model is, and keeps a chosen model on its own", async () => {
+        const { completeJson } = await freshModule();
+        vi.stubEnv("GEMINI_MODEL", "gemini-3.8-flash");
+        fake.respond = () => { throw httpError(503, "The model is overloaded."); };
+        await expect(completeJson({ role: "generation", system: "s", user: "u", schemaName: "probe", schema }))
+            .rejects.toMatchObject({ code: "failed", message: expect.stringContaining("busy right now (error 503)") });
+        expect(fake.calls).toHaveLength(1);
+    });
+
+    it("reports a request that timed out", async () => {
+        const { completeJson } = await freshModule();
+        fake.respond = () => { throw new Error("Request timed out."); };
+        await expect(completeJson({ role: "verification", system: "s", user: "u", schemaName: "probe", schema, timeoutMs: 20_000 }))
+            .rejects.toMatchObject({ code: "failed", message: "Cerebras took too long to answer. Try again." });
+    });
+
     it("rejects a reply that is not JSON", async () => {
         const { parseJsonReply } = await freshModule();
         expect(parseJsonReply("```\n{\"a\": 1}\n```")).toEqual({ a: 1 });
@@ -155,6 +182,8 @@ describe("connection check", () => {
         const status = await checkAiStatus(true);
         expect(status).toMatchObject({ canGenerate: true, generationModel: "gemini-3.8-flash", verificationModel: "gpt-oss-120b" });
         expect(fake.calls.map((call) => call.baseURL)).toEqual([GEMINI, CEREBRAS]);
+        // The quick test asks for little thinking so it answers fast.
+        expect(fake.calls.map((call) => call.params.reasoning_effort)).toEqual(["low", "low"]);
     });
 
     it("explains a model the key cannot use", async () => {

@@ -116,8 +116,8 @@ function keyFor(provider: AiProvider): string {
 
 // No silent SDK retries: each Studio request must finish inside the 300-second function limit,
 // and the browser retries a failed step itself.
-const clientFor = (provider: AiProvider) =>
-    new OpenAI({ apiKey: keyFor(provider), baseURL: provider.baseURL, timeout: 250_000, maxRetries: 0 });
+const clientFor = (provider: AiProvider, timeoutMs = 250_000) =>
+    new OpenAI({ apiKey: keyFor(provider), baseURL: provider.baseURL, timeout: timeoutMs, maxRetries: 0 });
 
 /** Reasoning models reject temperature. */
 export function isReasoningModel(model: string): boolean {
@@ -128,6 +128,9 @@ const errorMessage = (error: unknown) => (error instanceof Error ? error.message
 const errorStatus = (error: unknown) => (error as { status?: number })?.status;
 /** Gemini answers a bad key with HTTP 400 rather than 401. */
 const isKeyProblem = (error: unknown) => errorStatus(error) === 400 && /api[ _-]?key/i.test(errorMessage(error));
+/** A busy or rate-limited model; another model of the same service may still answer. */
+const isBusy = (error: unknown) => [429, 500, 502, 503, 504].includes(errorStatus(error) ?? 0);
+const isTimeout = (error: unknown) => !errorStatus(error) && /timed? ?out/i.test(errorMessage(error));
 
 export function mapAiError(error: unknown, provider: AiProvider): AiError {
     if (error instanceof AiError) return error;
@@ -143,7 +146,8 @@ export function mapAiError(error: unknown, provider: AiProvider): AiError {
         return new AiError("rate_limited", `The free ${who} limit was reached. Wait a minute and try again; if it keeps happening, today's free limit is used up.`);
     }
     if (status === 404 || code === "model_not_found") return new AiError("model_unavailable", `${who} cannot use the selected model. ${message}`);
-    if ((error as { name?: string })?.name === "APIConnectionTimeoutError") return new AiError("failed", `${who} took too long to answer. Try again.`);
+    if (isTimeout(error)) return new AiError("failed", `${who} took too long to answer. Try again.`);
+    if (status && status >= 500) return new AiError("failed", `${who} is busy right now (error ${status}). Try again in a minute.`);
     return new AiError("failed", `${who}: ${message}`);
 }
 
@@ -155,7 +159,7 @@ async function listModelIds(provider: AiProvider): Promise<string[]> {
     const ids: string[] = [];
     try {
         // Gemini lists ids as "models/gemini-...", which requests do not use.
-        for await (const model of clientFor(provider).models.list()) ids.push(model.id.replace(/^models\//, ""));
+        for await (const model of clientFor(provider, 15_000).models.list()) ids.push(model.id.replace(/^models\//, ""));
     } catch (error) {
         // A service without a model list still works with the preferred model.
         if (errorStatus(error) !== 404) throw mapAiError(error, provider);
@@ -164,13 +168,14 @@ async function listModelIds(provider: AiProvider): Promise<string[]> {
     return ids;
 }
 
-export async function modelFor(role: AiRole): Promise<{ provider: AiProvider; model: string; available: string[] }> {
+export async function modelFor(role: AiRole): Promise<{ provider: AiProvider; model: string; backups: string[]; available: string[] }> {
     const provider = providerFor(role);
     const available = await listModelIds(provider);
     const override = process.env[provider.modelEnv[role]]?.trim();
-    const preferred = provider.models[role];
-    const model = override || preferred.find((id) => available.includes(id)) || preferred[0];
-    return { provider, model, available };
+    const listed = provider.models[role].filter((id) => available.includes(id));
+    const model = override || listed[0] || provider.models[role][0];
+    // A chosen override is used alone; otherwise the next listed model stands in when the first is busy.
+    return { provider, model, backups: override ? [] : listed.filter((id) => id !== model), available };
 }
 
 export interface JsonCompletion<T> {
@@ -196,6 +201,7 @@ export function parseJsonReply<T>(content: string): T {
 /**
  * One JSON chat completion for a role. Strict schema mode is tried first; a service that
  * rejects the schema gets plain JSON mode instead, and the Studio's own checks still apply.
+ * When the model is busy or out of free quota, the service's next model answers instead.
  */
 export async function completeJson<T>(input: {
     role: AiRole;
@@ -205,9 +211,29 @@ export async function completeJson<T>(input: {
     schema: Record<string, unknown>;
     temperature?: number;
     maxOutputTokens?: number;
+    timeoutMs?: number;
+    reasoningEffort?: "low" | "medium" | "high";
 }): Promise<JsonCompletion<T>> {
-    const { provider, model } = await modelFor(input.role);
-    const client = clientFor(provider);
+    const { provider, model, backups } = await modelFor(input.role);
+    const candidates = [model, ...backups.slice(0, 1)];
+    let lastError: unknown;
+    for (const candidate of candidates) {
+        try {
+            return await completeWithModel<T>(input, provider, candidate);
+        } catch (error) {
+            lastError = error;
+            if (!isBusy(error)) break;
+        }
+    }
+    throw mapAiError(lastError, provider);
+}
+
+async function completeWithModel<T>(
+    input: Parameters<typeof completeJson>[0],
+    provider: AiProvider,
+    model: string,
+): Promise<JsonCompletion<T>> {
+    const client = clientFor(provider, input.timeoutMs);
     const limit = Math.min(input.maxOutputTokens ?? 16_000, provider.maxOutputTokens);
     const cacheKey = `${provider.id}:${model}`;
 
@@ -231,24 +257,21 @@ export async function completeJson<T>(input: {
         else params.max_completion_tokens = limit;
         // Only OpenAI's non-reasoning models take a custom temperature; the others work best at their default.
         if (provider.id === "openai" && !isReasoningModel(model) && input.temperature !== undefined) params.temperature = input.temperature;
+        if (input.reasoningEffort && (provider.id !== "openai" || isReasoningModel(model))) params.reasoning_effort = input.reasoningEffort;
         return client.chat.completions.create(params);
     };
 
     let response: OpenAI.Chat.ChatCompletion;
-    try {
-        if (plainJsonOnly.has(cacheKey)) {
+    if (plainJsonOnly.has(cacheKey)) {
+        response = await send(false);
+    } else {
+        try {
+            response = await send(true);
+        } catch (error) {
+            if (errorStatus(error) !== 400 || isKeyProblem(error)) throw error;
             response = await send(false);
-        } else {
-            try {
-                response = await send(true);
-            } catch (error) {
-                if (errorStatus(error) !== 400 || isKeyProblem(error)) throw error;
-                response = await send(false);
-                plainJsonOnly.add(cacheKey);
-            }
+            plainJsonOnly.add(cacheKey);
         }
-    } catch (error) {
-        throw mapAiError(error, provider);
     }
 
     const choice = response.choices[0];
@@ -307,6 +330,9 @@ export async function checkAiStatus(probe = false): Promise<AiStatus> {
                     schemaName: "probe",
                     schema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } },
                     maxOutputTokens: 2_000,
+                    // Short, so a slow service is named instead of the whole check timing out.
+                    timeoutMs: 20_000,
+                    reasoningEffort: "low",
                 });
             }
         } catch (error) {
