@@ -50,9 +50,10 @@ export const PROVIDERS: Record<ProviderId, AiProvider> = {
             verification: ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"],
         },
         maxOutputTokens: 60_000,
-        // Gemini always thinks first; five questions a step stays well inside the time limit.
-        questionBatch: 5,
-        checkBatch: 5,
+        // The free tier allows few requests a day, so each request carries ten questions;
+        // 3.6 Flash wrote five in 22-42 seconds, well inside the 150-second wait per model.
+        questionBatch: 10,
+        checkBatch: 10,
         tokenParam: "max_tokens",
     },
     cerebras: {
@@ -231,7 +232,8 @@ export interface JsonRequest {
 
 /** Below this, a backup model would not have time to answer. */
 const MIN_ATTEMPT_MS = 30_000;
-const BACKUP_MODELS = 2;
+/** Each free model has its own daily quota, so every listed model may stand in. */
+const BACKUP_MODELS = 3;
 
 /**
  * One JSON chat completion for a role. Strict schema mode is tried first; a service that

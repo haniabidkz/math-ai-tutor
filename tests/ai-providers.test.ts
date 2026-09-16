@@ -76,12 +76,15 @@ describe("choosing the AI services", () => {
         expect(providersFor("verification", { CEREBRAS_API_KEY: "x", GEMINI_API_KEY: "y", AI_VERIFICATION_PROVIDER: "Gemini" }).map((provider) => provider.id)).toEqual(["gemini"]);
     });
 
-    it("plans batches of five for Gemini, which always thinks first", async () => {
+    it("plans ten Gemini questions a request to spare the free daily quota, and checks in Cerebras-sized batches", async () => {
         const { questionBatchSize, checkBatchSize } = await freshModule();
-        expect(questionBatchSize()).toBe(5);
+        expect(questionBatchSize()).toBe(10);
         expect(checkBatchSize()).toBe(5);
-        const steps = planSteps(DEFAULT_QUOTAS.micro, questionBatchSize());
-        expect(steps.filter((step) => step.kind === "questions").map((step) => step.count)).toEqual([5, 5, 5, 5, 5, 5]);
+        vi.stubEnv("CEREBRAS_API_KEY", "");
+        expect(checkBatchSize()).toBe(10);
+        const steps = planSteps({ easy: 15, medium: 10, hard: 10 }, questionBatchSize());
+        expect(steps.filter((step) => step.kind === "questions").map((step) => step.count)).toEqual([10, 5, 10, 10]);
+        expect(planSteps(DEFAULT_QUOTAS.micro, questionBatchSize())).toHaveLength(4);
     });
 });
 
