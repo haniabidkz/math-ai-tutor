@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
-import { completeJson, resolveModels } from "@/lib/ai-studio/openai";
+import { checkBatchSize, completeJson } from "@/lib/ai-studio/ai";
 import { verificationPrompt } from "@/lib/ai-studio/prompts";
 import { verificationSchema } from "@/lib/ai-studio/schema";
 import {
@@ -14,8 +14,6 @@ import { requireSuperAdmin } from "@/lib/server-auth";
 
 export const maxDuration = 300;
 
-const CHECK_BATCH = 10;
-
 /** A check that errored is repeated only when the admin asks ("Check again"), so it cannot loop. */
 const needsCheck = (question: DraftQuestion) =>
     question.verification.status === "pending" &&
@@ -25,8 +23,9 @@ const needsCheck = (question: DraftQuestion) =>
 interface Answer { id: string; chosen_option: string; working: string }
 
 /**
- * A second, independent solve: a reasoning model answers up to ten unchecked questions
- * without seeing the marked answer. Any disagreement blocks approval until a person decides.
+ * A second, independent solve: a reasoning model from another service answers a batch of
+ * unchecked questions without seeing the marked answer. Any disagreement blocks approval
+ * until a person decides.
  */
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
     try {
@@ -36,15 +35,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         const draft = await loadDraft(id);
         assertOpen(draft);
 
-        const batch = draft.questions.filter(needsCheck).slice(0, CHECK_BATCH);
+        const batch = draft.questions.filter(needsCheck).slice(0, checkBatchSize());
         if (!batch.length) {
             return NextResponse.json({ success: true, checked: 0, remaining: 0, draft: toClientDraft(draft) });
         }
 
         // Short ids keep the reply small and easy to match back.
-        const { verification } = await resolveModels();
         const reply = await completeJson<{ answers: Answer[] }>({
-            model: verification,
+            role: "verification",
             ...verificationPrompt(batch.map((question, index) => ({ ...question, key: `q${index + 1}` }))),
             schemaName: "independent_solve",
             schema: verificationSchema,

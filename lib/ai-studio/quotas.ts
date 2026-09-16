@@ -14,7 +14,7 @@ export const LEVEL_LABELS: Record<GenerationLevel, string> = {
     main: "Main topic (Mastery Pool)",
 };
 
-/** Questions per model call; small enough to finish well inside a function's time limit. */
+/** Default questions per model call; small enough to finish well inside a function's time limit. */
 export const BATCH_SIZE = 10;
 
 export const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
@@ -34,14 +34,14 @@ export function quotaFor(level: GenerationLevel, config?: Partial<AssessmentConf
     return { easy: read("Easy", defaults.easy), medium: read("Medium", defaults.medium), hard: read("Hard", defaults.hard) };
 }
 
-/** A concept step, then one step per batch of up to ten questions of a single difficulty. */
-export function planSteps(quota: Quota): GenerationStep[] {
+/** A concept step, then one step per batch of questions of a single difficulty. */
+export function planSteps(quota: Quota, batchSize = BATCH_SIZE): GenerationStep[] {
     const steps: GenerationStep[] = [{ id: "concept", kind: "concept", status: "pending", attempts: 0 }];
     for (const difficulty of DIFFICULTIES) {
         let remaining = quota[difficulty];
         let part = 1;
         while (remaining > 0) {
-            const count = Math.min(BATCH_SIZE, remaining);
+            const count = Math.min(batchSize, remaining);
             steps.push({ id: `${difficulty}-${part}`, kind: "questions", difficulty, count, status: "pending", attempts: 0 });
             remaining -= count;
             part += 1;

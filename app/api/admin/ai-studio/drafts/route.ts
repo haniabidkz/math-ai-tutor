@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { writeAuditLog } from "@/lib/admin-audit";
 import { effectiveConfig } from "@/lib/config-validation";
+import { questionBatchSize } from "@/lib/ai-studio/ai";
 import { createDraftSchema } from "@/lib/ai-studio/input";
 import { planSteps, quotaFor, quotaTotal } from "@/lib/ai-studio/quotas";
 import { allConcepts, draftsCollection, studioErrorResponse, StudioError } from "@/lib/ai-studio/store";
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
             quota,
             concept: null,
             questions: [],
-            steps: planSteps(quota),
+            steps: planSteps(quota, questionBatchSize()),
             usage: { calls: 0, inputTokens: 0, outputTokens: 0 },
             createdBy: admin.uid,
             createdByEmail: admin.email,

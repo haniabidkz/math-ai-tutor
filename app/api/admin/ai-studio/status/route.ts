@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkAiStatus } from "@/lib/ai-studio/openai";
+import { checkAiStatus } from "@/lib/ai-studio/ai";
 import { authErrorResponse, requireSuperAdmin } from "@/lib/server-auth";
 
 export const maxDuration = 60;

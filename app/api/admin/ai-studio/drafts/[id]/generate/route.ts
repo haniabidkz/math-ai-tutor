@@ -3,7 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { z } from "zod";
 import { adminDb } from "@/lib/firebase-admin";
 import { findForeignContext } from "@/lib/ai-studio/context-check";
-import { AiError, completeJson, resolveModels } from "@/lib/ai-studio/openai";
+import { AiError, completeJson } from "@/lib/ai-studio/ai";
 import { conceptPrompt, questionPrompt } from "@/lib/ai-studio/prompts";
 import { conceptSchema, normalizeConcept, normalizeQuestionBatch, questionBatchSchema } from "@/lib/ai-studio/schema";
 import {
@@ -25,12 +25,12 @@ type Outcome =
     | { ok: true; concept?: DraftConcept; questions?: DraftQuestion[] }
     | { ok: false; problems: string[]; error: string };
 
-async function runStep(draft: GenerationDraft, step: GenerationStep, model: string) {
+async function runStep(draft: GenerationDraft, step: GenerationStep) {
     const tags = draft.target.microTopics.map((topic) => topic.microTag);
 
     if (step.kind === "concept") {
         const prompt = conceptPrompt(draft);
-        const reply = await completeJson<unknown>({ model, ...prompt, schemaName: "concept_explanation", schema: conceptSchema, temperature: 0.6, maxOutputTokens: 4000 });
+        const reply = await completeJson<unknown>({ role: "generation", ...prompt, schemaName: "concept_explanation", schema: conceptSchema, temperature: 0.6, maxOutputTokens: 16_000 });
         const { concept, problems } = normalizeConcept(reply.data);
         const foreign = concept ? findForeignContext(concept.explanation.english, concept.example.english) : [];
         if (foreign.length) problems.push(`the explanation uses a foreign setting (${foreign.join(", ")}); use Pakistani daily life, Rupees and kilometres`);
@@ -42,7 +42,7 @@ async function runStep(draft: GenerationDraft, step: GenerationStep, model: stri
     const count = step.count!;
     const existing = [...await liveQuestionTexts(tags), ...draft.questions.map((question) => question.questionText)];
     const prompt = questionPrompt(draft, { difficulty, count, avoid: existing, feedback: step.feedback });
-    const reply = await completeJson<unknown>({ model, ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags), temperature: 0.6, maxOutputTokens: 16_000 });
+    const reply = await completeJson<unknown>({ role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags), temperature: 0.6, maxOutputTokens: 48_000 });
     const { questions, problems } = normalizeQuestionBatch(reply.data, { difficulty, count, allowedTags: tags });
 
     // Rule A and no repeats: the whole batch is redone with the reasons, never patched up.
@@ -62,7 +62,7 @@ async function runStep(draft: GenerationDraft, step: GenerationStep, model: stri
 }
 
 /**
- * Runs one step of the plan: the concept, or one batch of up to ten questions of one
+ * Runs one step of the plan: the concept, or one small batch of questions of one
  * difficulty. The browser calls this once per step, so no request nears the time limit.
  */
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -92,8 +92,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         let usage = { inputTokens: 0, outputTokens: 0 };
         let aiCode: string | undefined;
         try {
-            const { generation } = await resolveModels();
-            ({ outcome, usage } = await runStep(locked.draft, locked.step, generation));
+            ({ outcome, usage } = await runStep(locked.draft, locked.step));
         } catch (error) {
             const failure = error instanceof AiError ? error : new AiError("failed", error instanceof Error ? error.message : "Generation failed");
             aiCode = failure.code;

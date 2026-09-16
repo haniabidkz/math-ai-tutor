@@ -21,8 +21,11 @@ import { MISCONCEPTION_TAGS, MISCONCEPTIONS } from "@/lib/mistake-analysis";
 import type { Difficulty, LocalizedText, MisconceptionTag } from "@/types/curriculum";
 
 /** Failures worth retrying automatically; a bad key or missing credit stops at once. */
-const RETRYABLE = new Set(["failed", "bad_output", "rate_limited", "rejected", "refused"]);
+const RETRYABLE = new Set(["failed", "bad_output", "rejected", "refused"]);
 const MAX_TRIES = 3;
+/** Free services allow only a few requests a minute; waiting is expected, not a failure. */
+const RATE_LIMIT_WAIT_MS = 30_000;
+const MAX_RATE_LIMIT_WAITS = 10;
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const capital = (value: string) => `${value[0].toUpperCase()}${value.slice(1)}`;
 const errorText = (caught: unknown) => (caught instanceof Error ? caught.message : "Something went wrong");
@@ -61,6 +64,7 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
     const [phase, setPhase] = useState<"idle" | "generating" | "checking" | "approving">("idle");
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
+    const [waiting, setWaiting] = useState("");
     const [filter, setFilter] = useState<"all" | "problems" | Difficulty>("all");
     const [showDetails, setShowDetails] = useState(true);
     const [openEditors, setOpenEditors] = useState<Set<string>>(new Set());
@@ -92,24 +96,33 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
         setError("");
         setPhase("checking");
         let failures = 0;
+        let waits = 0;
         try {
             while (!stopRef.current) {
                 try {
                     const data = await adminApi<{ draft: GenerationDraft; checked: number; remaining: number }>(`${base}/verify`, { method: "POST" });
+                    setWaiting("");
                     setDraft(data.draft);
                     if (!data.checked || !data.remaining) break;
                     failures = 0;
                 } catch (caught) {
-                    failures += 1;
                     const code = caught instanceof ApiError ? String(caught.body.code ?? "") : "";
+                    if (code === "rate_limited" && waits < MAX_RATE_LIMIT_WAITS) {
+                        waits += 1;
+                        setWaiting(`${errorText(caught)} Waiting 30 seconds, then continuing...`);
+                        await sleep(RATE_LIMIT_WAIT_MS);
+                        continue;
+                    }
+                    failures += 1;
                     if (!RETRYABLE.has(code) || failures >= MAX_TRIES) {
                         setError(describeFailure(caught));
                         break;
                     }
-                    await sleep(code === "rate_limited" ? 20_000 : 1_500);
+                    await sleep(1_500);
                 }
             }
         } finally {
+            setWaiting("");
             setPhase("idle");
         }
     }, [base]);
@@ -122,12 +135,14 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
         let current = start;
         const tries = new Map<string, number>();
         let waits = 0;
+        let limitWaits = 0;
         try {
             while (!stopRef.current) {
                 const step = current.steps.find((item) => item.status !== "done");
                 if (!step) break;
                 try {
                     const data = await adminApi<{ draft: GenerationDraft }>(`${base}/generate`, jsonInit("POST", { stepId: step.id }));
+                    setWaiting("");
                     current = data.draft;
                     setDraft(current);
                 } catch (caught) {
@@ -143,19 +158,27 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                         current = await load();
                         continue;
                     }
+                    const code = String(body.code ?? "");
+                    if (code === "rate_limited" && limitWaits < MAX_RATE_LIMIT_WAITS) {
+                        limitWaits += 1;
+                        setWaiting(`${errorText(caught)} Waiting 30 seconds, then continuing...`);
+                        await sleep(RATE_LIMIT_WAIT_MS);
+                        continue;
+                    }
                     const count = (tries.get(step.id) ?? 0) + 1;
                     tries.set(step.id, count);
-                    const code = String(body.code ?? "");
                     if (RETRYABLE.has(code) && count < MAX_TRIES) {
-                        await sleep(code === "rate_limited" ? 20_000 : 1_000);
+                        await sleep(1_000);
                         continue;
                     }
                     setError(describeFailure(caught));
                     return;
                 }
             }
+            setWaiting("");
             if (!stopRef.current && current.steps.every((item) => item.status === "done")) await check();
         } finally {
+            setWaiting("");
             setPhase("idle");
         }
     }, [base, check, load]);
@@ -280,6 +303,7 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                 </div>
                 {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
                 {notice ? <Alert className="border-emerald-300 bg-emerald-50"><AlertDescription>{notice}</AlertDescription></Alert> : null}
+                {waiting ? <Alert className="border-amber-300 bg-amber-50"><Loader2 className="h-4 w-4 animate-spin" /><AlertDescription>{waiting}</AlertDescription></Alert> : null}
                 {live ? <Alert className="border-emerald-300 bg-emerald-50"><ShieldCheck className="h-4 w-4" /><AlertDescription>This pool is live in the question bank. It can no longer be edited here; use the Questions tab for changes.</AlertDescription></Alert> : null}
             </section>
 
@@ -289,7 +313,7 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                         <div>
                             <h3 className="font-semibold">Generating</h3>
                             <p className="text-xs text-muted-foreground">
-                                {draft.questions.length} of {draft.quota.easy + draft.quota.medium + draft.quota.hard} questions written. Each step is one AI request of up to ten questions; a reply that breaks a rule is rejected and written again.
+                                {draft.questions.length} of {draft.quota.easy + draft.quota.medium + draft.quota.hard} questions written. Each step is one AI request for a small batch of questions; a reply that breaks a rule is rejected and written again.
                             </p>
                         </div>
                         {phase === "generating"

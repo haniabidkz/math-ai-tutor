@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { adminApi, jsonInit } from "@/lib/admin-api";
 import { topicsForClass } from "@/lib/concept-autofill";
-import type { AiStatus } from "@/lib/ai-studio/openai";
+import type { AiStatus } from "@/lib/ai-studio/ai";
 import { LEVEL_LABELS, quotaFor, quotaTotal } from "@/lib/ai-studio/quotas";
 import { buildTarget, chapterConcepts, type TargetInput } from "@/lib/ai-studio/target";
 import { CURRICULUM_NAME, type DraftStatus, type GenerationLevel } from "@/lib/ai-studio/types";
@@ -75,7 +75,11 @@ export function AiStudio({ concepts, config, onPublished }: {
             const data = await adminApi<{ status: AiStatus }>("/api/admin/ai-studio/status", { method: probe ? "POST" : "GET" });
             setStatus(data.status);
         } catch (caught) {
-            setStatus({ configured: false, valid: false, canGenerate: false, generationModel: null, verificationModel: null, message: caught instanceof Error ? caught.message : "Could not reach the server" });
+            setStatus({
+                configured: false, valid: false, canGenerate: false,
+                generationProvider: null, verificationProvider: null, generationModel: null, verificationModel: null,
+                message: caught instanceof Error ? caught.message : "Could not reach the server",
+            });
         } finally {
             setTesting(false);
         }
@@ -168,12 +172,16 @@ export function AiStudio({ concepts, config, onPublished }: {
                     </Button>
                 </div>
                 {status ? <p className="text-sm">{status.message}</p> : null}
-                {status?.generationModel ? (
-                    <p className="text-xs text-muted-foreground">Writes content with {status.generationModel}; a second model ({status.verificationModel}) solves every question again to check the answer.</p>
+                {status?.generationProvider ? (
+                    <p className="text-xs text-muted-foreground">
+                        Writes content with {status.generationProvider}{status.generationModel ? ` (${status.generationModel})` : ""}; {status.verificationProvider}
+                        {status.verificationModel ? ` (${status.verificationModel})` : ""} solves every question again to check the answer.
+                    </p>
                 ) : null}
                 {status && !ready && (status.code === "invalid_key" || status.code === "not_configured" || status.code === "no_credit") ? (
                     <p className="text-xs text-muted-foreground">
-                        Create a key at platform.openai.com (API keys), make sure the account has credit, then save it as OPENAI_API_KEY in Vercel → Project → Settings → Environment Variables and redeploy.
+                        Free keys: Google AI Studio (aistudio.google.com) for GEMINI_API_KEY and Cerebras (cloud.cerebras.ai) for CEREBRAS_API_KEY.
+                        Save them in Vercel → Project → Settings → Environment Variables, then redeploy.
                     </p>
                 ) : null}
             </section>

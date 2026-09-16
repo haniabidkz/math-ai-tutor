@@ -3,7 +3,7 @@ import type { DocumentSnapshot } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { MICRO_CONCEPTS } from "@/lib/curriculum";
 import { QUESTION_BANK } from "@/lib/question-bank";
-import { AiError } from "@/lib/ai-studio/openai";
+import { AiError } from "@/lib/ai-studio/ai";
 import { NEW_MICRO_TAG, type GenerationDraft } from "@/lib/ai-studio/types";
 import { authErrorResponse } from "@/lib/server-auth";
 import type { MicroConcept } from "@/types/curriculum";
