@@ -19,6 +19,9 @@ export const maxDuration = 300;
 /** A step still marked running after this long was cut off by the time limit. */
 const STALE_AFTER_MS = 320_000;
 
+/** Longest wait for one model, leaving time for a backup model inside the 300-second limit. */
+const PER_MODEL_MS = 150_000;
+
 const bodySchema = z.object({ stepId: z.string().min(1) });
 
 type Outcome =
@@ -30,7 +33,7 @@ async function runStep(draft: GenerationDraft, step: GenerationStep) {
 
     if (step.kind === "concept") {
         const prompt = conceptPrompt(draft);
-        const reply = await completeJson<unknown>({ role: "generation", ...prompt, schemaName: "concept_explanation", schema: conceptSchema, temperature: 0.6, maxOutputTokens: 16_000 });
+        const reply = await completeJson<unknown>({ role: "generation", ...prompt, schemaName: "concept_explanation", schema: conceptSchema, temperature: 0.6, maxOutputTokens: 16_000, timeoutMs: PER_MODEL_MS });
         const { concept, problems } = normalizeConcept(reply.data);
         const foreign = concept ? findForeignContext(concept.explanation.english, concept.example.english) : [];
         if (foreign.length) problems.push(`the explanation uses a foreign setting (${foreign.join(", ")}); use Pakistani daily life, Rupees and kilometres`);
@@ -42,7 +45,7 @@ async function runStep(draft: GenerationDraft, step: GenerationStep) {
     const count = step.count!;
     const existing = [...await liveQuestionTexts(tags), ...draft.questions.map((question) => question.questionText)];
     const prompt = questionPrompt(draft, { difficulty, count, avoid: existing, feedback: step.feedback });
-    const reply = await completeJson<unknown>({ role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags), temperature: 0.6, maxOutputTokens: 48_000 });
+    const reply = await completeJson<unknown>({ role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags), temperature: 0.6, maxOutputTokens: 48_000, timeoutMs: PER_MODEL_MS });
     const { questions, problems } = normalizeQuestionBatch(reply.data, { difficulty, count, allowedTags: tags });
 
     // Rule A and no repeats: the whole batch is redone with the reasons, never patched up.

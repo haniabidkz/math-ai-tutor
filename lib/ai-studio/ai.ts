@@ -159,7 +159,7 @@ async function listModelIds(provider: AiProvider): Promise<string[]> {
     const ids: string[] = [];
     try {
         // Gemini lists ids as "models/gemini-...", which requests do not use.
-        for await (const model of clientFor(provider, 15_000).models.list()) ids.push(model.id.replace(/^models\//, ""));
+        for await (const model of clientFor(provider, 10_000).models.list()) ids.push(model.id.replace(/^models\//, ""));
     } catch (error) {
         // A service without a model list still works with the preferred model.
         if (errorStatus(error) !== 404) throw mapAiError(error, provider);
@@ -198,12 +198,7 @@ export function parseJsonReply<T>(content: string): T {
     }
 }
 
-/**
- * One JSON chat completion for a role. Strict schema mode is tried first; a service that
- * rejects the schema gets plain JSON mode instead, and the Studio's own checks still apply.
- * When the model is busy or out of free quota, the service's next model answers instead.
- */
-export async function completeJson<T>(input: {
+export interface JsonRequest {
     role: AiRole;
     system: string;
     user: string;
@@ -211,29 +206,43 @@ export async function completeJson<T>(input: {
     schema: Record<string, unknown>;
     temperature?: number;
     maxOutputTokens?: number;
+    /** Longest wait for one model. */
     timeoutMs?: number;
+    /** Longest wait overall, backups included; must fit the function's time limit. */
+    budgetMs?: number;
     reasoningEffort?: "low" | "medium" | "high";
-}): Promise<JsonCompletion<T>> {
+}
+
+/** Below this, a backup model would not have time to answer. */
+const MIN_ATTEMPT_MS = 30_000;
+
+/**
+ * One JSON chat completion for a role. Strict schema mode is tried first; a service that
+ * rejects the schema gets plain JSON mode instead, and the Studio's own checks still apply.
+ * When a model is busy, slow or out of free quota, the service's next model answers instead,
+ * as long as the time budget allows.
+ */
+export async function completeJson<T>(input: JsonRequest): Promise<JsonCompletion<T>> {
+    const started = Date.now();
+    const budget = input.budgetMs ?? 270_000;
+    const minimum = Math.min(MIN_ATTEMPT_MS, input.timeoutMs ?? MIN_ATTEMPT_MS);
     const { provider, model, backups } = await modelFor(input.role);
-    const candidates = [model, ...backups.slice(0, 1)];
-    let lastError: unknown;
-    for (const candidate of candidates) {
+    let lastError: unknown = new AiError("failed", `${provider.label} did not answer in time. Try again.`);
+    for (const [index, candidate] of [model, ...backups.slice(0, 2)].entries()) {
+        const remaining = budget - (Date.now() - started);
+        if (index > 0 && remaining < minimum) break;
         try {
-            return await completeWithModel<T>(input, provider, candidate);
+            return await completeWithModel<T>(input, provider, candidate, Math.max(5_000, Math.min(input.timeoutMs ?? 250_000, remaining)));
         } catch (error) {
             lastError = error;
-            if (!isBusy(error)) break;
+            if (!isBusy(error) && !isTimeout(error)) break;
         }
     }
     throw mapAiError(lastError, provider);
 }
 
-async function completeWithModel<T>(
-    input: Parameters<typeof completeJson>[0],
-    provider: AiProvider,
-    model: string,
-): Promise<JsonCompletion<T>> {
-    const client = clientFor(provider, input.timeoutMs);
+async function completeWithModel<T>(input: JsonRequest, provider: AiProvider, model: string, timeoutMs: number): Promise<JsonCompletion<T>> {
+    const client = clientFor(provider, timeoutMs);
     const limit = Math.min(input.maxOutputTokens ?? 16_000, provider.maxOutputTokens);
     const cacheKey = `${provider.id}:${model}`;
 
@@ -299,6 +308,56 @@ export interface AiStatus {
 
 const ROLE_NAMES: Record<AiRole, string> = { generation: "Writing", verification: "Answer checking" };
 
+/** A tiny request; short limits so a slow service is named instead of the whole check timing out. */
+const probeRequest = (role: AiRole): JsonRequest => ({
+    role,
+    system: "Reply with the JSON object requested.",
+    user: "Return ok as true.",
+    schemaName: "probe",
+    schema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } },
+    maxOutputTokens: 2_000,
+    timeoutMs: 20_000,
+    budgetMs: 40_000,
+    reasoningEffort: "low",
+});
+
+export interface ModelCheck {
+    role: AiRole;
+    provider: string;
+    model: string;
+    ok: boolean;
+    seconds: number;
+    detail: string;
+}
+
+/** Tries every preferred model of both services at once, to see which ones answer and how fast. */
+export async function checkModels(): Promise<ModelCheck[]> {
+    const roles = ["generation", "verification"] as const;
+    const perRole = await Promise.all(roles.map(async (role) => {
+        const provider = providerFor(role);
+        let available: string[] = [];
+        try {
+            available = (await modelFor(role)).available;
+        } catch (error) {
+            return [{ role, provider: provider.label, model: "(model list)", ok: false, seconds: 0, detail: mapAiError(error, provider).message }];
+        }
+        const models = provider.models[role].filter((id) => !available.length || available.includes(id));
+        return Promise.all(models.map(async (model): Promise<ModelCheck> => {
+            const started = Date.now();
+            const seconds = () => Math.round((Date.now() - started) / 100) / 10;
+            try {
+                await completeWithModel(probeRequest(role), provider, model, 25_000);
+                const mode = plainJsonOnly.has(`${provider.id}:${model}`) ? "plain JSON mode" : "strict JSON schema";
+                return { role, provider: provider.label, model, ok: true, seconds: seconds(), detail: `answered (${mode})` };
+            } catch (error) {
+                const status = errorStatus(error);
+                return { role, provider: provider.label, model, ok: false, seconds: seconds(), detail: `${status ? `HTTP ${status}: ` : ""}${errorMessage(error).slice(0, 200)}` };
+            }
+        }));
+    }));
+    return perRole.flat();
+}
+
 /**
  * Checks both services: the key, the chosen model and, when asked, that each can actually
  * answer (a valid key can still fail on a real request, for example with no quota).
@@ -323,17 +382,10 @@ export async function checkAiStatus(probe = false): Promise<AiStatus> {
                 throw new AiError("model_unavailable", `The key works, but it cannot use ${model}. Set ${provider.modelEnv[role]} to one of: ${options}.`);
             }
             if (probe) {
-                await completeJson<{ ok: boolean }>({
-                    role,
-                    system: "Reply with the JSON object requested.",
-                    user: "Return ok as true.",
-                    schemaName: "probe",
-                    schema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } },
-                    maxOutputTokens: 2_000,
-                    // Short, so a slow service is named instead of the whole check timing out.
-                    timeoutMs: 20_000,
-                    reasoningEffort: "low",
-                });
+                const answered = await completeJson<{ ok: boolean }>(probeRequest(role));
+                // Report the model that actually answered, which may be a backup.
+                if (role === "generation") status.generationModel = answered.model;
+                else status.verificationModel = answered.model;
             }
         } catch (error) {
             const failure = mapAiError(error, provider);

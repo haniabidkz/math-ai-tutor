@@ -150,6 +150,21 @@ describe("JSON requests", () => {
         expect(fake.calls).toHaveLength(1);
     });
 
+    it("moves on to the next model when one is too slow, within the time budget", async () => {
+        const { completeJson } = await freshModule();
+        fake.respond = (_baseURL, params) => {
+            if (params.model === "gemini-3.8-flash") throw new Error("Request timed out.");
+            return reply({ ok: true });
+        };
+        const answered = await completeJson({ role: "generation", system: "s", user: "u", schemaName: "probe", schema, timeoutMs: 20_000, budgetMs: 40_000 });
+        expect(answered.model).toBe("gemini-2.5-flash");
+
+        fake.calls = [];
+        const noTime = completeJson({ role: "generation", system: "s", user: "u", schemaName: "probe", schema, timeoutMs: 20_000, budgetMs: 10_000 });
+        await expect(noTime).rejects.toMatchObject({ message: "Google Gemini took too long to answer. Try again." });
+        expect(fake.calls).toHaveLength(1);
+    });
+
     it("reports a request that timed out", async () => {
         const { completeJson } = await freshModule();
         fake.respond = () => { throw new Error("Request timed out."); };
@@ -184,6 +199,18 @@ describe("connection check", () => {
         expect(fake.calls.map((call) => call.baseURL)).toEqual([GEMINI, CEREBRAS]);
         // The quick test asks for little thinking so it answers fast.
         expect(fake.calls.map((call) => call.params.reasoning_effort)).toEqual(["low", "low"]);
+    });
+
+    it("reports every preferred model of both services separately", async () => {
+        const { checkModels } = await freshModule();
+        fake.respond = (_baseURL, params) => {
+            if (params.model === "gemini-3.8-flash") throw httpError(503, "The model is overloaded.");
+            return reply({ ok: true });
+        };
+        const checks = await checkModels();
+        expect(checks.map((check) => `${check.model}:${check.ok}`)).toEqual(["gemini-3.8-flash:false", "gemini-2.5-flash:true", "gpt-oss-120b:true"]);
+        expect(checks[0].detail).toBe("HTTP 503: The model is overloaded.");
+        expect(checks[1].detail).toBe("answered (strict JSON schema)");
     });
 
     it("explains a model the key cannot use", async () => {

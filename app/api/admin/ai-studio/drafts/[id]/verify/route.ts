@@ -47,6 +47,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             schemaName: "independent_solve",
             schema: verificationSchema,
             maxOutputTokens: 30_000,
+            timeoutMs: 120_000,
         });
         const answers = new Map((reply.data.answers ?? []).map((answer) => [answer.id, answer]));
         const sent = new Map(batch.map((question, index) => [question.key, { fingerprint: questionFingerprint(question), answer: answers.get(`q${index + 1}`) }]));
