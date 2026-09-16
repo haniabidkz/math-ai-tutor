@@ -420,7 +420,8 @@ export async function checkAiStatus(probe = false): Promise<AiStatus> {
                 ...status,
                 configured: failure.code !== "not_configured",
                 valid: !["not_configured", "invalid_key"].includes(failure.code),
-                canGenerate: false,
+                // Busy and rate limits pass; the Studio waits and retries on its own.
+                canGenerate: failure.code === "busy" || failure.code === "rate_limited",
                 code: failure.code,
                 message: `${ROLE_NAMES[role]} (${provider.label}): ${failure.message}`,
             };

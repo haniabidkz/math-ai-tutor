@@ -251,6 +251,14 @@ describe("connection check", () => {
         expect(fake.calls.map((call) => call.params.reasoning_effort)).toEqual(["low", "low"]);
     });
 
+    it("still allows generating while the free service is only busy", async () => {
+        const { checkAiStatus } = await freshModule();
+        fake.respond = () => { throw httpError(429, "Resource has been exhausted"); };
+        const status = await checkAiStatus(true);
+        expect(status).toMatchObject({ canGenerate: true, code: "rate_limited" });
+        expect(status.message).toContain("Writing (Google Gemini): The free Google Gemini limit was reached");
+    });
+
     it("reports every preferred model of every service separately", async () => {
         const { checkModels } = await freshModule();
         fake.respond = (_baseURL, params) => {

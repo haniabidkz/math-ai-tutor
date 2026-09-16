@@ -165,14 +165,18 @@ export function AiStudio({ concepts, config, onPublished }: {
                         <Bot className="h-5 w-5" />
                         <h2 className="font-semibold">AI connection</h2>
                         {status === null ? <Badge variant="outline">Checking...</Badge>
-                            : ready ? <Badge className="bg-emerald-600">Connected</Badge>
-                                : <Badge variant="destructive">Not ready</Badge>}
+                            : ready && status.code ? <Badge className="bg-amber-500">Busy right now</Badge>
+                                : ready ? <Badge className="bg-emerald-600">Connected</Badge>
+                                    : <Badge variant="destructive">Not ready</Badge>}
                     </div>
                     <Button variant="outline" size="sm" onClick={() => checkStatus(true)} disabled={testing}>
                         {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlugZap className="mr-2 h-4 w-4" />}Test connection
                     </Button>
                 </div>
                 {status ? <p className="text-sm">{status.message}</p> : null}
+                {ready && status?.code ? (
+                    <p className="text-xs text-muted-foreground">You can still generate: the Studio waits and tries again while the free service is busy.</p>
+                ) : null}
                 {status?.generationProvider ? (
                     <p className="text-xs text-muted-foreground">
                         Writes content with {status.generationProvider}{status.generationModel ? ` (${status.generationModel})` : ""}; {status.verificationProvider}

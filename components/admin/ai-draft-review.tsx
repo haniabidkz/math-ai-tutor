@@ -23,9 +23,12 @@ import type { Difficulty, LocalizedText, MisconceptionTag } from "@/types/curric
 /** Failures worth retrying automatically; a bad key or missing credit stops at once. */
 const RETRYABLE = new Set(["failed", "bad_output", "rejected", "refused"]);
 const MAX_TRIES = 3;
-/** Free services are often busy or allow few requests a minute; waiting is expected, not a failure. */
-const WAIT_MS: Record<string, number> = { rate_limited: 30_000, busy: 15_000 };
-const MAX_WAITS = 12;
+/**
+ * Free services are often busy or allow few requests a minute; waiting is expected, not a
+ * failure. The limit counts waits in a row, so a long pool can wait many times in total.
+ */
+const WAIT_MS: Record<string, number> = { rate_limited: 60_000, busy: 15_000 };
+const MAX_WAITS_IN_A_ROW = 20;
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const capital = (value: string) => `${value[0].toUpperCase()}${value.slice(1)}`;
 const errorText = (caught: unknown) => (caught instanceof Error ? caught.message : "Something went wrong");
@@ -90,7 +93,7 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
         return grouped;
     }, [issues]);
 
-    /** Answers every unchecked question, ten at a time, until none are left. */
+    /** Answers every unchecked question, a batch at a time, until none are left. */
     const check = useCallback(async () => {
         stopRef.current = false;
         setError("");
@@ -105,9 +108,10 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                     setDraft(data.draft);
                     if (!data.checked || !data.remaining) break;
                     failures = 0;
+                    waits = 0;
                 } catch (caught) {
                     const code = caught instanceof ApiError ? String(caught.body.code ?? "") : "";
-                    if (WAIT_MS[code] && waits < MAX_WAITS) {
+                    if (WAIT_MS[code] && waits < MAX_WAITS_IN_A_ROW) {
                         waits += 1;
                         setWaiting(`${errorText(caught)} Waiting ${WAIT_MS[code] / 1000} seconds, then continuing...`);
                         await sleep(WAIT_MS[code]);
@@ -143,6 +147,7 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                 try {
                     const data = await adminApi<{ draft: GenerationDraft }>(`${base}/generate`, jsonInit("POST", { stepId: step.id }));
                     setWaiting("");
+                    limitWaits = 0;
                     current = data.draft;
                     setDraft(current);
                 } catch (caught) {
@@ -159,7 +164,7 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                         continue;
                     }
                     const code = String(body.code ?? "");
-                    if (WAIT_MS[code] && limitWaits < MAX_WAITS) {
+                    if (WAIT_MS[code] && limitWaits < MAX_WAITS_IN_A_ROW) {
                         limitWaits += 1;
                         setWaiting(`${errorText(caught)} Waiting ${WAIT_MS[code] / 1000} seconds, then continuing...`);
                         await sleep(WAIT_MS[code]);
