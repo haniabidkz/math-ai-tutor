@@ -35,7 +35,8 @@ beforeEach(() => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 
-describe("AI draft review (Rule C)", () => {
+// Each test renders a full 30-question pool, which can pass 5 seconds when the whole suite runs in parallel.
+describe("AI draft review (Rule C)", { timeout: 30_000 }, () => {
     it("unlocks approval only when every check passes, then pushes with the lesson choice", async () => {
         const ready = reviewDraft({ easy: 10, medium: 10, hard: 10 });
         const onPublished = vi.fn();

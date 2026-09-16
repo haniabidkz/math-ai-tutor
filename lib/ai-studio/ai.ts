@@ -42,14 +42,16 @@ export const PROVIDERS: Record<ProviderId, AiProvider> = {
         keyEnv: "GEMINI_API_KEY",
         baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
         modelEnv: { generation: "GEMINI_MODEL", verification: "GEMINI_VERIFY_MODEL" },
+        // Ordered by how reliably each answered on the free tier (September 2026); the newest
+        // Flash models were overloaded. Checking starts with a different model from writing.
         models: {
-            generation: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"],
-            verification: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"],
+            generation: ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.8-flash"],
+            verification: ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash"],
         },
         maxOutputTokens: 60_000,
         // Gemini always thinks first; five questions a step stays well inside the time limit.
         questionBatch: 5,
-        checkBatch: 10,
+        checkBatch: 5,
         tokenParam: "max_tokens",
     },
     cerebras: {
@@ -84,9 +86,13 @@ export const PROVIDERS: Record<ProviderId, AiProvider> = {
     },
 };
 
-/** Writing prefers Gemini and checking prefers Cerebras, so two different model families see every answer. */
+/**
+ * Writing prefers Gemini and checking prefers another family, so two different models see every
+ * answer. Cerebras never writes unless chosen with AI_GENERATION_PROVIDER: its Roman Urdu is
+ * untested, and writing quality matters more than always having a writer.
+ */
 const PREFERENCE: Record<AiRole, ProviderId[]> = {
-    generation: ["gemini", "openai", "cerebras"],
+    generation: ["gemini", "openai"],
     verification: ["cerebras", "openai", "gemini"],
 };
 
@@ -97,16 +103,20 @@ const OVERRIDE_ENV: Record<AiRole, string> = {
 
 type Env = Record<string, string | undefined>;
 
-/** The service for a role: an explicit override, else the first preferred one with a key. */
-export function providerFor(role: AiRole, env: Env = process.env): AiProvider {
+/**
+ * Services to try for a role, in order: an explicit override on its own, otherwise every
+ * service with a key, so a service whose account cannot be used hands over to the next.
+ */
+export function providersFor(role: AiRole, env: Env = process.env): AiProvider[] {
     const override = env[OVERRIDE_ENV[role]]?.trim().toLowerCase() as ProviderId | undefined;
-    if (override && PROVIDERS[override]) return PROVIDERS[override];
-    const configured = PREFERENCE[role].find((id) => env[PROVIDERS[id].keyEnv]?.trim());
-    return PROVIDERS[configured ?? PREFERENCE[role][0]];
+    if (override && PROVIDERS[override]) return [PROVIDERS[override]];
+    const configured = PREFERENCE[role].filter((id) => env[PROVIDERS[id].keyEnv]?.trim()).map((id) => PROVIDERS[id]);
+    return configured.length ? configured : [PROVIDERS[PREFERENCE[role][0]]];
 }
 
+export const providerFor = (role: AiRole, env: Env = process.env) => providersFor(role, env)[0];
 export const questionBatchSize = () => providerFor("generation").questionBatch;
-export const checkBatchSize = () => providerFor("verification").checkBatch;
+export const checkBatchSize = () => Math.min(...providersFor("verification").map((provider) => provider.checkBatch));
 
 function keyFor(provider: AiProvider): string {
     const key = process.env[provider.keyEnv]?.trim();
@@ -128,9 +138,11 @@ const errorMessage = (error: unknown) => (error instanceof Error ? error.message
 const errorStatus = (error: unknown) => (error as { status?: number })?.status;
 /** Gemini answers a bad key with HTTP 400 rather than 401. */
 const isKeyProblem = (error: unknown) => errorStatus(error) === 400 && /api[ _-]?key/i.test(errorMessage(error));
-/** A busy or rate-limited model; another model of the same service may still answer. */
-const isBusy = (error: unknown) => [429, 500, 502, 503, 504].includes(errorStatus(error) ?? 0);
 const isTimeout = (error: unknown) => !errorStatus(error) && /timed? ?out/i.test(errorMessage(error));
+/** A busy, slow, retired or rate-limited model; another model of the same service may still answer. */
+const isModelProblem = (error: unknown) => isTimeout(error) || [404, 429, 500, 502, 503, 504].includes(errorStatus(error) ?? 0);
+/** The whole service is unusable for this account; the next service should take over. */
+const isAccountProblem = (error: AiError) => ["not_configured", "invalid_key", "no_credit"].includes(error.code);
 
 export function mapAiError(error: unknown, provider: AiProvider): AiError {
     if (error instanceof AiError) return error;
@@ -141,7 +153,9 @@ export function mapAiError(error: unknown, provider: AiProvider): AiError {
     if (status === 401 || status === 403 || isKeyProblem(error)) {
         return new AiError("invalid_key", `${who} rejected the API key in ${provider.keyEnv}. It may be mistyped, revoked or not enabled.`);
     }
-    if (code === "insufficient_quota") return new AiError("no_credit", `The ${who} account has no credit left.`);
+    if (status === 402 || code === "insufficient_quota") {
+        return new AiError("no_credit", `The ${who} account needs billing or credits before its API can be used (HTTP ${status ?? 429}).`);
+    }
     if (status === 429) {
         return new AiError("rate_limited", `The free ${who} limit was reached. Wait a minute and try again; if it keeps happening, today's free limit is used up.`);
     }
@@ -168,13 +182,12 @@ async function listModelIds(provider: AiProvider): Promise<string[]> {
     return ids;
 }
 
-export async function modelFor(role: AiRole): Promise<{ provider: AiProvider; model: string; backups: string[]; available: string[] }> {
-    const provider = providerFor(role);
+export async function modelFor(role: AiRole, provider = providerFor(role)): Promise<{ provider: AiProvider; model: string; backups: string[]; available: string[] }> {
     const available = await listModelIds(provider);
     const override = process.env[provider.modelEnv[role]]?.trim();
-    const listed = provider.models[role].filter((id) => available.includes(id));
+    const listed = provider.models[role].filter((id) => !available.length || available.includes(id));
     const model = override || listed[0] || provider.models[role][0];
-    // A chosen override is used alone; otherwise the next listed model stands in when the first is busy.
+    // A chosen override is used alone; otherwise the next listed model stands in when the first fails.
     return { provider, model, backups: override ? [] : listed.filter((id) => id !== model), available };
 }
 
@@ -183,6 +196,8 @@ export interface JsonCompletion<T> {
     usage: { inputTokens: number; outputTokens: number };
     model: string;
     provider: ProviderId;
+    /** Services passed over because their account could not be used. */
+    skipped: string[];
 }
 
 /** Models that rejected strict JSON Schema; they get plain JSON mode and the schema in the prompt. */
@@ -215,33 +230,55 @@ export interface JsonRequest {
 
 /** Below this, a backup model would not have time to answer. */
 const MIN_ATTEMPT_MS = 30_000;
+const BACKUP_MODELS = 2;
 
 /**
  * One JSON chat completion for a role. Strict schema mode is tried first; a service that
  * rejects the schema gets plain JSON mode instead, and the Studio's own checks still apply.
- * When a model is busy, slow or out of free quota, the service's next model answers instead,
- * as long as the time budget allows.
+ * A busy, slow or rate-limited model hands over to the service's next model, and a service
+ * whose account cannot be used hands over to the next service, while the time budget allows.
  */
 export async function completeJson<T>(input: JsonRequest): Promise<JsonCompletion<T>> {
     const started = Date.now();
     const budget = input.budgetMs ?? 270_000;
     const minimum = Math.min(MIN_ATTEMPT_MS, input.timeoutMs ?? MIN_ATTEMPT_MS);
-    const { provider, model, backups } = await modelFor(input.role);
-    let lastError: unknown = new AiError("failed", `${provider.label} did not answer in time. Try again.`);
-    for (const [index, candidate] of [model, ...backups.slice(0, 2)].entries()) {
-        const remaining = budget - (Date.now() - started);
-        if (index > 0 && remaining < minimum) break;
+    const skipped: string[] = [];
+    const providers = providersFor(input.role);
+    let lastError: AiError = new AiError("failed", `${providers[0].label} did not answer in time. Try again.`);
+    let attempts = 0;
+
+    for (const provider of providers) {
+        let models: string[];
         try {
-            return await completeWithModel<T>(input, provider, candidate, Math.max(5_000, Math.min(input.timeoutMs ?? 250_000, remaining)));
+            const chosen = await modelFor(input.role, provider);
+            models = [chosen.model, ...chosen.backups.slice(0, BACKUP_MODELS)];
         } catch (error) {
-            lastError = error;
-            if (!isBusy(error) && !isTimeout(error)) break;
+            lastError = mapAiError(error, provider);
+            if (!isAccountProblem(lastError)) throw lastError;
+            skipped.push(`${provider.label}: ${lastError.message}`);
+            continue;
+        }
+        for (const model of models) {
+            const remaining = budget - (Date.now() - started);
+            if (attempts > 0 && remaining < minimum) throw lastError;
+            attempts += 1;
+            try {
+                const result = await completeWithModel<T>(input, provider, model, Math.max(5_000, Math.min(input.timeoutMs ?? 250_000, remaining)));
+                return { ...result, skipped };
+            } catch (error) {
+                lastError = mapAiError(error, provider);
+                if (isAccountProblem(lastError)) {
+                    skipped.push(`${provider.label}: ${lastError.message}`);
+                    break;
+                }
+                if (!isModelProblem(error)) throw lastError;
+            }
         }
     }
-    throw mapAiError(lastError, provider);
+    throw lastError;
 }
 
-async function completeWithModel<T>(input: JsonRequest, provider: AiProvider, model: string, timeoutMs: number): Promise<JsonCompletion<T>> {
+async function completeWithModel<T>(input: JsonRequest, provider: AiProvider, model: string, timeoutMs: number): Promise<Omit<JsonCompletion<T>, "skipped">> {
     const client = clientFor(provider, timeoutMs);
     const limit = Math.min(input.maxOutputTokens ?? 16_000, provider.maxOutputTokens);
     const cacheKey = `${provider.id}:${model}`;
@@ -321,46 +358,9 @@ const probeRequest = (role: AiRole): JsonRequest => ({
     reasoningEffort: "low",
 });
 
-export interface ModelCheck {
-    role: AiRole;
-    provider: string;
-    model: string;
-    ok: boolean;
-    seconds: number;
-    detail: string;
-}
-
-/** Tries every preferred model of both services at once, to see which ones answer and how fast. */
-export async function checkModels(): Promise<ModelCheck[]> {
-    const roles = ["generation", "verification"] as const;
-    const perRole = await Promise.all(roles.map(async (role) => {
-        const provider = providerFor(role);
-        let available: string[] = [];
-        try {
-            available = (await modelFor(role)).available;
-        } catch (error) {
-            return [{ role, provider: provider.label, model: "(model list)", ok: false, seconds: 0, detail: mapAiError(error, provider).message }];
-        }
-        const models = provider.models[role].filter((id) => !available.length || available.includes(id));
-        return Promise.all(models.map(async (model): Promise<ModelCheck> => {
-            const started = Date.now();
-            const seconds = () => Math.round((Date.now() - started) / 100) / 10;
-            try {
-                await completeWithModel(probeRequest(role), provider, model, 25_000);
-                const mode = plainJsonOnly.has(`${provider.id}:${model}`) ? "plain JSON mode" : "strict JSON schema";
-                return { role, provider: provider.label, model, ok: true, seconds: seconds(), detail: `answered (${mode})` };
-            } catch (error) {
-                const status = errorStatus(error);
-                return { role, provider: provider.label, model, ok: false, seconds: seconds(), detail: `${status ? `HTTP ${status}: ` : ""}${errorMessage(error).slice(0, 200)}` };
-            }
-        }));
-    }));
-    return perRole.flat();
-}
-
 /**
- * Checks both services: the key, the chosen model and, when asked, that each can actually
- * answer (a valid key can still fail on a real request, for example with no quota).
+ * Checks both roles. Without a probe it only reads the first service's model list; with a
+ * probe it sends each role a tiny request and reports the service and model that answered.
  */
 export async function checkAiStatus(probe = false): Promise<AiStatus> {
     const status: AiStatus = {
@@ -370,22 +370,32 @@ export async function checkAiStatus(probe = false): Promise<AiStatus> {
         generationModel: null, verificationModel: null,
         message: "",
     };
+    const notes: string[] = [];
 
     for (const role of ["generation", "verification"] as const) {
         const provider = providerFor(role);
         try {
-            const { model, available } = await modelFor(role);
-            if (role === "generation") status.generationModel = model;
-            else status.verificationModel = model;
-            if (available.length && !available.includes(model)) {
-                const options = available.filter((id) => /^(gpt|o\d|gemini|qwen|llama)/.test(id)).slice(0, 8).join(", ");
-                throw new AiError("model_unavailable", `The key works, but it cannot use ${model}. Set ${provider.modelEnv[role]} to one of: ${options}.`);
-            }
+            let label = provider.label;
+            let model: string;
             if (probe) {
                 const answered = await completeJson<{ ok: boolean }>(probeRequest(role));
-                // Report the model that actually answered, which may be a backup.
-                if (role === "generation") status.generationModel = answered.model;
-                else status.verificationModel = answered.model;
+                label = PROVIDERS[answered.provider].label;
+                model = answered.model;
+                if (answered.skipped.length) notes.push(`${ROLE_NAMES[role]} uses ${label} because ${answered.skipped.join("; ")}`);
+            } else {
+                const chosen = await modelFor(role);
+                model = chosen.model;
+                if (chosen.available.length && !chosen.available.includes(model)) {
+                    const options = chosen.available.filter((id) => /^(gpt|o\d|gemini|qwen|llama)/.test(id)).slice(0, 8).join(", ");
+                    throw new AiError("model_unavailable", `The key works, but it cannot use ${model}. Set ${provider.modelEnv[role]} to one of: ${options}.`);
+                }
+            }
+            if (role === "generation") {
+                status.generationProvider = label;
+                status.generationModel = model;
+            } else {
+                status.verificationProvider = label;
+                status.verificationModel = model;
             }
         } catch (error) {
             const failure = mapAiError(error, provider);
@@ -399,6 +409,42 @@ export async function checkAiStatus(probe = false): Promise<AiStatus> {
             };
         }
     }
-    status.message = probe ? "Connected. A test request to each service succeeded." : "Connected.";
+    status.message = [probe ? "Connected. A test request for writing and for answer checking succeeded." : "Connected.", ...notes].join(" ");
     return status;
+}
+
+export interface ModelCheck {
+    provider: string;
+    model: string;
+    ok: boolean;
+    seconds: number;
+    detail: string;
+}
+
+/** Tries every preferred model of every configured service at once, to see which answer and how fast. */
+export async function checkModels(): Promise<ModelCheck[]> {
+    const providers = [...new Set([...providersFor("generation"), ...providersFor("verification")])];
+    const perProvider = await Promise.all(providers.map(async (provider) => {
+        let available: string[];
+        try {
+            available = await listModelIds(provider);
+        } catch (error) {
+            return [{ provider: provider.label, model: "(model list)", ok: false, seconds: 0, detail: mapAiError(error, provider).message }];
+        }
+        const models = [...new Set([...provider.models.generation, ...provider.models.verification])]
+            .filter((id) => !available.length || available.includes(id));
+        return Promise.all(models.map(async (model): Promise<ModelCheck> => {
+            const started = Date.now();
+            const seconds = () => Math.round((Date.now() - started) / 100) / 10;
+            try {
+                await completeWithModel(probeRequest("generation"), provider, model, 25_000);
+                const mode = plainJsonOnly.has(`${provider.id}:${model}`) ? "plain JSON mode" : "strict JSON schema";
+                return { provider: provider.label, model, ok: true, seconds: seconds(), detail: `answered (${mode})` };
+            } catch (error) {
+                const status = errorStatus(error);
+                return { provider: provider.label, model, ok: false, seconds: seconds(), detail: `${status ? `HTTP ${status}: ` : ""}${errorMessage(error).slice(0, 200)}` };
+            }
+        }));
+    }));
+    return perProvider.flat();
 }

@@ -85,8 +85,9 @@ export function AiStudio({ concepts, config, onPublished }: {
         }
     }, []);
 
+    // A real test request, so the screen names the services that will actually answer.
     useEffect(() => {
-        void checkStatus(false);
+        void checkStatus(true);
         void loadDrafts();
     }, [checkStatus, loadDrafts]);
 
