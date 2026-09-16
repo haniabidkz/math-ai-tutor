@@ -117,7 +117,7 @@ describe("JSON requests", () => {
         };
         const result = await completeJson(request("verification"));
         expect(result).toMatchObject({ provider: "gemini", model: "gemini-3.5-flash" });
-        expect(result.skipped).toEqual(["Cerebras: The Cerebras account needs billing or credits before its API can be used (HTTP 402)."]);
+        expect(result.skipped).toEqual([{ provider: "Cerebras", code: "no_credit", message: "The Cerebras account needs billing or credits before its API can be used (HTTP 402)." }]);
         expect(fake.calls.map((call) => call.params.model)).toEqual(["gpt-oss-120b", "gemini-3.5-flash"]);
     });
 
@@ -163,6 +163,19 @@ describe("JSON requests", () => {
         await expect(completeJson(request("generation")))
             .rejects.toMatchObject({ code: "busy", message: "Google Gemini is busy right now (error 503). Try again in a minute." });
         expect(fake.calls).toHaveLength(1);
+    });
+
+    it("lists every passed-over service in plain words", async () => {
+        const { checkAiStatus } = await freshModule();
+        vi.stubEnv("OPENAI_API_KEY", "revoked");
+        fake.models.openai = [];
+        fake.respond = (baseURL) => {
+            if (baseURL === CEREBRAS) throw httpError(402, "402 status code (no body)");
+            if (baseURL === undefined) throw httpError(401, "Incorrect API key provided");
+            return reply({ ok: true });
+        };
+        const status = await checkAiStatus(true);
+        expect(status.message).toContain("Answer checking uses Google Gemini (Cerebras needs billing; OpenAI key is not accepted).");
     });
 
     it("reports Gemini being busy, not a broken fallback key, so the Studio waits and retries", async () => {
@@ -242,8 +255,7 @@ describe("connection check", () => {
             generationProvider: "Google Gemini", generationModel: "gemini-3.6-flash",
             verificationProvider: "Google Gemini", verificationModel: "gemini-3.5-flash",
         });
-        expect(status.message).toContain("Answer checking uses Google Gemini because Cerebras: The Cerebras account needs billing or credits before its API can be used (HTTP 402).");
-        expect(status.message).not.toContain(".;");
+        expect(status.message).toBe("Connected. A test request for writing and for answer checking succeeded. Answer checking uses Google Gemini (Cerebras needs billing).");
     });
 
     it("is ready when both services answer, using a quick low-effort request", async () => {

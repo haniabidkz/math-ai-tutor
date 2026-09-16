@@ -193,13 +193,20 @@ export async function modelFor(role: AiRole, provider = providerFor(role)): Prom
     return { provider, model, backups: override ? [] : listed.filter((id) => id !== model), available };
 }
 
+/** A service passed over because its account could not be used. */
+export interface SkippedService {
+    provider: string;
+    code: AiErrorCode;
+    message: string;
+}
+
 export interface JsonCompletion<T> {
     data: T;
     usage: { inputTokens: number; outputTokens: number };
     model: string;
     provider: ProviderId;
     /** Services passed over because their account could not be used. */
-    skipped: string[];
+    skipped: SkippedService[];
 }
 
 /** Models that rejected strict JSON Schema; they get plain JSON mode and the schema in the prompt. */
@@ -245,7 +252,7 @@ export async function completeJson<T>(input: JsonRequest): Promise<JsonCompletio
     const started = Date.now();
     const budget = input.budgetMs ?? 270_000;
     const minimum = Math.min(MIN_ATTEMPT_MS, input.timeoutMs ?? MIN_ATTEMPT_MS);
-    const skipped: string[] = [];
+    const skipped: SkippedService[] = [];
     const providers = providersFor(input.role);
     const tried: string[] = [];
     // A model that was busy, slow or rate-limited explains the failure better than a service
@@ -260,7 +267,7 @@ export async function completeJson<T>(input: JsonRequest): Promise<JsonCompletio
     };
     const skip = (provider: AiProvider, error: AiError) => {
         accountError = error;
-        skipped.push(`${provider.label}: ${error.message}`);
+        skipped.push({ provider: provider.label, code: error.code, message: error.message });
     };
 
     for (const provider of providers) {
@@ -362,6 +369,13 @@ export interface AiStatus {
 
 const ROLE_NAMES: Record<AiRole, string> = { generation: "Writing", verification: "Answer checking" };
 
+/** Short reasons for the connection check; the full messages stay in the server errors. */
+const SKIP_REASONS: Partial<Record<AiErrorCode, string>> = {
+    no_credit: "needs billing",
+    invalid_key: "key is not accepted",
+    not_configured: "has no key",
+};
+
 /** A tiny request; short limits so a slow service is named instead of the whole check timing out. */
 const probeRequest = (role: AiRole): JsonRequest => ({
     role,
@@ -399,7 +413,8 @@ export async function checkAiStatus(probe = false): Promise<AiStatus> {
                 label = PROVIDERS[answered.provider].label;
                 model = answered.model;
                 if (answered.skipped.length) {
-                    notes.push(`${ROLE_NAMES[role]} uses ${label} because ${answered.skipped.map((reason) => reason.replace(/\.$/, "")).join("; ")}.`);
+                    const reasons = answered.skipped.map((service) => `${service.provider} ${SKIP_REASONS[service.code] ?? "cannot be used"}`);
+                    notes.push(`${ROLE_NAMES[role]} uses ${label} (${reasons.join("; ")}).`);
                 }
             } else {
                 const chosen = await modelFor(role);
