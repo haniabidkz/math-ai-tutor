@@ -23,9 +23,9 @@ import type { Difficulty, LocalizedText, MisconceptionTag } from "@/types/curric
 /** Failures worth retrying automatically; a bad key or missing credit stops at once. */
 const RETRYABLE = new Set(["failed", "bad_output", "rejected", "refused"]);
 const MAX_TRIES = 3;
-/** Free services allow only a few requests a minute; waiting is expected, not a failure. */
-const RATE_LIMIT_WAIT_MS = 30_000;
-const MAX_RATE_LIMIT_WAITS = 10;
+/** Free services are often busy or allow few requests a minute; waiting is expected, not a failure. */
+const WAIT_MS: Record<string, number> = { rate_limited: 30_000, busy: 15_000 };
+const MAX_WAITS = 12;
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const capital = (value: string) => `${value[0].toUpperCase()}${value.slice(1)}`;
 const errorText = (caught: unknown) => (caught instanceof Error ? caught.message : "Something went wrong");
@@ -107,10 +107,10 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                     failures = 0;
                 } catch (caught) {
                     const code = caught instanceof ApiError ? String(caught.body.code ?? "") : "";
-                    if (code === "rate_limited" && waits < MAX_RATE_LIMIT_WAITS) {
+                    if (WAIT_MS[code] && waits < MAX_WAITS) {
                         waits += 1;
-                        setWaiting(`${errorText(caught)} Waiting 30 seconds, then continuing...`);
-                        await sleep(RATE_LIMIT_WAIT_MS);
+                        setWaiting(`${errorText(caught)} Waiting ${WAIT_MS[code] / 1000} seconds, then continuing...`);
+                        await sleep(WAIT_MS[code]);
                         continue;
                     }
                     failures += 1;
@@ -159,10 +159,10 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                         continue;
                     }
                     const code = String(body.code ?? "");
-                    if (code === "rate_limited" && limitWaits < MAX_RATE_LIMIT_WAITS) {
+                    if (WAIT_MS[code] && limitWaits < MAX_WAITS) {
                         limitWaits += 1;
-                        setWaiting(`${errorText(caught)} Waiting 30 seconds, then continuing...`);
-                        await sleep(RATE_LIMIT_WAIT_MS);
+                        setWaiting(`${errorText(caught)} Waiting ${WAIT_MS[code] / 1000} seconds, then continuing...`);
+                        await sleep(WAIT_MS[code]);
                         continue;
                     }
                     const count = (tries.get(step.id) ?? 0) + 1;

@@ -6,7 +6,8 @@ import OpenAI from "openai";
  * imported by client code: it reads API keys, which must never reach the browser.
  */
 
-export type AiErrorCode = "not_configured" | "invalid_key" | "no_credit" | "rate_limited" | "model_unavailable" | "refused" | "bad_output" | "failed";
+/** "busy" and "rate_limited" mean wait and try again; the Studio does that on its own. */
+export type AiErrorCode = "not_configured" | "invalid_key" | "no_credit" | "rate_limited" | "busy" | "model_unavailable" | "refused" | "bad_output" | "failed";
 
 export class AiError extends Error {
     constructor(public code: AiErrorCode, message: string) {
@@ -160,8 +161,8 @@ export function mapAiError(error: unknown, provider: AiProvider): AiError {
         return new AiError("rate_limited", `The free ${who} limit was reached. Wait a minute and try again; if it keeps happening, today's free limit is used up.`);
     }
     if (status === 404 || code === "model_not_found") return new AiError("model_unavailable", `${who} cannot use the selected model. ${message}`);
-    if (isTimeout(error)) return new AiError("failed", `${who} took too long to answer. Try again.`);
-    if (status && status >= 500) return new AiError("failed", `${who} is busy right now (error ${status}). Try again in a minute.`);
+    if (isTimeout(error)) return new AiError("busy", `${who} took too long to answer. Try again.`);
+    if (status && status >= 500) return new AiError("busy", `${who} is busy right now (error ${status}). Try again in a minute.`);
     return new AiError("failed", `${who}: ${message}`);
 }
 
@@ -244,8 +245,12 @@ export async function completeJson<T>(input: JsonRequest): Promise<JsonCompletio
     const minimum = Math.min(MIN_ATTEMPT_MS, input.timeoutMs ?? MIN_ATTEMPT_MS);
     const skipped: string[] = [];
     const providers = providersFor(input.role);
-    let lastError: AiError = new AiError("failed", `${providers[0].label} did not answer in time. Try again.`);
-    let attempts = 0;
+    let lastError: AiError = new AiError("busy", `${providers[0].label} did not answer in time. Try again.`);
+    const tried: string[] = [];
+    // A busy or slow reply names every model tried, so repeated failures can be traced.
+    const giveUp = () => (tried.length > 1 && ["busy", "rate_limited"].includes(lastError.code)
+        ? new AiError(lastError.code, `${lastError.message} (tried ${tried.join(", ")})`)
+        : lastError);
 
     for (const provider of providers) {
         let models: string[];
@@ -260,8 +265,8 @@ export async function completeJson<T>(input: JsonRequest): Promise<JsonCompletio
         }
         for (const model of models) {
             const remaining = budget - (Date.now() - started);
-            if (attempts > 0 && remaining < minimum) throw lastError;
-            attempts += 1;
+            if (tried.length > 0 && remaining < minimum) throw giveUp();
+            tried.push(model);
             try {
                 const result = await completeWithModel<T>(input, provider, model, Math.max(5_000, Math.min(input.timeoutMs ?? 250_000, remaining)));
                 return { ...result, skipped };
@@ -275,7 +280,7 @@ export async function completeJson<T>(input: JsonRequest): Promise<JsonCompletio
             }
         }
     }
-    throw lastError;
+    throw giveUp();
 }
 
 async function completeWithModel<T>(input: JsonRequest, provider: AiProvider, model: string, timeoutMs: number): Promise<Omit<JsonCompletion<T>, "skipped">> {
@@ -381,7 +386,9 @@ export async function checkAiStatus(probe = false): Promise<AiStatus> {
                 const answered = await completeJson<{ ok: boolean }>(probeRequest(role));
                 label = PROVIDERS[answered.provider].label;
                 model = answered.model;
-                if (answered.skipped.length) notes.push(`${ROLE_NAMES[role]} uses ${label} because ${answered.skipped.join("; ")}`);
+                if (answered.skipped.length) {
+                    notes.push(`${ROLE_NAMES[role]} uses ${label} because ${answered.skipped.map((reason) => reason.replace(/\.$/, "")).join("; ")}.`);
+                }
             } else {
                 const chosen = await modelFor(role);
                 model = chosen.model;

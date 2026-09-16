@@ -158,8 +158,17 @@ describe("JSON requests", () => {
         vi.stubEnv("GEMINI_MODEL", "gemini-3.8-flash");
         fake.respond = () => { throw httpError(503, "The model is overloaded."); };
         await expect(completeJson(request("generation")))
-            .rejects.toMatchObject({ code: "failed", message: expect.stringContaining("busy right now (error 503)") });
+            .rejects.toMatchObject({ code: "busy", message: "Google Gemini is busy right now (error 503). Try again in a minute." });
         expect(fake.calls).toHaveLength(1);
+    });
+
+    it("names every model it tried when all of them are busy", async () => {
+        const { completeJson } = await freshModule();
+        fake.respond = () => { throw httpError(503, "The model is overloaded."); };
+        await expect(completeJson(request("generation"))).rejects.toMatchObject({
+            code: "busy",
+            message: "Google Gemini is busy right now (error 503). Try again in a minute. (tried gemini-3.6-flash, gemini-3.5-flash, gemini-3.8-flash)",
+        });
     });
 
     it("moves on to the next model when one is too slow, within the time budget", async () => {
@@ -173,7 +182,7 @@ describe("JSON requests", () => {
 
         fake.calls = [];
         const noTime = completeJson(request("generation", { timeoutMs: 20_000, budgetMs: 10_000 }));
-        await expect(noTime).rejects.toMatchObject({ message: "Google Gemini took too long to answer. Try again." });
+        await expect(noTime).rejects.toMatchObject({ code: "busy", message: "Google Gemini took too long to answer. Try again." });
         expect(fake.calls).toHaveLength(1);
     });
 
@@ -215,7 +224,8 @@ describe("connection check", () => {
             generationProvider: "Google Gemini", generationModel: "gemini-3.6-flash",
             verificationProvider: "Google Gemini", verificationModel: "gemini-3.5-flash",
         });
-        expect(status.message).toContain("Answer checking uses Google Gemini because Cerebras");
+        expect(status.message).toContain("Answer checking uses Google Gemini because Cerebras: The Cerebras account needs billing or credits before its API can be used (HTTP 402).");
+        expect(status.message).not.toContain(".;");
     });
 
     it("is ready when both services answer, using a quick low-effort request", async () => {
