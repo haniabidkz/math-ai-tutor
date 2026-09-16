@@ -162,6 +162,21 @@ describe("JSON requests", () => {
         expect(fake.calls).toHaveLength(1);
     });
 
+    it("reports Gemini being busy, not a broken fallback key, so the Studio waits and retries", async () => {
+        const { completeJson } = await freshModule();
+        vi.stubEnv("OPENAI_API_KEY", "revoked");
+        fake.models.openai = [];
+        fake.respond = (baseURL) => {
+            if (baseURL === undefined) throw httpError(401, "Incorrect API key provided");
+            throw httpError(503, "The model is overloaded.");
+        };
+        await expect(completeJson(request("generation"))).rejects.toMatchObject({
+            code: "busy",
+            message: expect.stringContaining("Google Gemini is busy right now (error 503)"),
+        });
+        expect(fake.calls.map((call) => call.baseURL ?? "openai")).toEqual([GEMINI, GEMINI, GEMINI, "openai"]);
+    });
+
     it("names every model it tried when all of them are busy", async () => {
         const { completeJson } = await freshModule();
         fake.respond = () => { throw httpError(503, "The model is overloaded."); };

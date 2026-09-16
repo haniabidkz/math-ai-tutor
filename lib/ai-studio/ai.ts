@@ -245,12 +245,21 @@ export async function completeJson<T>(input: JsonRequest): Promise<JsonCompletio
     const minimum = Math.min(MIN_ATTEMPT_MS, input.timeoutMs ?? MIN_ATTEMPT_MS);
     const skipped: string[] = [];
     const providers = providersFor(input.role);
-    let lastError: AiError = new AiError("busy", `${providers[0].label} did not answer in time. Try again.`);
     const tried: string[] = [];
-    // A busy or slow reply names every model tried, so repeated failures can be traced.
-    const giveUp = () => (tried.length > 1 && ["busy", "rate_limited"].includes(lastError.code)
-        ? new AiError(lastError.code, `${lastError.message} (tried ${tried.join(", ")})`)
-        : lastError);
+    // A model that was busy, slow or rate-limited explains the failure better than a service
+    // skipped for its account, and its "wait and retry" code keeps the Studio going.
+    let modelError: AiError | null = null;
+    let accountError: AiError | null = null;
+    const giveUp = () => {
+        if (!modelError) return accountError ?? new AiError("busy", `${providers[0].label} did not answer in time. Try again.`);
+        return tried.length > 1 && ["busy", "rate_limited"].includes(modelError.code)
+            ? new AiError(modelError.code, `${modelError.message} (tried ${tried.join(", ")})`)
+            : modelError;
+    };
+    const skip = (provider: AiProvider, error: AiError) => {
+        accountError = error;
+        skipped.push(`${provider.label}: ${error.message}`);
+    };
 
     for (const provider of providers) {
         let models: string[];
@@ -258,9 +267,9 @@ export async function completeJson<T>(input: JsonRequest): Promise<JsonCompletio
             const chosen = await modelFor(input.role, provider);
             models = [chosen.model, ...chosen.backups.slice(0, BACKUP_MODELS)];
         } catch (error) {
-            lastError = mapAiError(error, provider);
-            if (!isAccountProblem(lastError)) throw lastError;
-            skipped.push(`${provider.label}: ${lastError.message}`);
+            const failure = mapAiError(error, provider);
+            if (!isAccountProblem(failure)) throw failure;
+            skip(provider, failure);
             continue;
         }
         for (const model of models) {
@@ -271,12 +280,13 @@ export async function completeJson<T>(input: JsonRequest): Promise<JsonCompletio
                 const result = await completeWithModel<T>(input, provider, model, Math.max(5_000, Math.min(input.timeoutMs ?? 250_000, remaining)));
                 return { ...result, skipped };
             } catch (error) {
-                lastError = mapAiError(error, provider);
-                if (isAccountProblem(lastError)) {
-                    skipped.push(`${provider.label}: ${lastError.message}`);
+                const failure = mapAiError(error, provider);
+                if (isAccountProblem(failure)) {
+                    skip(provider, failure);
                     break;
                 }
-                if (!isModelProblem(error)) throw lastError;
+                if (!isModelProblem(error)) throw failure;
+                modelError = failure;
             }
         }
     }
