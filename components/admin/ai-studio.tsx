@@ -185,8 +185,8 @@ export function AiStudio({ concepts, config, onPublished }: {
                 ) : null}
                 {status && !ready && (status.code === "invalid_key" || status.code === "not_configured" || status.code === "no_credit") ? (
                     <p className="text-xs text-muted-foreground">
-                        Free keys: Google AI Studio (aistudio.google.com) for GEMINI_API_KEY and Cerebras (cloud.cerebras.ai) for CEREBRAS_API_KEY.
-                        Save them in Vercel → Project → Settings → Environment Variables, then redeploy.
+                        Create a key at platform.openai.com (API keys) and make sure the account has credit. Save it as OPENAI_API_KEY in
+                        Vercel → Project → Settings → Environment Variables, then redeploy.
                     </p>
                 ) : null}
             </section>

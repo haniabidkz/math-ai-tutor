@@ -53,27 +53,51 @@ beforeEach(() => {
     vi.stubEnv("GEMINI_API_KEY", "test-gemini");
     vi.stubEnv("CEREBRAS_API_KEY", "test-cerebras");
     vi.stubEnv("OPENAI_API_KEY", "");
-    vi.stubEnv("AI_GENERATION_PROVIDER", "");
-    vi.stubEnv("AI_VERIFICATION_PROVIDER", "");
+    // Most tests exercise the free-tier chain, which now has to be listed explicitly.
+    vi.stubEnv("AI_GENERATION_PROVIDER", "gemini,openai");
+    vi.stubEnv("AI_VERIFICATION_PROVIDER", "cerebras,openai,gemini");
     vi.stubEnv("GEMINI_MODEL", "");
+    vi.stubEnv("OPENAI_MODEL", "");
+    vi.stubEnv("OPENAI_VERIFY_MODEL", "");
 });
 
 afterEach(() => vi.unstubAllEnvs());
 
 describe("choosing the AI services", () => {
-    it("writes with Gemini only, and checks with Cerebras first, then the other services with keys", async () => {
+    it("uses OpenAI alone by default, even when other keys exist", async () => {
         const { providersFor } = await freshModule();
-        expect(providersFor("generation").map((provider) => provider.id)).toEqual(["gemini"]);
-        expect(providersFor("verification").map((provider) => provider.id)).toEqual(["cerebras", "gemini"]);
+        const env = { OPENAI_API_KEY: "x", GEMINI_API_KEY: "y", CEREBRAS_API_KEY: "z" };
+        expect(providersFor("generation", env).map((provider) => provider.id)).toEqual(["openai"]);
+        expect(providersFor("verification", env).map((provider) => provider.id)).toEqual(["openai"]);
+        // With no key at all, OpenAI is still the one reported as missing.
+        expect(providersFor("generation", {}).map((provider) => provider.id)).toEqual(["openai"]);
     });
 
-    it("uses whichever keys are set, and an explicit override on its own", async () => {
-        const { providerFor, providersFor } = await freshModule();
-        expect(providerFor("generation", { OPENAI_API_KEY: "x" }).id).toBe("openai");
-        expect(providerFor("generation", { CEREBRAS_API_KEY: "x" }).id).toBe("gemini");
-        expect(providerFor("generation", { CEREBRAS_API_KEY: "x", AI_GENERATION_PROVIDER: "cerebras" }).id).toBe("cerebras");
-        expect(providerFor("verification", { GEMINI_API_KEY: "x" }).id).toBe("gemini");
-        expect(providersFor("verification", { CEREBRAS_API_KEY: "x", GEMINI_API_KEY: "y", AI_VERIFICATION_PROVIDER: "Gemini" }).map((provider) => provider.id)).toEqual(["gemini"]);
+    it("follows a listed order of services that have keys", async () => {
+        const { providersFor } = await freshModule();
+        const keys = { OPENAI_API_KEY: "x", GEMINI_API_KEY: "y" };
+        expect(providersFor("verification", { ...keys, AI_VERIFICATION_PROVIDER: " Gemini, openai " }).map((provider) => provider.id)).toEqual(["gemini", "openai"]);
+        expect(providersFor("verification", { ...keys, AI_VERIFICATION_PROVIDER: "cerebras,openai" }).map((provider) => provider.id)).toEqual(["openai"]);
+        expect(providersFor("generation", { ...keys, AI_GENERATION_PROVIDER: "cerebras" }).map((provider) => provider.id)).toEqual(["cerebras"]);
+        expect(providersFor("generation", { ...keys, AI_GENERATION_PROVIDER: "toString,unknown" }).map((provider) => provider.id)).toEqual(["openai"]);
+    });
+
+    it("writes with GPT-5.6 Luna and checks with GPT-5 mini, five questions a request", async () => {
+        vi.stubEnv("AI_GENERATION_PROVIDER", "");
+        vi.stubEnv("AI_VERIFICATION_PROVIDER", "");
+        vi.stubEnv("OPENAI_API_KEY", "test-openai");
+        fake.models.openai = ["gpt-4o", "gpt-5-mini", "gpt-5.6-luna", "gpt-5.6-terra"];
+        const { completeJson, questionBatchSize, checkBatchSize } = await freshModule();
+        expect([questionBatchSize(), checkBatchSize()]).toEqual([5, 5]);
+
+        const written = await completeJson(request("generation", { temperature: 0.6, maxOutputTokens: 48_000 }));
+        const checked = await completeJson(request("verification", { maxOutputTokens: 30_000, reasoningEffort: "high" }));
+        expect([written.model, checked.model]).toEqual(["gpt-5.6-luna", "gpt-5-mini"]);
+        const [writing, checking] = fake.calls.map((call) => call.params);
+        expect(writing).toMatchObject({ max_completion_tokens: 30_000, response_format: { type: "json_schema" } });
+        expect(writing).not.toHaveProperty("temperature");
+        expect(writing).not.toHaveProperty("reasoning_effort");
+        expect(checking).toMatchObject({ model: "gpt-5-mini", reasoning_effort: "high" });
     });
 
     it("plans ten Gemini questions a request to spare the free daily quota, and checks in Cerebras-sized batches", async () => {

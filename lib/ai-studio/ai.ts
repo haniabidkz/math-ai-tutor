@@ -77,25 +77,30 @@ export const PROVIDERS: Record<ProviderId, AiProvider> = {
         label: "OpenAI",
         keyEnv: "OPENAI_API_KEY",
         modelEnv: { generation: "OPENAI_MODEL", verification: "OPENAI_VERIFY_MODEL" },
+        // September 2026: GPT-5.6 Luna, OpenAI's current cost-optimised model ($0.20/$1.20 per 1M
+        // tokens), writes; GPT-5 mini ($0.25/$2.00) re-solves, so a different model checks every
+        // answer. Backups stay close in price. o3-mini and o4-mini shut down on 23 October 2026.
         models: {
-            generation: ["gpt-4.1", "gpt-4o"],
-            verification: ["o4-mini", "o3-mini", "gpt-4.1", "gpt-4o"],
+            generation: ["gpt-5.6-luna", "gpt-5-mini", "gpt-5.4-mini"],
+            verification: ["gpt-5-mini", "gpt-5.6-luna", "gpt-5.4-mini"],
         },
         maxOutputTokens: 30_000,
-        questionBatch: 10,
-        checkBatch: 10,
+        // These models think before answering; five questions a request keeps each one well inside
+        // the time limit, and OpenAI's rate limits make the extra requests harmless.
+        questionBatch: 5,
+        checkBatch: 5,
         tokenParam: "max_completion_tokens",
     },
 };
 
 /**
- * Writing prefers Gemini and checking prefers another family, so two different models see every
- * answer. Cerebras never writes unless chosen with AI_GENERATION_PROVIDER: its Roman Urdu is
- * untested, and writing quality matters more than always having a writer.
+ * OpenAI only by default: the owner chose it in September 2026. Gemini and Cerebras stay
+ * available by listing services in order in AI_GENERATION_PROVIDER / AI_VERIFICATION_PROVIDER,
+ * for example "openai,gemini"; a listed service whose account cannot be used hands over to the next.
  */
-const PREFERENCE: Record<AiRole, ProviderId[]> = {
-    generation: ["gemini", "openai"],
-    verification: ["cerebras", "openai", "gemini"],
+const DEFAULT_PROVIDERS: Record<AiRole, ProviderId[]> = {
+    generation: ["openai"],
+    verification: ["openai"],
 };
 
 const OVERRIDE_ENV: Record<AiRole, string> = {
@@ -105,15 +110,17 @@ const OVERRIDE_ENV: Record<AiRole, string> = {
 
 type Env = Record<string, string | undefined>;
 
+const isProviderId = (value: string): value is ProviderId => Object.hasOwn(PROVIDERS, value);
+
 /**
- * Services to try for a role, in order: an explicit override on its own, otherwise every
- * service with a key, so a service whose account cannot be used hands over to the next.
+ * Services to try for a role, in order: the listed (or default) services that have a key. With
+ * none, the first one is returned so its missing key is what gets reported.
  */
 export function providersFor(role: AiRole, env: Env = process.env): AiProvider[] {
-    const override = env[OVERRIDE_ENV[role]]?.trim().toLowerCase() as ProviderId | undefined;
-    if (override && PROVIDERS[override]) return [PROVIDERS[override]];
-    const configured = PREFERENCE[role].filter((id) => env[PROVIDERS[id].keyEnv]?.trim()).map((id) => PROVIDERS[id]);
-    return configured.length ? configured : [PROVIDERS[PREFERENCE[role][0]]];
+    const listed = [...new Set((env[OVERRIDE_ENV[role]] ?? "").split(",").map((id) => id.trim().toLowerCase()).filter(isProviderId))];
+    const order = listed.length ? listed : DEFAULT_PROVIDERS[role];
+    const configured = order.filter((id) => env[PROVIDERS[id].keyEnv]?.trim()).map((id) => PROVIDERS[id]);
+    return configured.length ? configured : [PROVIDERS[order[0]]];
 }
 
 export const providerFor = (role: AiRole, env: Env = process.env) => providersFor(role, env)[0];
@@ -131,9 +138,9 @@ function keyFor(provider: AiProvider): string {
 const clientFor = (provider: AiProvider, timeoutMs = 250_000) =>
     new OpenAI({ apiKey: keyFor(provider), baseURL: provider.baseURL, timeout: timeoutMs, maxRetries: 0 });
 
-/** Reasoning models reject temperature. */
+/** Reasoning models (o-series, GPT-5 and later) reject temperature. */
 export function isReasoningModel(model: string): boolean {
-    return /^(o\d|gpt-5)/.test(model);
+    return /^(o\d|gpt-[5-9])/.test(model);
 }
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error ?? ""));
