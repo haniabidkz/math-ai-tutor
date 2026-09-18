@@ -82,13 +82,13 @@ describe("choosing the AI services", () => {
         expect(providersFor("generation", { ...keys, AI_GENERATION_PROVIDER: "toString,unknown" }).map((provider) => provider.id)).toEqual(["openai"]);
     });
 
-    it("writes with GPT-5.6 Luna and checks with GPT-5 mini, five questions a request", async () => {
+    it("writes with GPT-5.6 Luna three questions a request, and checks five at a time with GPT-5 mini", async () => {
         vi.stubEnv("AI_GENERATION_PROVIDER", "");
         vi.stubEnv("AI_VERIFICATION_PROVIDER", "");
         vi.stubEnv("OPENAI_API_KEY", "test-openai");
         fake.models.openai = ["gpt-4o", "gpt-5-mini", "gpt-5.6-luna", "gpt-5.6-terra"];
         const { completeJson, questionBatchSize, checkBatchSize } = await freshModule();
-        expect([questionBatchSize(), checkBatchSize()]).toEqual([5, 5]);
+        expect([questionBatchSize(), checkBatchSize()]).toEqual([3, 5]);
 
         const written = await completeJson(request("generation", { temperature: 0.6, maxOutputTokens: 48_000 }));
         const checked = await completeJson(request("verification", { maxOutputTokens: 30_000, reasoningEffort: "high" }));

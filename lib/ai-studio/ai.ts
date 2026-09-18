@@ -85,9 +85,10 @@ export const PROVIDERS: Record<ProviderId, AiProvider> = {
             verification: ["gpt-5-mini", "gpt-5.6-luna", "gpt-5.4-mini"],
         },
         maxOutputTokens: 30_000,
-        // These models think before answering; five questions a request keeps each one well inside
-        // the time limit, and OpenAI's rate limits make the extra requests harmless.
-        questionBatch: 5,
+        // Writing at high reasoning effort took up to 27 seconds a hard question, so three a request
+        // stays well inside the 150-second wait per model. Checks took 11-23 seconds for five.
+        // OpenAI's rate limits make the extra requests harmless.
+        questionBatch: 3,
         checkBatch: 5,
         tokenParam: "max_completion_tokens",
     },
