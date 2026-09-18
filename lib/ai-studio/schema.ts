@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { MISCONCEPTION_TAGS } from "@/lib/mistake-analysis";
 import { OPTION_LETTERS, type DraftConcept, type DraftQuestion, type OptionLetter } from "@/lib/ai-studio/types";
+import { stripOptionLabel } from "@/lib/ai-studio/validate";
 import type { Difficulty, MisconceptionTag } from "@/types/curriculum";
 
 /**
@@ -77,11 +78,14 @@ export const verificationSchema = {
             items: {
                 type: "object",
                 additionalProperties: false,
-                required: ["id", "chosen_option", "working"],
+                required: ["id", "working", "answer", "chosen_option"],
                 properties: {
                     id: { type: "string" },
-                    chosen_option: { type: "string", enum: OPTION_LETTERS },
                     working: { type: "string" },
+                    // The checker's own final answer, before it looks for a matching option.
+                    answer: { type: "string" },
+                    // "none" when no option equals the checker's answer, so a broken question is caught.
+                    chosen_option: { type: "string", enum: [...OPTION_LETTERS, "none"] },
                 },
             },
         },
@@ -131,7 +135,7 @@ export function normalizeQuestionBatch(
 
     const questions: DraftQuestion[] = items.map((item, index) => {
         const label = `question ${index + 1}`;
-        const options = Array.isArray(item.options) ? item.options.map(text) : [];
+        const options = Array.isArray(item.options) ? item.options.map((option) => stripOptionLabel(text(option))) : [];
         const correct = text(item.correct_option) as OptionLetter;
         const microTag = text(item.micro_tag);
 

@@ -78,6 +78,26 @@ describe("draft checks (Rule B)", () => {
         expect(blockingIssues(validateDraft(edited)).some((issue) => issue.message.includes("changed after it was checked"))).toBe(true);
     });
 
+    it("sees through letter labels when looking for repeated options", () => {
+        const labelled = draft({ easy: 10, medium: 10, hard: 10 });
+        labelled.questions[0] = question({ options: ["A. Ali, by 9", "B. Sara, by 3", "C. Ali, by 1", "D. Sara, by 3"] });
+        expect(blockingIssues(validateDraft(labelled)).map((issue) => issue.message)).toContain("Two options are the same.");
+    });
+
+    it("blocks a question whose own solution says no option is correct", () => {
+        const broken = draft({ easy: 10, medium: 10, hard: 10 });
+        broken.questions[0] = question({ solution: { english: "Both finish at 2, so none of the options is correct.", romanUrdu: "Dono 2 par hain." } });
+        expect(blockingIssues(validateDraft(broken)).map((issue) => issue.message))
+            .toContain("The solution itself says none of the options is correct. Fix the question or its options.");
+    });
+
+    it("explains a check that found no correct option at all", () => {
+        const broken = draft({ easy: 10, medium: 10, hard: 10 });
+        broken.questions[0] = question({ verification: { status: "disagrees", aiAnswer: null } });
+        expect(blockingIssues(validateDraft(broken)).map((issue) => issue.message))
+            .toContain("The independent solve found no correct option, but A is marked correct. Check the math, or confirm it if you are sure.");
+    });
+
     it("rejects duplicates inside the pool and against the live bank", () => {
         const repeated = draft({ easy: 10, medium: 10, hard: 10 });
         repeated.questions[1] = question({ questionText: repeated.questions[0].questionText });
@@ -117,6 +137,15 @@ describe("reading the model's reply", () => {
         expect(result.questions).toHaveLength(3);
         expect(result.questions[0].wrongReasons.C?.misconceptionTag).toBe("off-by-one-count");
         expect(result.questions[0].verification.status).toBe("pending");
+    });
+
+    it("removes letter labels the model puts in front of options", () => {
+        const labelled = reply(3, { options: ["A. −3", "B) 3", "(C) −2", "D: 0"] });
+        const result = normalizeQuestionBatch(labelled, expected);
+        expect(result.questions[0].options).toEqual(["−3", "3", "−2", "0"]);
+        // Answers that merely start with a capital letter stay as they are.
+        const words = normalizeQuestionBatch(reply(3, { options: ["Ali, by 9", "Sara, by 3", "Both are equal", "Marker A"] }), expected);
+        expect(words.questions[0].options).toEqual(["Ali, by 9", "Sara, by 3", "Both are equal", "Marker A"]);
     });
 
     it("rejects the whole batch when the count is wrong", () => {

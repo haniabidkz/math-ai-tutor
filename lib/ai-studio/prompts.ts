@@ -87,12 +87,14 @@ ${topics}
 
 For every question:
 - question_text: the question in simple English.
-- options: exactly 4 different answers, in order A, B, C, D.
+- options: exactly 4 different answers, in order A, B, C, D. Write only the answer itself; never start an option with its letter (write "-3", not "A. -3").
 - correct_option: the letter of the one correct answer.
 - hint: a helpful nudge that does not give the answer away, in English and in Roman Urdu.
 - step_by_step_explanation: the full worked solution, step by step, in English and in Roman Urdu.
 - wrong_option_analysis: one entry for each of the 3 wrong options (never the correct one), explaining simply why it is wrong, in English and in Roman Urdu, with the misconception_tag that best describes the mistake:
 ${TAG_GUIDE}
+
+Before you finish, solve every question again from the start. Exactly one option must equal your answer, and no two options may be equal. If a question fails this check, rewrite its numbers or options until it passes; never hand in a question whose solution says no option is correct.
 ${avoid}${feedback}`,
     };
 }
@@ -104,7 +106,7 @@ export function verificationPrompt(questions: Array<Pick<DraftQuestion, "key" | 
         ...question.options.map((option, index) => `${"ABCD"[index]}) ${option}`),
     ].join("\n")).join("\n\n");
     return {
-        system: "You are a careful math examiner. Solve each multiple-choice question yourself from scratch, then pick the option that matches your answer. Do not guess.",
-        user: `Solve every question below independently. For each, give the id, the letter you choose, and one line of working.\n\n${listing}`,
+        system: "You are a careful math examiner. Solve each multiple-choice question yourself from scratch before looking at the options, then pick the option that equals your answer. Do not guess, and never pick an option just because it is the closest.",
+        user: `Solve every question below independently. For each, give the id, one or two lines of working, your final answer, and the letter of the option that equals it. If no option equals your answer, or two options are the same answer, choose "none".\n\n${listing}`,
     };
 }

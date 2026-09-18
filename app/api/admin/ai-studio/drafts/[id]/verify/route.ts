@@ -20,7 +20,9 @@ const needsCheck = (question: DraftQuestion) =>
     question.questionText.trim().length > 0 &&
     question.options.every((option) => option.trim().length > 0);
 
-interface Answer { id: string; chosen_option: string; working: string }
+interface Answer { id: string; chosen_option: string; answer?: string; working: string }
+
+const noteFor = (answer: Answer) => [answer.answer ? `Answer: ${answer.answer}.` : "", answer.working ?? ""].join(" ").trim().slice(0, 600);
 
 /**
  * A second, independent solve: a reasoning model from another service answers a batch of
@@ -61,16 +63,21 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
                 const entry = sent.get(question.key);
                 // Skip questions deleted, edited or confirmed while the check was running.
                 if (!entry || !needsCheck(question) || questionFingerprint(question) !== entry.fingerprint) return question;
-                const chosen = entry.answer?.chosen_option as OptionLetter | undefined;
-                if (!chosen || !OPTION_LETTERS.includes(chosen)) {
+                const answer = entry.answer;
+                const chosen = answer?.chosen_option;
+                // "none": no option equals the checker's answer, so the question itself is broken.
+                if (answer && chosen === "none") {
+                    return { ...question, verification: { status: "disagrees", aiAnswer: null, note: noteFor(answer), fingerprint: entry.fingerprint } };
+                }
+                if (!answer || !OPTION_LETTERS.includes(chosen as OptionLetter)) {
                     return { ...question, verification: { status: "error", note: "the checker did not answer this question", fingerprint: entry.fingerprint } };
                 }
                 return {
                     ...question,
                     verification: {
                         status: chosen === question.correctOption ? "agrees" : "disagrees",
-                        aiAnswer: chosen,
-                        note: (entry.answer?.working ?? "").slice(0, 600),
+                        aiAnswer: chosen as OptionLetter,
+                        note: noteFor(answer),
                         fingerprint: entry.fingerprint,
                     },
                 };

@@ -531,7 +531,7 @@ function VerificationBadge({ question }: { question: DraftQuestion }) {
     const { status, aiAnswer } = question.verification;
     if (status === "agrees") return <Badge className="bg-emerald-600">AI check agrees</Badge>;
     if (status === "confirmed") return <Badge className="bg-sky-600">Checked by you</Badge>;
-    if (status === "disagrees") return <Badge variant="destructive">AI check chose {aiAnswer ?? "another option"}</Badge>;
+    if (status === "disagrees") return <Badge variant="destructive">{aiAnswer ? `AI check chose ${aiAnswer}` : "AI check: no option is right"}</Badge>;
     if (status === "error") return <Badge className="bg-amber-500">Check failed</Badge>;
     return <Badge variant="outline">Not checked yet</Badge>;
 }
@@ -696,7 +696,13 @@ function QuestionCard({ question, number, topicTitles, issues, readOnly, showDet
             {!editing && (verification.status === "disagrees" || verification.status === "error") ? (
                 <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
                     {verification.status === "disagrees" ? (
-                        <p>An independent AI solve chose <strong>{verification.aiAnswer}</strong>, but <strong>{question.correctOption}</strong> is marked correct. Work it out yourself.{verification.note ? <span className="block text-xs text-muted-foreground">Its working: {verification.note}</span> : null}</p>
+                        <p>
+                            {verification.aiAnswer
+                                ? <>An independent AI solve chose <strong>{verification.aiAnswer}</strong>, but <strong>{question.correctOption}</strong> is marked correct.</>
+                                : <>An independent AI solve found <strong>no option</strong> that equals the right answer, or two options that are the same.</>}
+                            {" "}Work it out yourself.
+                            {verification.note ? <span className="block text-xs text-muted-foreground">Its working: {verification.note}</span> : null}
+                        </p>
                     ) : <p>The answer check failed: {verification.note ?? "no reply"}.</p>}
                     {!readOnly ? (
                         <div className="flex flex-wrap gap-2">

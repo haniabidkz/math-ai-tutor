@@ -13,6 +13,15 @@ export interface DraftIssue {
 const filled = (value: string | undefined | null) => typeof value === "string" && value.trim().length > 0;
 export const normalizeText = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
 
+/**
+ * Models sometimes write "A. −3" as an option. The letter is added by the screen, and left in
+ * it hides repeats: "B. Sara, by 3" and "D. Sara, by 3" look different but are the same answer.
+ */
+export const stripOptionLabel = (value: string) => value.replace(/^\s*\(?[A-Da-d][.):]\s+(?=\S)/, "").trim();
+
+/** A worked solution that admits no option is right means the question itself is broken. */
+const SAYS_NO_ANSWER = /\bno (correct|right|valid) (answer|option)|none of the (given |above |listed )?(options|choices|answers)|no option is (correct|right)/i;
+
 /** A stable fingerprint of what a solver sees, so any edit invalidates an earlier check. */
 export function questionFingerprint(question: Pick<DraftQuestion, "questionText" | "options" | "correctOption">): string {
     return JSON.stringify([normalizeText(question.questionText), question.options.map(normalizeText), question.correctOption]);
@@ -25,12 +34,13 @@ export function questionIssues(question: DraftQuestion, allowedTags: Set<string>
     if (!filled(question.questionText)) add("The question text is empty.");
     if (question.options.length !== 4) add("A question needs exactly 4 options.");
     if (question.options.some((option) => !filled(option))) add("Every option needs text.");
-    if (new Set(question.options.map(normalizeText)).size !== question.options.length) add("Two options are the same.");
+    if (new Set(question.options.map((option) => normalizeText(stripOptionLabel(option)))).size !== question.options.length) add("Two options are the same.");
     if (!OPTION_LETTERS.includes(question.correctOption)) add("Choose the correct option.");
     if (!allowedTags.has(question.microTag)) add("Choose which micro-topic this question belongs to.");
 
     if (!filled(question.hint.english) || !filled(question.hint.romanUrdu)) add("The hint is needed in both English and Roman Urdu.");
     if (!filled(question.solution.english) || !filled(question.solution.romanUrdu)) add("The step-by-step solution is needed in both English and Roman Urdu.");
+    if (SAYS_NO_ANSWER.test(question.solution.english)) add("The solution itself says none of the options is correct. Fix the question or its options.");
 
     for (const letter of OPTION_LETTERS) {
         if (letter === question.correctOption) continue;
@@ -49,7 +59,8 @@ export function questionIssues(question: DraftQuestion, allowedTags: Set<string>
     if (verification.status === "pending") add("Not checked yet: the answer has not been solved independently.");
     else if (verification.status === "error") add(`The independent check failed: ${verification.note ?? "try again"}.`);
     else if (verification.status === "disagrees") {
-        add(`The independent solve chose ${verification.aiAnswer ?? "a different option"}, but ${question.correctOption} is marked correct. Check the math, or confirm it if you are sure.`);
+        const found = verification.aiAnswer ? `chose ${verification.aiAnswer}` : "found no correct option";
+        add(`The independent solve ${found}, but ${question.correctOption} is marked correct. Check the math, or confirm it if you are sure.`);
     } else if (verification.fingerprint && verification.fingerprint !== questionFingerprint(question)) {
         add("The question changed after it was checked. Check it again.");
     }

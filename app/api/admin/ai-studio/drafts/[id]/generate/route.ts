@@ -45,7 +45,12 @@ async function runStep(draft: GenerationDraft, step: GenerationStep) {
     const count = step.count!;
     const existing = [...await liveQuestionTexts(tags), ...draft.questions.map((question) => question.questionText)];
     const prompt = questionPrompt(draft, { difficulty, count, avoid: existing, feedback: step.feedback });
-    const reply = await completeJson<unknown>({ role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags), temperature: 0.6, maxOutputTokens: 48_000, timeoutMs: PER_MODEL_MS });
+    // Questions think hard: a first run at the default effort put a wrong answer or no right
+    // option in 2 of 10 hard questions. The extra thinking costs little.
+    const reply = await completeJson<unknown>({
+        role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags),
+        temperature: 0.6, maxOutputTokens: 48_000, timeoutMs: PER_MODEL_MS, reasoningEffort: "high",
+    });
     const { questions, problems } = normalizeQuestionBatch(reply.data, { difficulty, count, allowedTags: tags });
 
     // Rule A and no repeats: the whole batch is redone with the reasons, never patched up.
