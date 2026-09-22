@@ -27,7 +27,7 @@ const MAX_TRIES = 3;
  * Free services are often busy or allow few requests a minute; waiting is expected, not a
  * failure. The limit counts waits in a row, so a long pool can wait many times in total.
  */
-const WAIT_MS: Record<string, number> = { rate_limited: 60_000, busy: 15_000 };
+const WAIT_MS: Record<string, number> = { rate_limited: 60_000, busy: 15_000, network: 5_000, gateway: 5_000 };
 const MAX_WAITS_IN_A_ROW = 20;
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const capital = (value: string) => `${value[0].toUpperCase()}${value.slice(1)}`;
@@ -230,16 +230,24 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
         if (!window.confirm(`Push ${draft.questions.length} questions to the live question bank? Students will start seeing them.`)) return;
         setPhase("approving");
         setError("");
+        let data: { questionIds: string[]; microTag: string | null };
         try {
-            const data = await adminApi<{ questionIds: string[]; microTag: string | null }>(`${base}/approve`, jsonInit("POST", { replaceLesson }));
-            await load();
-            setNotice(`Done. ${data.questionIds.length} questions are now live${data.microTag ? ` under the new micro-topic ${data.microTag}` : ""}.`);
-            onPublished();
+            data = await adminApi(`${base}/approve`, jsonInit("POST", { replaceLesson }));
         } catch (caught) {
             setError(errorText(caught));
+            setPhase("idle");
+            return;
+        }
+        // The pool is live from here on; a failed reload must not read as a failed approval.
+        setNotice(`Done. ${data.questionIds.length} questions are now live${data.microTag ? ` under the new micro-topic ${data.microTag}` : ""}.`);
+        try {
+            await load();
+        } catch {
+            setDraft((current) => (current ? { ...current, status: "approved" } : current));
         } finally {
             setPhase("idle");
         }
+        onPublished();
     }
 
     async function discard() {
@@ -256,7 +264,12 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
         return (
             <section className="space-y-3 bg-white p-4">
                 <Button variant="outline" size="sm" onClick={onClose}><ArrowLeft className="mr-2 h-4 w-4" />Back to AI Studio</Button>
-                {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : <p className="text-sm text-muted-foreground">Loading draft...</p>}
+                {error ? (
+                    <>
+                        <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>
+                        <Button size="sm" onClick={() => { setError(""); load().catch((caught) => setError(errorText(caught))); }}><RotateCcw className="mr-2 h-4 w-4" />Load again</Button>
+                    </>
+                ) : <p className="text-sm text-muted-foreground">Loading draft...</p>}
             </section>
         );
     }

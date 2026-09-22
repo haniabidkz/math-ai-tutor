@@ -127,6 +127,66 @@ describe("AI draft review (Rule C)", { timeout: 30_000 }, () => {
         await waitFor(() => expect(screen.getByText("Answers checked: 1/1")).toBeInTheDocument());
     });
 
+    it("waits out a gateway timeout and a dropped connection instead of stopping", async () => {
+        const step = (id: string, status: "pending" | "done") =>
+            (id === "concept" ? { id, kind: "concept" as const, status, attempts: 0 } : { id, kind: "questions" as const, difficulty: "easy" as const, count: 1, status, attempts: 0 });
+        const fresh = reviewDraft({ easy: 0, medium: 0, hard: 0 }, { status: "generating", concept: null, quota: { easy: 1, medium: 0, hard: 0 }, steps: [step("concept", "pending"), step("easy-1", "pending")] });
+        const afterConcept = { ...fresh, concept: reviewDraft({ easy: 0, medium: 0, hard: 0 }).concept, steps: [step("concept", "done"), step("easy-1", "pending")] };
+        const finished = { ...afterConcept, status: "needs_review" as const, questions: [draftQuestion({ verification: { status: "pending" } })], steps: [step("concept", "done"), step("easy-1", "done")] };
+        const checked = { ...finished, questions: finished.questions.map((question) => ({ ...question, verification: { status: "agrees" as const, aiAnswer: "A" as const } })) };
+        const events: string[] = [];
+        let conceptCalls = 0;
+        let verifyCalls = 0;
+        serve(fresh, {
+            [`POST ${base}/generate`]: (body) => {
+                events.push(String(body.stepId));
+                if (body.stepId === "concept") {
+                    conceptCalls += 1;
+                    if (conceptCalls === 1) throw new ApiError("The server took too long (HTTP 504); the request will be tried again.", 504, { code: "gateway" });
+                    return { draft: afterConcept };
+                }
+                return { draft: finished };
+            },
+            [`POST ${base}/verify`]: () => {
+                verifyCalls += 1;
+                events.push("verify");
+                if (verifyCalls === 1) throw new ApiError("The connection dropped.", 0, { code: "network" });
+                return { draft: checked, checked: 1, remaining: 0 };
+            },
+        });
+        render(<AiDraftReview draftId="d1" autoRun onClose={vi.fn()} onPublished={vi.fn()} />);
+
+        expect(await screen.findByText(/took too long .* Waiting 5 seconds/)).toBeInTheDocument();
+        await waitFor(() => expect(events).toEqual(["concept", "concept", "easy-1", "verify", "verify"]), { timeout: 20_000 });
+        await waitFor(() => expect(screen.getByText("Answers checked: 1/1")).toBeInTheDocument());
+        expect(screen.queryByText(/took too long|connection dropped/)).not.toBeInTheDocument();
+    });
+
+    it("still reports a successful approval when the reload afterwards fails", async () => {
+        const ready = reviewDraft({ easy: 10, medium: 10, hard: 10 });
+        const onPublished = vi.fn();
+        let loads = 0;
+        api.mockImplementation(async (path: string, init?: RequestInit) => {
+            const method = init?.method ?? "GET";
+            if (path === base && method === "GET") {
+                loads += 1;
+                if (loads > 1) throw new ApiError("The connection dropped.", 0, { code: "network" });
+                return { draft: ready, liveTexts: [] };
+            }
+            if (path === `${base}/approve`) return { questionIds: ready.questions.map((question) => question.key), microTag: null };
+            throw new Error(`Unexpected ${method} ${path}`);
+        });
+        render(<AiDraftReview draftId="d1" onClose={vi.fn()} onPublished={onPublished} />);
+
+        await waitFor(() => expect(approveButton()).toBeEnabled());
+        fireEvent.click(approveButton());
+
+        expect(await screen.findByText(/30 questions are now live/)).toBeInTheDocument();
+        await waitFor(() => expect(onPublished).toHaveBeenCalled());
+        expect(screen.getByText("Live")).toBeInTheDocument();
+        expect(screen.queryByText(/connection dropped/)).not.toBeInTheDocument();
+    });
+
     it("stops at once when the key is rejected instead of retrying", async () => {
         const fresh = reviewDraft({ easy: 0, medium: 0, hard: 0 }, { status: "generating", concept: null, steps: [{ id: "concept", kind: "concept", status: "pending", attempts: 0 }] });
         let calls = 0;

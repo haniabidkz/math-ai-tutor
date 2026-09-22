@@ -88,5 +88,7 @@ export function studioErrorResponse(error: unknown, fallback: string) {
         return NextResponse.json({ success: false, error: `${issues[0].path?.join(".") ?? "input"}: ${issues[0].message}` }, { status: 400 });
     }
     console.error(fallback, error);
-    return NextResponse.json({ success: false, error: fallback }, { status: 500 });
+    // The cause travels to the admin screen, so a failure never shows as a bare "general error".
+    const detail = (error instanceof Error ? error.message : String(error ?? "")).slice(0, 300);
+    return NextResponse.json({ success: false, error: fallback, ...(detail ? { detail } : {}) }, { status: 500 });
 }

@@ -10,7 +10,8 @@ function renderEditor(onSave = vi.fn().mockResolvedValue(true)) {
 
 const input = (label: RegExp) => screen.getByLabelText(label, { selector: "input, textarea" }) as HTMLInputElement;
 
-describe("ConceptEditor auto-fill", () => {
+// Rendering the full curriculum form can pass 5 seconds when the whole suite runs at once.
+describe("ConceptEditor auto-fill", { timeout: 30_000 }, () => {
     it("generates the micro tag from the title as the admin types", () => {
         renderEditor();
         expect(screen.getByText("Type a title")).toBeInTheDocument();
