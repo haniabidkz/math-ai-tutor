@@ -81,6 +81,10 @@ export interface QuestionBankItem {
     source: "sindh" | "oxford";
     status: ContentStatus;
     version: number;
+    /** Diagnostic test questions are served only by the diagnostic, never in quizzes. */
+    purpose?: "diagnostic";
+    /** For diagnostic questions: the class whose entry test this question belongs to. */
+    diagnosticFor?: StudentClassLevel;
 }
 
 export interface AssessmentConfig {

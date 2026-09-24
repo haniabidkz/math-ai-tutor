@@ -1,7 +1,9 @@
 import { z } from "zod";
-import { MICRO_CONCEPTS } from "@/lib/curriculum";
+import { getClassConcepts, getConcept, MICRO_CONCEPTS } from "@/lib/curriculum";
+import { DIAGNOSTIC_QUESTIONS_PER_TOPIC, DIAGNOSTIC_TOPIC_COUNT, getDiagnosticBlueprint } from "@/lib/diagnostic-blueprint";
+import { DIAGNOSTIC_QUESTIONS } from "@/lib/diagnostic-questions";
 import { QUESTION_BANK } from "@/lib/question-bank";
-import type { MicroConcept, QuestionBankItem } from "@/types/curriculum";
+import type { MicroConcept, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
 
 const localizedSchema = z.object({ english: z.string().min(1), romanUrdu: z.string().min(1) });
 const questionSchema = z.object({
@@ -99,4 +101,39 @@ export function validateContentBank(
     }
 
     return { valid: errors.length === 0, errors, conceptCount: concepts.length, questionCount: questionBank.length };
+}
+
+/**
+ * Each class's diagnostic: five topics of one easy, one medium and one hard question, all on
+ * the topic's foundation concept from the previous class, leading into lessons of this class.
+ */
+export function validateDiagnosticTests(
+    tests: Record<StudentClassLevel, QuestionBankItem[]> = DIAGNOSTIC_QUESTIONS,
+): string[] {
+    const errors: string[] = [];
+    for (const classLevel of [6, 7, 8] as const) {
+        const blueprint = getDiagnosticBlueprint(classLevel);
+        const questions = tests[classLevel];
+        const lessons = new Set(getClassConcepts(classLevel).map((concept) => concept.microTag));
+        if (blueprint.length !== DIAGNOSTIC_TOPIC_COUNT) errors.push(`Class ${classLevel}: diagnostic needs ${DIAGNOSTIC_TOPIC_COUNT} topics`);
+        if (questions.length !== DIAGNOSTIC_TOPIC_COUNT * DIAGNOSTIC_QUESTIONS_PER_TOPIC) {
+            errors.push(`Class ${classLevel}: diagnostic has ${questions.length} questions`);
+        }
+        for (const topic of blueprint) {
+            const concept = getConcept(topic.microTag);
+            if (!concept) errors.push(`Class ${classLevel} ${topic.topicKey}: unknown concept ${topic.microTag}`);
+            else if (concept.classLevel !== classLevel - 1) errors.push(`Class ${classLevel} ${topic.topicKey}: ${topic.microTag} is not a Class ${classLevel - 1} concept`);
+            for (const tag of topic.lessonTags) {
+                if (!lessons.has(tag)) errors.push(`Class ${classLevel} ${topic.topicKey}: ${tag} is not a Class ${classLevel} lesson`);
+            }
+            topic.questionIds.forEach((id, position) => {
+                const question = questions.find((item) => item.id === id);
+                if (!question) return errors.push(`Class ${classLevel}: missing diagnostic question ${id}`);
+                if (question.microTag !== topic.microTag) errors.push(`${id}: must test ${topic.microTag}`);
+                if (question.difficulty !== (["easy", "medium", "hard"] as const)[position]) errors.push(`${id}: expected ${["easy", "medium", "hard"][position]}`);
+                if (question.purpose !== "diagnostic" || question.diagnosticFor !== classLevel) errors.push(`${id}: must be marked as a Class ${classLevel} diagnostic question`);
+            });
+        }
+    }
+    return errors;
 }

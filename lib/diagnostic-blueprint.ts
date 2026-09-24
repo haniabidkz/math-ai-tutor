@@ -1,5 +1,4 @@
-import { getConcept } from "@/lib/curriculum";
-import type { LocalizedText, MicroConcept, StudentClassLevel } from "@/types/curriculum";
+import type { LocalizedText, StudentClassLevel } from "@/types/curriculum";
 
 const text = (english: string, romanUrdu: string): LocalizedText => ({ english, romanUrdu });
 
@@ -7,53 +6,67 @@ export const DIAGNOSTIC_TOPIC_COUNT = 5;
 export const DIAGNOSTIC_QUESTIONS_PER_TOPIC = 3;
 export const DIAGNOSTIC_QUESTION_COUNT = DIAGNOSTIC_TOPIC_COUNT * DIAGNOSTIC_QUESTIONS_PER_TOPIC;
 
+/** Stored on every diagnostic session; sessions started under the old blueprint are restarted. */
+export const DIAGNOSTIC_VERSION = 2;
+
 export interface DiagnosticTopic {
     topicKey: string;
     title: LocalizedText;
-    /** Exactly three concepts, one per question. */
-    microTags: string[];
+    /** The previous-class foundation concept all three questions of this topic test. */
+    microTag: string;
+    /** Enrolled-class lessons that build on this topic, recommended when it is weak. */
+    lessonTags: string[];
+    /** The easy, medium and hard question, in that order. */
+    questionIds: string[];
 }
 
+/** "diag-c6-01" … "diag-c6-15": fixed ids, so the Super Admin can edit each question. */
+export function diagnosticQuestionId(classLevel: StudentClassLevel, index: number): string {
+    return `diag-c${classLevel}-${String(index + 1).padStart(2, "0")}`;
+}
+
+type TopicSeed = Omit<DiagnosticTopic, "questionIds">;
+
 /**
- * The diagnostic is a fixed blueprint of five areas with three questions each, mixing the
- * previous class (foundations) with the entry concepts of the enrolled class.
+ * Each class's entry test checks the previous class: five topics, each with one easy, one
+ * medium and one hard question from the owner's fixed question set (lib/diagnostic-questions.ts).
  */
-const BLUEPRINTS: Record<StudentClassLevel, DiagnosticTopic[]> = {
+const TOPICS: Record<StudentClassLevel, TopicSeed[]> = {
     6: [
-        { topicKey: "number-foundations", title: text("Number Foundations", "Number ki bunyaad"), microTags: ["c5-whole-number-operations", "c5-factors-multiples", "c5-number-line"] },
-        { topicKey: "fractions-decimals", title: text("Fractions and Decimals", "Kasr aur ashariya"), microTags: ["c5-fractions", "c5-decimals", "c5-ratios"] },
-        { topicKey: "integers", title: text("Integers", "Integers"), microTags: ["c6-integers-intro", "c6-positive-numbers", "c6-negative-numbers"] },
-        { topicKey: "integer-operations", title: text("Integer Operations", "Integers ke amal"), microTags: ["c6-number-line", "c6-integer-comparisons", "c6-integer-addition"] },
-        { topicKey: "algebra-basics", title: text("Algebra Basics", "Algebra ki bunyaad"), microTags: ["c6-variable-foundations", "c6-constants", "c6-algebraic-expressions"] },
+        { topicKey: "whole-numbers", title: text("Whole Numbers & Basic Operations", "Pooray numbers aur bunyadi amal"), microTag: "c5-whole-number-operations", lessonTags: ["c6-integers-intro"] },
+        { topicKey: "fractions", title: text("Fractions", "Kasr"), microTag: "c5-fractions", lessonTags: [] },
+        { topicKey: "decimals", title: text("Decimals", "Ashariya"), microTag: "c5-decimals", lessonTags: [] },
+        { topicKey: "factors-multiples", title: text("Factors & Multiples", "Factors aur multiples"), microTag: "c5-factors-multiples", lessonTags: [] },
+        { topicKey: "geometry", title: text("Basic Geometry", "Bunyadi geometry"), microTag: "c5-basic-geometry", lessonTags: [] },
     ],
     7: [
-        { topicKey: "integers", title: text("Integers", "Integers"), microTags: ["c6-integers-intro", "c6-integer-addition", "c6-integer-subtraction"] },
-        { topicKey: "algebra-foundations", title: text("Algebra Foundations", "Algebra ki bunyaad"), microTags: ["c6-variable-foundations", "c6-constants", "c6-simple-terms"] },
-        { topicKey: "expressions", title: text("Expressions", "Expressions"), microTags: ["c6-algebraic-expressions", "c6-like-unlike-terms", "c6-evaluating-expressions"] },
-        { topicKey: "terms-coefficients", title: text("Terms and Coefficients", "Terms aur coefficients"), microTags: ["c7-variable-constant-isolation", "c7-term-segmentation", "c7-coefficients"] },
-        { topicKey: "equations", title: text("Equations", "Equations"), microTags: ["c7-equation-structure", "c7-equation-variables", "c7-one-step-equations"] },
+        { topicKey: "whole-numbers", title: text("Whole Numbers & Operations", "Pooray numbers aur un ke amal"), microTag: "c6-whole-number-operations", lessonTags: ["c7-one-step-equations"] },
+        { topicKey: "fractions", title: text("Fractions", "Kasr"), microTag: "c6-fractions", lessonTags: [] },
+        { topicKey: "decimals", title: text("Decimals", "Ashariya"), microTag: "c6-decimals", lessonTags: [] },
+        { topicKey: "factors-multiples", title: text("Factors & Multiples", "Factors aur multiples"), microTag: "c6-factors-multiples", lessonTags: [] },
+        { topicKey: "geometry", title: text("Basic Geometry", "Bunyadi geometry"), microTag: "c6-basic-geometry", lessonTags: [] },
     ],
     8: [
-        { topicKey: "expressions", title: text("Expressions", "Expressions"), microTags: ["c7-variable-constant-isolation", "c7-term-segmentation", "c7-coefficients"] },
-        { topicKey: "simplification", title: text("Simplification", "Sada karna"), microTags: ["c7-grouping-terms", "c7-linear-simplification", "c7-complex-expressions"] },
-        { topicKey: "linear-equations", title: text("Linear Equations", "Linear equations"), microTags: ["c7-one-step-equations", "c7-two-step-equations", "c7-equation-verification"] },
-        { topicKey: "equation-systems", title: text("Equation Systems", "Equation systems"), microTags: ["c8-equation-revision", "c8-one-two-step-systems", "c8-multi-step-equations"] },
-        { topicKey: "ratio-proportion", title: text("Ratio and Proportion", "Nisbat aur proportion"), microTags: ["c8-ratio-basics", "c8-equivalent-ratios", "c8-proportion-basics"] },
+        { topicKey: "integers", title: text("Integers & Operations", "Integers aur un ke amal"), microTag: "c7-integer-operations", lessonTags: ["c8-equation-revision"] },
+        { topicKey: "fractions", title: text("Fractions & Rational Numbers", "Kasr aur rational numbers"), microTag: "c7-rational-numbers", lessonTags: ["c8-equivalent-ratios"] },
+        { topicKey: "decimals-percentages", title: text("Decimals & Percentages", "Ashariya aur feesad"), microTag: "c7-decimals-percentages", lessonTags: ["c8-direct-proportion"] },
+        { topicKey: "ratio-financial", title: text("Ratio, Proportion & Financial Arithmetic", "Nisbat, tanasub aur maali hisaab"), microTag: "c7-ratio-financial", lessonTags: ["c8-ratio-basics"] },
+        { topicKey: "algebra-equations", title: text("Algebra & Linear Equations", "Algebra aur linear equations"), microTag: "c7-algebra-equations", lessonTags: ["c8-equation-revision"] },
     ],
 };
 
 export function getDiagnosticBlueprint(classLevel: StudentClassLevel): DiagnosticTopic[] {
-    return BLUEPRINTS[classLevel];
+    return TOPICS[classLevel].map((topic, topicIndex) => ({
+        ...topic,
+        lessonTags: [...topic.lessonTags],
+        questionIds: Array.from({ length: DIAGNOSTIC_QUESTIONS_PER_TOPIC }, (_, position) =>
+            diagnosticQuestionId(classLevel, topicIndex * DIAGNOSTIC_QUESTIONS_PER_TOPIC + position)),
+    }));
 }
 
-/** Flattens the blueprint into the 15 concepts served, in order. */
-export function getDiagnosticConceptOrder(classLevel: StudentClassLevel): MicroConcept[] {
-    return getDiagnosticBlueprint(classLevel).flatMap((topic) =>
-        topic.microTags.map((microTag) => {
-            const concept = getConcept(microTag);
-            if (!concept) throw new Error(`Diagnostic blueprint references unknown concept ${microTag}`);
-            return concept;
-        }));
+/** The 15 question ids in the order they are asked. */
+export function getDiagnosticQuestionIds(classLevel: StudentClassLevel): string[] {
+    return getDiagnosticBlueprint(classLevel).flatMap((topic) => topic.questionIds);
 }
 
 export function getDiagnosticTopicFor(classLevel: StudentClassLevel, questionIndex: number): DiagnosticTopic {

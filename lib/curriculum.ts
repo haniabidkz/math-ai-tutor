@@ -20,6 +20,7 @@ const foundations: MicroConcept[] = [
     ["c5-ratios", "c5-fractions", "Ratio Foundations", "Nisbat ki bunyaad", "Compare two quantities using simple ratios."],
     ["c5-simple-patterns", "c5-whole-number-operations", "Number Patterns", "Number patterns", "Identify a rule and continue a simple number pattern."],
     ["c5-word-problems", "c5-whole-number-operations", "Word Problem Foundations", "Lafzi sawalat ki bunyaad", "Choose the correct operation from a short real-life problem."],
+    ["c5-basic-geometry", "c5-whole-number-operations", "Basic Geometry", "Bunyadi geometry", "Recognise right angles and find the perimeter and area of simple shapes."],
 ].map(([microTag, prerequisiteTag, title, romanTitle, concept], order) => ({
     microTag: microTag as string,
     prerequisiteTag: prerequisiteTag as string | null,
@@ -148,7 +149,62 @@ const syllabus = topics.flatMap((topic) =>
     }))
 );
 
-export const MICRO_CONCEPTS: MicroConcept[] = [...foundations, ...syllabus];
+interface FoundationSeed {
+    classLevel: 6 | 7;
+    title: LocalizedText;
+    family: ConceptFamily;
+    concepts: Array<[string, string, string, string, string, MicroConcept["visualKind"]]>;
+}
+
+/**
+ * Class 6 and Class 7 knowledge that the Class 7 and Class 8 diagnostic tests check. Like the
+ * Class 5 foundations, these are used for diagnosis only and are never taught as lessons.
+ */
+const laterFoundationSeeds: FoundationSeed[] = [
+    {
+        classLevel: 6,
+        title: text("Class 6 Foundations", "Class 6 ki bunyaad"),
+        family: "foundation",
+        concepts: [
+            ["c6-whole-number-operations", "Whole Numbers and Operations", "Pooray numbers aur un ke amal", "Add, subtract, multiply and divide large whole numbers, including multi-step problems.", "c5-whole-number-operations", "pattern"],
+            ["c6-fractions", "Fractions", "Kasr", "Add and subtract fractions and mixed numbers with unlike denominators.", "c5-fractions", "fraction"],
+            ["c6-decimals", "Decimals", "Ashariya", "Add and subtract decimals in real-life measurements.", "c5-decimals", "fraction"],
+            ["c6-factors-multiples", "Factors, Multiples, HCF and LCM", "Factors, multiples, HCF aur LCM", "Find factors and multiples, and use HCF and LCM to solve problems.", "c5-factors-multiples", "pattern"],
+            ["c6-basic-geometry", "Basic Geometry", "Bunyadi geometry", "Use angle facts of a triangle and find the perimeter and area of rectangles.", "c5-basic-geometry", "pattern"],
+        ],
+    },
+    {
+        classLevel: 7,
+        title: text("Class 7 Foundations", "Class 7 ki bunyaad"),
+        family: "foundation",
+        concepts: [
+            ["c7-integer-operations", "Integers and Operations", "Integers aur un ke amal", "Add and subtract positive and negative integers, including multi-step problems.", "c6-integer-subtraction", "number-line"],
+            ["c7-rational-numbers", "Fractions and Rational Numbers", "Kasr aur rational numbers", "Add, subtract and multiply fractions, including fractions of a quantity.", "c6-fractions", "fraction"],
+            ["c7-decimals-percentages", "Decimals and Percentages", "Ashariya aur feesad", "Work with decimals, find percentages and apply discounts.", "c6-decimals", "fraction"],
+            ["c7-ratio-financial", "Ratio, Proportion and Financial Arithmetic", "Nisbat, tanasub aur maali hisaab", "Use ratios and unit rates, and find profit after a discount.", "c5-ratios", "ratio"],
+            ["c7-algebra-equations", "Algebra and Linear Equations", "Algebra aur linear equations", "Combine like terms and solve simple linear equations.", "c7-two-step-equations", "balance"],
+        ],
+    },
+];
+
+const laterFoundations = laterFoundationSeeds.flatMap((seed) =>
+    seed.concepts.map(([microTag, title, romanTitle, concept, prerequisiteTag, visualKind], order): MicroConcept => ({
+        microTag,
+        prerequisiteTag,
+        classLevel: seed.classLevel,
+        topicId: `class${seed.classLevel}-foundations`,
+        topicTitle: seed.title,
+        title: text(title, romanTitle),
+        concept: text(concept, `${romanTitle}: ${concept}`),
+        family: seed.family,
+        visualKind,
+        order,
+        foundationOnly: true,
+        status: "published",
+    }))
+);
+
+export const MICRO_CONCEPTS: MicroConcept[] = [...foundations, ...syllabus, ...laterFoundations];
 export const MICRO_CONCEPT_BY_TAG = new Map(MICRO_CONCEPTS.map((item) => [item.microTag, item]));
 
 export const getConcept = (microTag: string) => MICRO_CONCEPT_BY_TAG.get(microTag);

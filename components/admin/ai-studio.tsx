@@ -91,7 +91,8 @@ export function AiStudio({ concepts, config, onPublished }: {
         void loadDrafts();
     }, [checkStatus, loadDrafts]);
 
-    const liveConcepts = useMemo(() => concepts.filter((concept) => concept.status !== "archived"), [concepts]);
+    // Foundation concepts are only tested by the diagnostic, so no pools are written for them.
+    const liveConcepts = useMemo(() => concepts.filter((concept) => concept.status !== "archived" && !concept.foundationOnly), [concepts]);
     const topics = useMemo(() => topicsForClass(liveConcepts, classLevel), [liveConcepts, classLevel]);
     const inChapter = useMemo(() => (chapterId && chapterId !== NEW ? chapterConcepts(liveConcepts, classLevel, chapterId) : []), [liveConcepts, classLevel, chapterId]);
     const knownSubTopics = [...new Set(inChapter.map((concept) => concept.subTopic?.english).filter((value): value is string => Boolean(value)))];

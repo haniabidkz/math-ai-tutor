@@ -43,6 +43,9 @@ export const questionInputSchema = z.object({
     source: z.enum(["sindh", "oxford"]),
     status: z.enum(["draft", "published", "archived"]).default("draft"),
     version: z.number().int().positive().default(1),
+    // Kept on import, so an exported diagnostic question stays out of quizzes when imported again.
+    purpose: z.literal("diagnostic").optional(),
+    diagnosticFor: z.union([z.literal(6), z.literal(7), z.literal(8)]).optional(),
 }).superRefine((question, context) => {
     if (new Set(question.options.map((option) => option.english.toLowerCase())).size !== 4) {
         context.addIssue({ code: "custom", message: "Options must be unique", path: ["options"] });

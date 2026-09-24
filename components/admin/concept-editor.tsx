@@ -176,7 +176,8 @@ export function ConceptEditor({
                 imageUrl: form.imageUrl,
                 order: Number(form.order),
                 // Class 5 concepts are foundations: used for diagnosis and repair, not taught as lessons.
-                foundationOnly: form.classLevel === 5,
+                // An existing foundation of a later class keeps that role when edited.
+                foundationOnly: form.classLevel === 5 || editing?.foundationOnly === true,
                 status: form.status,
                 isNew,
             });

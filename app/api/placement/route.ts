@@ -2,13 +2,12 @@ import { randomUUID } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { NextRequest, NextResponse } from "next/server";
 import { addDays, nextDiagnosticDifficulty } from "@/lib/adaptive-engine";
-import { getAssessmentConfig, selectQuestion, toClientQuestion } from "@/lib/assessment-content";
+import { loadDiagnosticQuestion, toClientQuestion } from "@/lib/assessment-content";
 import { buildDiagnosticProfile, type StoredAnswer } from "@/lib/assessment-session";
 import { getClassConcepts } from "@/lib/curriculum";
-import { DIAGNOSTIC_QUESTION_COUNT, getDiagnosticConceptOrder } from "@/lib/diagnostic-blueprint";
-import { getOptionAnalysis, isPossibleMisconception, mistakeProfileId, MISCONCEPTIONS } from "@/lib/mistake-analysis";
+import { DIAGNOSTIC_QUESTION_COUNT, DIAGNOSTIC_VERSION, getDiagnosticQuestionIds } from "@/lib/diagnostic-blueprint";
+import { getOptionAnalysis, isPossibleMisconception, mistakeProfileId } from "@/lib/mistake-analysis";
 import { adminDb } from "@/lib/firebase-admin";
-import { buildQuestionHistory, type HistoricalQuestionSession } from "@/lib/question-history";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { Difficulty, Locale, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
 
@@ -25,8 +24,8 @@ interface PlacementSession {
     questions: QuestionBankItem[];
     answers: StoredAnswer[];
     eventIds: string[];
-    seenQuestionIds?: string[];
-    previousAttemptQuestionIds?: string[];
+    /** Sessions without the current version were started under the old test and must restart. */
+    diagnosticVersion?: number;
 }
 
 function parseClass(value: unknown): StudentClassLevel | null {
@@ -38,34 +37,18 @@ function parseLocale(value: unknown): Locale {
     return value === "roman-urdu" ? "roman-urdu" : "english";
 }
 
-async function diagnosticHistory(studentUid: string) {
-    const snapshot = await adminDb.collection("students").doc(studentUid).collection("assessmentSessions").get();
-    return buildQuestionHistory(
-        snapshot.docs.map((document) => document.data() as HistoricalQuestionSession),
-        (session) => session.kind === "diagnostic",
-    );
-}
-
 export async function POST(request: NextRequest) {
     try {
         const user = await requireUser(request, ["student"]);
-        const body = await request.json();
         const profileSnapshot = await adminDb.collection("students").doc(user.uid).get();
         const classLevel = parseClass(profileSnapshot.data()?.class);
         if (!classLevel) return NextResponse.json({ success: false, error: "Student profile class must be 6, 7, or 8" }, { status: 409 });
 
         // The interface and questions are English; Roman Urdu is offered per hint and explanation.
         const locale: Locale = "english";
-        // The diagnostic is a fixed blueprint: five topics of three questions each.
+        // The diagnostic is a fixed test: five topics of three questions each, always in the same order.
         const questionCount = DIAGNOSTIC_QUESTION_COUNT;
-        const sequence = getDiagnosticConceptOrder(classLevel);
-        const history = await diagnosticHistory(user.uid);
-        const firstQuestion = await selectQuestion({
-            microTag: sequence[0].microTag,
-            difficulty: "medium",
-            usedIds: history.seenIds,
-            previousAttemptIds: history.previousAttemptIds,
-        });
+        const firstQuestion = await loadDiagnosticQuestion(getDiagnosticQuestionIds(classLevel)[0]);
         const sessionId = `diagnostic_${randomUUID()}`;
         const session: PlacementSession = {
             id: sessionId,
@@ -80,8 +63,7 @@ export async function POST(request: NextRequest) {
             questions: [firstQuestion],
             answers: [],
             eventIds: [],
-            seenQuestionIds: history.seenIds,
-            previousAttemptQuestionIds: history.previousAttemptIds,
+            diagnosticVersion: DIAGNOSTIC_VERSION,
         };
 
         await adminDb.collection("students").doc(user.uid).collection("assessmentSessions").doc(sessionId).set({
@@ -121,6 +103,10 @@ export async function PATCH(request: NextRequest) {
         const initial = initialSnapshot.data() as PlacementSession;
         if (initial.kind !== "diagnostic") return NextResponse.json({ success: false, error: "Invalid diagnostic session" }, { status: 400 });
         if (initial.status === "completed") return NextResponse.json({ success: true, completed: true, profile: initialSnapshot.data()?.profile });
+        // A test started before the new questions went live cannot be scored against them.
+        if (initial.diagnosticVersion !== DIAGNOSTIC_VERSION) {
+            return NextResponse.json({ success: false, code: "restart", error: "The diagnostic test was updated. Please start it again." }, { status: 409 });
+        }
 
         const current = initial.questions[initial.currentQuestionIndex];
         if (!current || current.id !== questionId) return NextResponse.json({ success: false, error: "Question is no longer current" }, { status: 409 });
@@ -139,19 +125,11 @@ export async function PATCH(request: NextRequest) {
             mistakeType: analysis?.mistakeType ?? null,
             misconceptionTag: analysis?.misconceptionTag ?? null,
         } satisfies StoredAnswer];
-        const sequence = getDiagnosticConceptOrder(initial.classLevel);
+        const sequence = getDiagnosticQuestionIds(initial.classLevel);
+        // The level still adapts to the answers; it becomes the student's starting difficulty.
         const nextDifficulty = nextDiagnosticDifficulty(initial.currentDifficulty, answers.map((answer) => answer.isCorrect));
         const completed = answers.length >= sequence.length;
-        const nextConcept = sequence[answers.length];
-        const nextQuestion = completed ? null : await selectQuestion({
-            microTag: nextConcept.microTag,
-            difficulty: nextDifficulty,
-            usedIds: [...(initial.seenQuestionIds ?? []), ...initial.questions.map((question) => question.id)],
-            previousAttemptIds: [
-                ...(initial.previousAttemptQuestionIds ?? []),
-                ...initial.questions.map((question) => question.id),
-            ],
-        });
+        const nextQuestion = completed ? null : await loadDiagnosticQuestion(sequence[answers.length]);
         const profile = completed
             ? buildDiagnosticProfile(answers, initial.classLevel, getClassConcepts(initial.classLevel)[0].microTag, nextDifficulty)
             : null;

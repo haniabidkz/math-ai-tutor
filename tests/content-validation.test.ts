@@ -5,8 +5,12 @@ import { validateContentBank } from "@/lib/content-validation";
 
 describe("MVP content bank", () => {
     it("contains the expected MVP coverage", () => {
-        expect(MICRO_CONCEPTS).toHaveLength(48);
-        expect(QUESTION_BANK).toHaveLength(960);
+        // 40 taught concepts plus 19 foundations: Class 5, and the Class 6 and 7 knowledge the diagnostics test.
+        expect(MICRO_CONCEPTS).toHaveLength(59);
+        expect(MICRO_CONCEPTS.filter((concept) => !concept.foundationOnly)).toHaveLength(40);
+        expect(MICRO_CONCEPTS.filter((concept) => concept.foundationOnly && concept.classLevel > 5).map((concept) => concept.topicId))
+            .toEqual([...Array(5).fill("class6-foundations"), ...Array(5).fill("class7-foundations")]);
+        expect(QUESTION_BANK).toHaveLength(1180);
     });
 
     it("contains twenty localized questions per concept", () => {

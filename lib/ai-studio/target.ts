@@ -15,10 +15,13 @@ export interface TargetInput {
 
 const same = (left: string, right: string) => left.trim().toLowerCase() === right.trim().toLowerCase();
 
+/** Live, taught concepts only: foundations are tested by the diagnostic and have no pools. */
+const isTaught = (concept: MicroConcept) => concept.status !== "archived" && !concept.foundationOnly;
+
 /** The chapter's live micro-topics, in teaching order. */
 export function chapterConcepts(concepts: MicroConcept[], classLevel: number, topicId: string): MicroConcept[] {
     return concepts
-        .filter((concept) => concept.classLevel === classLevel && concept.topicId === topicId && concept.status !== "archived")
+        .filter((concept) => concept.classLevel === classLevel && concept.topicId === topicId && isTaught(concept))
         .sort((left, right) => left.order - right.order);
 }
 
@@ -27,7 +30,7 @@ export function chapterConcepts(concepts: MicroConcept[], classLevel: number, to
  * under. Sub-topic and main-topic pools only use micro-topics that already exist.
  */
 export function buildTarget(input: TargetInput, concepts: MicroConcept[]): { target: DraftTarget } | { error: string } {
-    const classConcepts = concepts.filter((concept) => concept.classLevel === input.classLevel && concept.status !== "archived");
+    const classConcepts = concepts.filter((concept) => concept.classLevel === input.classLevel && isTaught(concept));
     const chapterTitle = input.chapter.title.trim();
     let topicId = input.chapter.topicId;
     let title = chapterTitle;

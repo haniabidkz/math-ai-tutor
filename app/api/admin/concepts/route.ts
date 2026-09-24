@@ -36,8 +36,8 @@ export async function POST(request: NextRequest) {
 
         await ref.set({
             ...parsed,
-            // Class 5 concepts are foundations for diagnosis and repair, not taught as lessons.
-            foundationOnly: parsed.classLevel === 5,
+            // Class 5 concepts, and foundations of later classes, are for diagnosis and repair only.
+            foundationOnly: parsed.classLevel === 5 || parsed.foundationOnly === true,
             ...(body.isNew === true ? { createdBy: admin.uid, createdAt: FieldValue.serverTimestamp() } : {}),
             updatedBy: admin.uid,
             updatedAt: FieldValue.serverTimestamp(),

@@ -57,7 +57,9 @@ export function recommendNextLesson(input: {
         .sort((left, right) => BAND_RANK[left.band] - BAND_RANK[right.band]);
     for (const topic of topics) {
         if (topic.band === "strong") break;
-        const match = available.find((concept) => topic.microTags.includes(concept.microTag));
+        // A topic points at lessons it tested directly, or at lessons that build on it.
+        const tags = [...topic.microTags, ...(topic.lessonTags ?? [])];
+        const match = available.find((concept) => tags.includes(concept.microTag));
         if (match) return { concept: match, reason: "diagnostic-weak-topic" };
     }
 

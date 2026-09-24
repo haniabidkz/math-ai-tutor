@@ -24,7 +24,10 @@ export interface AssessmentAnswerEvent {
 export interface DiagnosticTopicResult {
     topicKey: string;
     title: LocalizedText;
+    /** The concepts the topic tested. */
     microTags: string[];
+    /** Enrolled-class lessons that build on the topic; absent on results saved before September 2026. */
+    lessonTags?: string[];
     correct: number;
     total: number;
     band: TopicBand;

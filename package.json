@@ -16,6 +16,7 @@
         "seed": "tsx --env-file=.env.local scripts/provision-demo-accounts.ts",
         "seed:demo": "tsx --env-file=.env.local scripts/provision-demo-accounts.ts",
         "seed:content": "tsx --env-file=.env.local scripts/seed-content.ts",
+        "seed:diagnostic": "tsx --env-file=.env.local scripts/seed-diagnostic.ts",
         "migrate:students": "tsx --env-file=.env.local scripts/migrate-students.ts",
         "admin:grant": "tsx --env-file=.env.local scripts/grant-super-admin.ts",
         "firebase:deploy": "tsx --env-file=.env.local scripts/deploy-firebase-resources.ts",

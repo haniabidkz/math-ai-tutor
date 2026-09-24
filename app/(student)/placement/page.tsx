@@ -73,6 +73,12 @@ export default function PlacementPage() {
                 body: JSON.stringify({ sessionId, eventId: crypto.randomUUID(), questionId: question.id, optionId: selected }),
             });
             const data = await response.json();
+            // A test begun before the questions changed starts again from the first question.
+            if (response.status === 409 && data.code === "restart") {
+                setSelected("");
+                await start(user);
+                return;
+            }
             if (!response.ok) throw new Error(data.error);
             if (data.completed) setProfile(data.profile);
             else {

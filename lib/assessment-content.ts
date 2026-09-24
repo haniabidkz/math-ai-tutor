@@ -1,5 +1,6 @@
 import { adminDb } from "@/lib/firebase-admin";
 import { MICRO_CONCEPTS, getConcept } from "@/lib/curriculum";
+import { getBuiltInDiagnosticQuestion } from "@/lib/diagnostic-questions";
 import { QUESTION_BANK } from "@/lib/question-bank";
 import { selectQuizQuestionSet } from "@/lib/question-selection";
 import { DEFAULT_ASSESSMENT_CONFIG } from "@/types/curriculum";
@@ -58,12 +59,31 @@ export async function getPublishedQuestions(microTag: string): Promise<QuestionB
     const snapshot = await adminDb.collection("questions").where("microTag", "==", microTag).get();
     const questions = snapshot.docs
         .map((doc) => ({ ...doc.data(), id: doc.id }) as QuestionBankItem)
-        .filter((question) => question.status === "published" && question.classLevel === concept.classLevel);
+        // Diagnostic test questions belong to the diagnostic alone and never appear in quizzes.
+        .filter((question) => question.status === "published" && question.classLevel === concept.classLevel && question.purpose !== "diagnostic");
 
     // The bundled bank keeps local development usable before the first idempotent seed.
     return sortById(questions.length ? questions : QUESTION_BANK.filter(
         (question) => question.microTag === microTag && question.classLevel === concept.classLevel,
     ));
+}
+
+const isUsableQuestion = (question: Partial<QuestionBankItem>) =>
+    typeof question.question?.english === "string" && question.question.english.trim().length > 0
+    && Array.isArray(question.options) && question.options.length === 4
+    && question.options.some((option) => option.id === question.correctOptionId);
+
+/**
+ * A diagnostic question as the Super Admin last saved it, or the built-in copy when it was
+ * deleted or is incomplete, so the test always has all fifteen questions.
+ */
+export async function loadDiagnosticQuestion(id: string): Promise<QuestionBankItem> {
+    const snapshot = await adminDb.collection("questions").doc(id).get();
+    const stored = snapshot.exists ? ({ ...snapshot.data(), id } as QuestionBankItem) : null;
+    if (stored && isUsableQuestion(stored)) return stored;
+    const builtIn = getBuiltInDiagnosticQuestion(id);
+    if (!builtIn) throw new Error(`Unknown diagnostic question ${id}`);
+    return builtIn;
 }
 
 export async function selectQuestion(options: {

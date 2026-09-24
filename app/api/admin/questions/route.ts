@@ -11,6 +11,8 @@ import { authErrorResponse, requireSuperAdmin } from "@/lib/server-auth";
 
 type ParsedQuestion = ReturnType<typeof questionInputSchema.parse>;
 
+const QUESTION_LIST_LIMIT = 3000;
+
 /**
  * Every wrong option is saved with its analysis at creation time. Authored reasons are kept
  * as written; any option left blank gets the predefined reason for its misconception tag.
@@ -45,14 +47,16 @@ function questionError(error: unknown) {
 export async function GET(request: NextRequest) {
     try {
         await requireSuperAdmin(request);
-        const snapshot = await adminDb.collection("questions").orderBy("microTag").limit(1000).get();
+        // About 1 KB a question: 3000 stays under the 4.5 MB response limit, with the list flagged
+        // as incomplete beyond that instead of quietly cut short.
+        const snapshot = await adminDb.collection("questions").orderBy("microTag").limit(QUESTION_LIST_LIMIT).get();
         const filters = request.nextUrl.searchParams;
         const questions = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })).filter((item: any) =>
             (!filters.get("microTag") || item.microTag === filters.get("microTag")) &&
             (!filters.get("difficulty") || item.difficulty === filters.get("difficulty")) &&
             (!filters.get("status") || item.status === filters.get("status"))
         );
-        return NextResponse.json({ success: true, questions });
+        return NextResponse.json({ success: true, questions, truncated: snapshot.size >= QUESTION_LIST_LIMIT });
     } catch (error) {
         const auth = authErrorResponse(error);
         return auth ? NextResponse.json(auth.body, { status: auth.status }) : NextResponse.json({ success: false, error: "Failed to load questions" }, { status: 500 });

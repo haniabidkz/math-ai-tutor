@@ -10,6 +10,7 @@ import {
 import { AiStudio } from "@/components/admin/ai-studio";
 import { ConceptEditor, type ConceptPayload } from "@/components/admin/concept-editor";
 import { QuestionEditor, type QuestionPayload } from "@/components/admin/question-editor";
+import { QuestionList } from "@/components/admin/question-list";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,7 +56,7 @@ export default function SuperAdminPage() {
     const [editorKey, setEditorKey] = useState(0);
     const [editingConcept, setEditingConcept] = useState<MicroConcept | null>(null);
     const [conceptEditorKey, setConceptEditorKey] = useState(0);
-    const [filter, setFilter] = useState("");
+    const [questionsTruncated, setQuestionsTruncated] = useState(false);
     const [busy, setBusy] = useState(true);
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
@@ -89,6 +90,7 @@ export default function SuperAdminPage() {
             ]);
             setOverview(overviewData);
             setQuestions(questionData.questions);
+            setQuestionsTruncated(questionData.truncated === true);
             setConcepts(conceptData.concepts);
             setUsers(userData.users);
             applyConfig(configData.config);
@@ -110,10 +112,6 @@ export default function SuperAdminPage() {
         setError(caught instanceof Error ? caught.message : fallback);
     };
 
-    const visibleQuestions = useMemo(() => questions.filter((question) =>
-        !filter || `${question.id} ${question.microTag} ${question.question.english}`.toLowerCase().includes(filter.toLowerCase())
-    ), [filter, questions]);
-
     async function saveQuestion(payload: QuestionPayload, isUpdate: boolean) {
         try {
             await api("/api/admin/questions", jsonInit(isUpdate ? "PATCH" : "POST", payload));
@@ -133,10 +131,22 @@ export default function SuperAdminPage() {
         window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
-    async function deleteQuestion(id: string) {
-        if (!window.confirm(`Delete ${id}?`)) return;
-        try { await api(`/api/admin/questions?id=${encodeURIComponent(id)}`, { method: "DELETE" }); await loadAll(); showNotice("Question deleted."); }
-        catch (caught) { fail(caught, "Delete failed"); }
+    /** The list has already asked the admin to confirm. */
+    async function deleteQuestions(ids: string[]) {
+        try {
+            if (ids.length === 1) await api(`/api/admin/questions?id=${encodeURIComponent(ids[0])}`, { method: "DELETE" });
+            else await api("/api/admin/questions/bulk-delete", jsonInit("POST", { ids }));
+            if (editingQuestion && ids.includes(editingQuestion.id)) {
+                setEditingQuestion(null);
+                setEditorKey((key) => key + 1);
+            }
+            await loadAll();
+            showNotice(ids.length === 1 ? "Question deleted." : `${ids.length} questions deleted.`);
+            return true;
+        } catch (caught) {
+            fail(caught, "Delete failed");
+            return false;
+        }
     }
 
     async function importQuestions(file: File) {
@@ -294,36 +304,13 @@ export default function SuperAdminPage() {
                             />
                         </section>
                         <section className="bg-white p-4">
-                            <Input placeholder="Filter questions" value={filter} onChange={(event) => setFilter(event.target.value)} className="mb-3 max-w-md" />
-                            <div className="max-h-[620px] overflow-auto">
-                                <table className="w-full min-w-[960px] text-left text-sm">
-                                    <thead className="sticky top-0 bg-slate-100">
-                                        <tr><th className="p-2">ID</th><th className="p-2">Concept</th><th className="p-2">Class</th><th className="p-2">Difficulty</th><th className="p-2">Status</th><th className="p-2">Reasons</th><th className="p-2">Question</th><th className="p-2">Actions</th></tr>
-                                    </thead>
-                                    <tbody className="divide-y">
-                                        {visibleQuestions.map((question) => {
-                                            const written = Object.keys(question.optionAnalysis ?? {}).length;
-                                            return (
-                                                <tr key={question.id}>
-                                                    <td className="p-2 font-mono text-xs">{question.id}</td>
-                                                    <td className="p-2">{question.microTag}</td>
-                                                    <td className="p-2">Class {question.classLevel}</td>
-                                                    <td className="p-2"><Badge variant="outline">{question.difficulty}</Badge></td>
-                                                    <td className="p-2">{question.status}</td>
-                                                    <td className="p-2">{written === 3 ? <Badge variant="secondary">3 saved</Badge> : <span className="text-xs text-muted-foreground">auto</span>}</td>
-                                                    <td className="max-w-md p-2">{question.question.english}</td>
-                                                    <td className="p-2">
-                                                        <div className="flex gap-1">
-                                                            <Button size="icon" variant="ghost" title="Edit" onClick={() => editQuestion(question)}><Pencil className="h-4 w-4" /></Button>
-                                                            <Button size="icon" variant="ghost" title="Delete" onClick={() => deleteQuestion(question.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
+                            <QuestionList
+                                questions={questions}
+                                concepts={concepts}
+                                truncated={questionsTruncated}
+                                onEdit={editQuestion}
+                                onDelete={deleteQuestions}
+                            />
                         </section>
                     </TabsContent>
 

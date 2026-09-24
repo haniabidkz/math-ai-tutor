@@ -64,50 +64,59 @@ export function sessionXp(session: Pick<StoredQuizSession, "answers">): number {
     return XP_QUIZ_COMPLETED + unaidedCorrect * XP_FIRST_ATTEMPT_CORRECT;
 }
 
+/**
+ * Scores the diagnostic. Every topic has three questions (easy, medium, hard) on one
+ * previous-class foundation concept, so answers are matched to topics by question id.
+ */
 export function buildDiagnosticProfile(
     answers: StoredAnswer[],
     classLevel: 6 | 7 | 8,
     fallbackMicroTag: string,
     baselineDifficulty: Difficulty,
 ): DiagnosticProfile {
-    const correctByTag = new Map<string, boolean>();
-    for (const answer of answers) correctByTag.set(answer.microTag, answer.isCorrect);
+    const answerById = new Map(answers.map((answer) => [answer.questionId, answer]));
+    const blueprint = getDiagnosticBlueprint(classLevel);
 
-    // Each of the five blueprint areas is scored out of its three questions.
-    const topicResults: DiagnosticTopicResult[] = getDiagnosticBlueprint(classLevel).map((topic) => {
-        const answered = topic.microTags.filter((microTag) => correctByTag.has(microTag));
-        const correct = topic.microTags.filter((microTag) => correctByTag.get(microTag) === true).length;
+    // Each of the five areas is scored out of its three questions.
+    const topicResults: DiagnosticTopicResult[] = blueprint.map((topic) => {
+        const answered = topic.questionIds.map((id) => answerById.get(id)).filter((answer): answer is StoredAnswer => Boolean(answer));
+        const correct = answered.filter((answer) => answer.isCorrect).length;
         return {
             topicKey: topic.topicKey,
             title: topic.title,
-            microTags: [...topic.microTags],
+            microTags: [topic.microTag],
+            lessonTags: [...topic.lessonTags],
             correct,
-            total: answered.length || topic.microTags.length,
+            total: answered.length || topic.questionIds.length,
             band: topicBand(correct),
         };
     });
 
-    const strongMicroTags = [...correctByTag].filter(([, ok]) => ok).map(([microTag]) => microTag);
-    const weakMicroTags = [...correctByTag].filter(([, ok]) => !ok).map(([microTag]) => microTag);
+    // A foundation counts as strong when most of its three questions were right.
+    const strongMicroTags = blueprint.filter((_, index) => topicResults[index].correct >= 2).map((topic) => topic.microTag);
+    const weakMicroTags = blueprint.filter((_, index) => topicResults[index].correct < 2).map((topic) => topic.microTag);
     const overallCorrect = answers.filter((answer) => answer.isCorrect).length;
     const overallTotal = answers.length;
 
-    const currentClassAnswers = answers.filter((answer) => getConcept(answer.microTag)?.classLevel === classLevel);
-    const currentClassAccuracy = currentClassAnswers.length
-        ? currentClassAnswers.filter((answer) => answer.isCorrect).length / currentClassAnswers.length
-        : 0;
-    const mathLevel = currentClassAccuracy >= 0.6 ? classLevel : (classLevel - 1) as DiagnosticProfile["mathLevel"];
+    // The whole test covers the previous class, so 60% or more means ready for the enrolled class.
+    const accuracy = overallTotal ? overallCorrect / overallTotal : 0;
+    const mathLevel = accuracy >= 0.6 ? classLevel : (classLevel - 1) as DiagnosticProfile["mathLevel"];
 
     // The weakest area leads the recommendation; ties resolve to the earliest area.
     const bandRank: Record<TopicBand, number> = { "very-weak": 0, weak: 1, "needs-practice": 2, strong: 3 };
-    const weakestTopic = [...topicResults].sort((left, right) => bandRank[left.band] - bandRank[right.band])[0];
-    const weakTag = weakestTopic?.microTags.find((microTag) => correctByTag.get(microTag) === false)
-        ?? weakMicroTags[0]
-        ?? null;
+    const weakestIndex = topicResults.reduce((best, topic, index) =>
+        (bandRank[topic.band] < bandRank[topicResults[best].band] ? index : best), 0);
+    const weakestTopic = topicResults[weakestIndex];
+    const hasWeakness = Boolean(weakestTopic) && weakestTopic.correct < weakestTopic.total;
+    const weakTag = hasWeakness ? blueprint[weakestIndex].microTag : null;
     const weakConcept = weakTag ? getConcept(weakTag) : undefined;
     const currentConcepts = getClassConcepts(classLevel);
 
-    let recommendedConcept = weakConcept?.classLevel === classLevel
+    // First, a lesson of this class that the weak topic leads straight into.
+    let recommendedConcept = hasWeakness
+        ? blueprint[weakestIndex].lessonTags.map((tag) => currentConcepts.find((concept) => concept.microTag === tag)).find(Boolean)
+        : undefined;
+    recommendedConcept ??= weakConcept?.classLevel === classLevel
         ? currentConcepts.find((concept) => concept.topicId === weakConcept.topicId)
         : undefined;
 
@@ -139,7 +148,7 @@ export function buildDiagnosticProfile(
         strongMicroTags,
         weakMicroTags,
         weakMicroTag: weakConcept?.microTag ?? null,
-        weakTopic: weakestTopic?.title ?? weakConcept?.topicTitle ?? null,
+        weakTopic: hasWeakness ? weakestTopic.title : null,
         recommendedMicroTag: recommendedConcept.microTag,
         recommendedTopic: recommendedConcept.topicTitle,
         accuracyPercent: overallTotal ? Math.round((overallCorrect / overallTotal) * 100) : 0,
