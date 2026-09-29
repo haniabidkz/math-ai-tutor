@@ -69,9 +69,12 @@ export async function PATCH(request: NextRequest, context: Context) {
             let changes: Partial<GenerationDraft> = {};
 
             switch (edit.op) {
-                case "concept":
-                    changes = { concept: edit.concept };
+                case "concept": {
+                    // Editing the explanation keeps the scope boundary the questions were written to.
+                    const scope = edit.concept.scope ?? draft.concept?.scope;
+                    changes = { concept: { ...edit.concept, ...(scope ? { scope } : {}) } };
                     break;
+                }
                 case "question": {
                     const stored = find(edit.question.key);
                     const next: DraftQuestion = { ...stored, ...edit.question, wrongReasons: {} };

@@ -196,9 +196,19 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
         let cancelled = false;
         load()
             .then((loaded) => {
-                if (cancelled || !autoRun || startedRef.current || loaded.status !== "generating") return;
-                startedRef.current = true;
-                void generate(loaded);
+                if (cancelled || startedRef.current) return;
+                if (autoRun && loaded.status === "generating") {
+                    startedRef.current = true;
+                    void generate(loaded);
+                    return;
+                }
+                // A finished pool that was left before every answer was checked resumes checking,
+                // so scope and answer problems show up without an extra click.
+                const unchecked = loaded.status === "needs_review" && loaded.questions.some((question) => question.verification.status === "pending" && question.questionText.trim());
+                if (unchecked) {
+                    startedRef.current = true;
+                    void check();
+                }
             })
             .catch((caught) => setError(errorText(caught)));
         // Leaving the screen stops the loop after the request in flight.
@@ -206,7 +216,7 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
             cancelled = true;
             stopRef.current = true;
         };
-    }, [autoRun, generate, load]);
+    }, [autoRun, check, generate, load]);
 
     async function edit(body: Record<string, unknown>): Promise<boolean> {
         try {
@@ -544,6 +554,18 @@ function ConceptCard({ concept, level, issues, readOnly, onSave, onOpenChange }:
                     <p className="text-base font-semibold">{concept.title}</p>
                     <PairView label="Explanation" text={concept.explanation} />
                     <PairView label="Local example" text={concept.example} />
+                    {concept.scope ? (
+                        <div className="grid gap-3 rounded-md border bg-slate-50 p-3 text-sm md:grid-cols-2">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Questions may test only</p>
+                                <ul className="list-disc pl-5">{concept.scope.covers.map((item) => <li key={item}>{item}</li>)}</ul>
+                            </div>
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">Out of scope</p>
+                                <ul className="list-disc pl-5">{concept.scope.excludes.map((item) => <li key={item}>{item}</li>)}</ul>
+                            </div>
+                        </div>
+                    ) : null}
                 </div>
             ) : <p className="text-sm text-muted-foreground">Not written yet.</p>}
             <IssueList issues={issues} />
@@ -625,6 +647,7 @@ function QuestionCard({ question, number, topicTitles, issues, readOnly, showDet
                     <span className="font-semibold">{capital(question.difficulty)} #{number}</span>
                     {topicTitles.size > 1 ? <Badge variant="outline">{topicTitles.get(question.microTag) ?? "No micro-topic"}</Badge> : null}
                     <VerificationBadge question={question} />
+                    {question.skill ? <Badge variant="outline" className="font-normal">Tests: {question.skill}</Badge> : null}
                     {question.origin === "manual" ? <Badge variant="secondary">Written by hand</Badge> : null}
                 </div>
                 {!readOnly && !editing ? (

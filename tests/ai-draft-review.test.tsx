@@ -164,6 +164,21 @@ describe("AI draft review (Rule C)", { timeout: 30_000 }, () => {
         expect(JSON.parse(String(call[1]?.body))).toMatchObject({ replaceOld: false });
     });
 
+    it("finishes checking answers when a pool left half-checked is opened again, and shows the scope", async () => {
+        const half = reviewDraft({ easy: 10, medium: 10, hard: 10 });
+        half.concept = { ...half.concept!, scope: { covers: ["read integers"], excludes: ["integer addition"] } };
+        half.questions = half.questions.map((question, index) => (index < 20 ? question : { ...question, skill: "read integers", verification: { status: "pending" as const } }));
+        const checked = { ...half, questions: half.questions.map((question) => ({ ...question, verification: { status: "agrees" as const, aiAnswer: "A" as const } })) };
+        let verifyCalls = 0;
+        serve(half, { [`POST ${base}/verify`]: () => { verifyCalls += 1; return { draft: checked, checked: 10, remaining: 0 }; } });
+        render(<AiDraftReview draftId="d1" onClose={vi.fn()} onPublished={vi.fn()} />);
+
+        await waitFor(() => expect(verifyCalls).toBe(1));
+        await waitFor(() => expect(screen.getByText("Answers checked: 30/30")).toBeInTheDocument());
+        expect(screen.getByText("Questions may test only")).toBeInTheDocument();
+        expect(screen.getByText("integer addition")).toBeInTheDocument();
+    });
+
     it("holds back a question the checker found off topic until the admin keeps it", async () => {
         const offTopic = reviewDraft({ easy: 10, medium: 10, hard: 10 });
         offTopic.questions[0] = draftQuestion({ key: "wander", verification: { status: "agrees", aiAnswer: "A", onTopic: false, topicNote: "This is about fractions, not integers." } });

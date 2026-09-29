@@ -53,12 +53,14 @@ async function runStep(draft: GenerationDraft, step: GenerationStep) {
     const live = await liveQuestionTexts(tags);
     const inDraft = draft.questions.map((question) => question.questionText);
     const focus = batchFocus(draft, count);
+    // Each question must name one covered skill, so it cannot leave the written scope.
+    const skills = draft.concept?.scope?.covers ?? [];
     const prompt = questionPrompt(draft, { difficulty, count, avoid: [...live, ...inDraft], feedback: step.feedback, focus });
     const reply = await completeJson<unknown>({
-        role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags),
+        role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags, skills),
         temperature: 0.6, maxOutputTokens: 48_000, timeoutMs: PER_MODEL_MS, reasoningEffort: REASONING_BY_DIFFICULTY[difficulty],
     });
-    const { questions, problems } = normalizeQuestionBatch(reply.data, { difficulty, count, allowedTags: tags });
+    const { questions, problems } = normalizeQuestionBatch(reply.data, { difficulty, count, allowedTags: tags, skills });
 
     // Rule A, short questions and no repeats: the whole batch is redone with the reasons, never patched up.
     const seen = new Set([...live, ...inDraft].map(normalizeText));

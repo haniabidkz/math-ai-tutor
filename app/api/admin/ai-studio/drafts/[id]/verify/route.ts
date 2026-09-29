@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { checkBatchSize, completeJson } from "@/lib/ai-studio/ai";
-import { topicSummary, verificationPrompt } from "@/lib/ai-studio/prompts";
+import { checkerTopic, verificationPrompt } from "@/lib/ai-studio/prompts";
 import { verificationSchema } from "@/lib/ai-studio/schema";
 import {
     assertOpen, clean, draftFrom, draftsCollection, loadDraft,
@@ -48,15 +48,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         }
 
         // Short ids keep the reply small and easy to match back. Each question carries its
-        // micro-topic, so the checker also says whether the question stays inside it.
-        const topics = new Map(draft.target.microTopics.map((topic) => {
-            const summary = topicSummary(topic, draft.concept);
-            return [topic.microTag, summary ? `${topic.title} (${summary})` : topic.title];
-        }));
+        // micro-topic and the written boundary, so the checker also says whether it stays inside.
         const reply = await completeJson<{ answers: Answer[] }>({
             role: "verification",
             ...verificationPrompt(
-                batch.map((question, index) => ({ ...question, key: `q${index + 1}`, topic: topics.get(question.microTag) ?? draft.target.chapter.title })),
+                batch.map((question, index) => ({ ...question, key: `q${index + 1}`, topic: checkerTopic(draft, question.microTag) })),
                 draft.level,
             ),
             schemaName: "independent_solve",

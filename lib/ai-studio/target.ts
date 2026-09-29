@@ -18,6 +18,9 @@ const same = (left: string, right: string) => left.trim().toLowerCase() === righ
 /** A micro-topic as the model sees it: its title and what it teaches, which sets the scope. */
 const asTopic = (concept: MicroConcept) => ({ microTag: concept.microTag, title: concept.title.english, summary: concept.concept.english });
 
+/** The chapter's other micro-topics: their ideas belong to their own pools, never to this one. */
+const asOutside = (concepts: MicroConcept[]) => concepts.map((concept) => ({ title: concept.title.english, summary: concept.concept.english }));
+
 /**
  * Identifies a request: the same level, class and micro-topics give the same key, so starting
  * the same generation again can replace an unfinished draft of it.
@@ -75,6 +78,7 @@ export function buildTarget(input: TargetInput, concepts: MicroConcept[]): { tar
                     subTopic: subTopic ?? concept.subTopic?.english ?? null,
                     microTopic: { microTag: concept.microTag, title: concept.title.english },
                     microTopics: [asTopic(concept)],
+                    outside: asOutside(inChapter.filter((item) => item.microTag !== concept.microTag)),
                 },
             };
         }
@@ -87,6 +91,7 @@ export function buildTarget(input: TargetInput, concepts: MicroConcept[]): { tar
                 classLevel: input.classLevel, chapter, subTopic,
                 microTopic: { microTag: null, title: newTitle },
                 microTopics: [{ microTag: NEW_MICRO_TAG, title: newTitle }],
+                outside: asOutside(inChapter),
             },
         };
     }
@@ -103,6 +108,7 @@ export function buildTarget(input: TargetInput, concepts: MicroConcept[]): { tar
             target: {
                 classLevel: input.classLevel, chapter, subTopic, microTopic: null,
                 microTopics: (chosen as MicroConcept[]).map(asTopic),
+                outside: asOutside(inChapter.filter((concept) => !tags.includes(concept.microTag))),
             },
         };
     }

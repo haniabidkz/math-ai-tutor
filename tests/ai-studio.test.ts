@@ -170,9 +170,22 @@ describe("reading the model's reply", () => {
         expect(result.questions[0].wrongReasons.A).toBeUndefined();
     });
 
-    it("reads a concept explanation", () => {
-        expect(normalizeConcept({ title: "T", english: "E", roman_urdu: "R", real_life_example: { english: "x", roman_urdu: "y" } }).problems).toEqual([]);
-        expect(normalizeConcept({ title: "T", english: "E", roman_urdu: "", real_life_example: { english: "x", roman_urdu: "y" } }).concept).toBeNull();
+    it("reads a concept explanation with its scope boundary", () => {
+        const scope = { covers: ["meaning of a set", " well-defined collections ", "Meaning of a set"], excludes: ["subsets", "union of sets"] };
+        const read = normalizeConcept({ title: "T", english: "E", roman_urdu: "R", real_life_example: { english: "x", roman_urdu: "y" }, ...scope });
+        expect(read.problems).toEqual([]);
+        // Trimmed, and repeats (in any letter case) dropped.
+        expect(read.concept?.scope).toEqual({ covers: ["meaning of a set", "well-defined collections"], excludes: ["subsets", "union of sets"] });
+        expect(normalizeConcept({ title: "T", english: "E", roman_urdu: "", real_life_example: { english: "x", roman_urdu: "y" }, ...scope }).concept).toBeNull();
+    });
+
+    it("rejects an explanation without a boundary", () => {
+        const noBoundary = normalizeConcept({ title: "T", english: "E", roman_urdu: "R", real_life_example: { english: "x", roman_urdu: "y" }, covers: ["one"], excludes: [] });
+        expect(noBoundary.concept).toBeNull();
+        expect(noBoundary.problems).toEqual([
+            "covers must list 2 to 6 specific skills this topic includes",
+            "excludes must list 2 to 6 neighbouring ideas that belong to other lessons",
+        ]);
     });
 });
 

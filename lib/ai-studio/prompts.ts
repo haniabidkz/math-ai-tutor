@@ -65,6 +65,24 @@ const topicLine = (topic: TopicInfo, concept?: DraftConcept | null) => {
     return `- ${topic.microTag}: ${topic.title}${summary ? ` (${summary})` : ""}`;
 };
 
+/** Other micro-topics of the chapter and the model's own list of neighbouring ideas: all out of scope. */
+function outOfScope(draft: Pick<GenerationDraft, "target">, concept?: DraftConcept | null): string[] {
+    return [
+        ...(draft.target.outside ?? []).map((topic) => `${topic.title} (another lesson of this chapter)`),
+        ...(concept?.scope?.excludes ?? []),
+    ];
+}
+
+/** The written boundary, when the explanation step has produced one. */
+function boundary(draft: Pick<GenerationDraft, "target">, concept?: DraftConcept | null): string {
+    const covers = concept?.scope?.covers ?? [];
+    const excluded = outOfScope(draft, concept);
+    return [
+        covers.length ? `IN SCOPE: only these skills.\n${covers.map((skill) => `- ${skill}`).join("\n")}` : "",
+        excluded.length ? `OUT OF SCOPE: never ask about these, not even as one step of a question.\n${excluded.map((item) => `- ${item}`).join("\n")}` : "",
+    ].filter(Boolean).join("\n");
+}
+
 /**
  * Keeps questions inside what was asked for: one micro-topic stays on that micro-topic, a
  * sub-topic stays inside its micro-topics, and a main topic covers the chapter's core ideas.
@@ -72,23 +90,37 @@ const topicLine = (topic: TopicInfo, concept?: DraftConcept | null) => {
 export function scopeRules(draft: Pick<GenerationDraft, "level" | "target">, concept?: DraftConcept | null): string {
     const { target } = draft;
     const topics = target.microTopics.map((topic) => topicLine(topic, concept)).join("\n");
+    const limits = boundary(draft, concept);
     if (draft.level === "micro") {
         const topic = target.microTopics[0];
         const summary = topicSummary(topic, concept);
         return `STRICT SCOPE: this micro-topic only
 Every question must test "${topic.title}" and nothing else${summary ? `: ${summary}` : "."}
-Do not ask about other ideas from ${target.subTopic ? `the sub-topic "${target.subTopic}" or ` : ""}the main topic "${target.chapter.title}", even closely related ones. Leave out any question that needs a skill from another part of the chapter.`;
+Do not ask about other ideas from ${target.subTopic ? `the sub-topic "${target.subTopic}" or ` : ""}the main topic "${target.chapter.title}", even closely related ones. Leave out any question that needs a skill from another part of the chapter. A narrow topic is fine: vary the situations and the kind of thinking, never the topic.${limits ? `\n${limits}` : ""}`;
     }
     if (draft.level === "sub") {
         return `STRICT SCOPE: the sub-topic "${target.subTopic}" only
 Every question must stay inside this sub-topic, which is made of these micro-topics:
 ${topics}
-Do not ask about other parts of the main topic "${target.chapter.title}".`;
+Do not ask about other parts of the main topic "${target.chapter.title}".${limits ? `\n${limits}` : ""}`;
     }
     return `SCOPE: the main topic "${target.chapter.title}"
 Cover the core concepts of this main topic, spread across its micro-topics:
 ${topics}
-Focus on the central ideas every student must know, not side details.`;
+Focus on the central ideas every student must know, not side details.${limits ? `\n${limits}` : ""}`;
+}
+
+/** How the checker sees a question's topic: title, summary and the written boundary. */
+export function checkerTopic(draft: Pick<GenerationDraft, "target" | "concept">, microTag: string): string {
+    const topic = draft.target.microTopics.find((item) => item.microTag === microTag);
+    const summary = topic ? topicSummary(topic, draft.concept) : "";
+    const covers = draft.concept?.scope?.covers ?? [];
+    const excluded = outOfScope(draft, draft.concept);
+    return [
+        `${topic?.title ?? draft.target.chapter.title}${summary ? ` (${summary})` : ""}`,
+        covers.length ? `Covers only: ${covers.join("; ")}` : "",
+        excluded.length ? `Does NOT cover: ${excluded.join("; ")}` : "",
+    ].filter(Boolean).join(". ");
 }
 
 /**
@@ -108,18 +140,28 @@ export function batchFocus(draft: Pick<GenerationDraft, "level" | "target" | "qu
 }
 
 export function conceptPrompt(draft: Pick<GenerationDraft, "level" | "target">) {
-    const only = draft.level === "micro" && draft.target.microTopic
-        ? `\nExplain only "${draft.target.microTopic.title}". Do not teach other parts of the chapter.`
+    const { target } = draft;
+    const focus = draft.level === "micro" && target.microTopic
+        ? `Explain only the micro-topic "${target.microTopic.title}". Do not teach other parts of the chapter.`
+        : draft.level === "sub"
+            ? `Explain only the sub-topic "${target.subTopic}", made of: ${target.microTopics.map((topic) => topic.title).join(", ")}.`
+            : `Explain the core ideas of the main topic "${target.chapter.title}".`;
+    const siblings = target.outside?.length
+        ? `\nThe chapter's other lessons, which belong to their own pools: ${target.outside.map((topic) => topic.title).join("; ")}.`
         : "";
     return {
         system: `You write math lessons for Pakistani middle-school students.\n\n${STYLE_RULES}`,
         user: `${scope(draft)}
-${only}
-Write the concept explanation for this ${LEVEL_WORDS[draft.level]}:
+
+${focus}${siblings}
+
+Write the concept explanation for this ${LEVEL_WORDS[draft.level]}, and fix its boundary so that every practice question stays inside it:
 - title: a short title.
 - english: a very simple explanation in 3 to 5 short sentences, with one tiny worked example.
 - roman_urdu: the same explanation in warm, conversational Roman Urdu.
-- real_life_example: one short, relatable local word problem from Pakistani daily life, in English and in Roman Urdu.`,
+- real_life_example: one short, relatable local word problem from Pakistani daily life, in English and in Roman Urdu.
+- covers: 3 to 6 specific skills this ${LEVEL_WORDS[draft.level]} includes, each a short phrase a teacher could test (for example "decide whether a collection is well-defined").
+- excludes: 3 to 6 neighbouring ideas that a Class ${target.classLevel} textbook teaches in OTHER lessons of this chapter, which questions must not test (for example, for "Adding like fractions": unlike fractions, mixed numbers, subtracting fractions).`,
     };
 }
 
@@ -136,6 +178,9 @@ export function questionPrompt(
     const placement = request.focus?.length
         ? `In this batch write one question for each of these micro-topics, in this order, and set micro_tag to match: ${request.focus.join(", ")}.`
         : `Set micro_tag to ${tags[0]} for every question.`;
+    const skills = draft.concept?.scope?.covers.length
+        ? "\nSet skill to the IN SCOPE skill each question tests, and use different skills across the batch where you can."
+        : "";
     const avoid = request.avoid.length
         ? `\n\nNO REPEATS (strict)
 These questions already exist. Every new question must differ from all of them in its idea or situation and in its numbers. Changing only names or numbers is not enough.
@@ -153,7 +198,7 @@ ${scopeRules(draft, draft.concept)}
 
 Write exactly ${request.count} ${request.difficulty.toUpperCase()} questions.
 ${DIFFICULTY_RULES[request.difficulty]}
-${placement}
+${placement}${skills}
 Within this batch, no two questions may test the same thing in the same way or reuse the same numbers.
 
 For every question:
@@ -180,8 +225,8 @@ export function verificationPrompt(
         ...question.options.map((option, index) => `${"ABCD"[index]}) ${option}`),
     ].join("\n")).join("\n\n");
     const strictness = level === "micro"
-        ? "Each question must test only its topic; mark on_topic false if it mainly needs another part of the chapter."
-        : "Mark on_topic false only if the question does not belong to its topic at all.";
+        ? "Each question must test only its topic. Mark on_topic false if it tests or needs anything listed under \"Does NOT cover\", or mainly needs another part of the chapter."
+        : "Mark on_topic false if the question tests anything listed under \"Does NOT cover\", or does not belong to its topic at all.";
     return {
         system: "You are a careful math examiner. Solve each multiple-choice question yourself from scratch before looking at the options, then pick the option that equals your answer. Do not guess, and never pick an option just because it is the closest.",
         user: `Solve every question below independently. For each, give the id, one or two lines of working, your final answer, and the letter of the option that equals it. If no option equals your answer, or two options are the same answer, choose "none".

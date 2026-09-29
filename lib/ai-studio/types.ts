@@ -30,6 +30,8 @@ export interface DraftQuestion {
     difficulty: Difficulty;
     /** The micro-topic this question is filed under once it goes live. */
     microTag: string;
+    /** Which covered skill of the scope the question tests. */
+    skill?: string;
     questionText: string;
     options: string[];
     correctOption: OptionLetter;
@@ -51,10 +53,20 @@ export interface DraftQuestion {
     origin: "ai" | "manual";
 }
 
+/** The boundary of what a pool may ask: written with the explanation, enforced on every question. */
+export interface DraftScope {
+    /** The specific skills inside the topic; every question tests one of them. */
+    covers: string[];
+    /** Neighbouring ideas from other lessons that questions must not test. */
+    excludes: string[];
+}
+
 export interface DraftConcept {
     title: string;
     example: LocalizedText;
     explanation: LocalizedText;
+    /** Absent on drafts written before September 2026. */
+    scope?: DraftScope;
 }
 
 export interface DraftTarget {
@@ -66,6 +78,8 @@ export interface DraftTarget {
     microTopic: { microTag: string | null; title: string } | null;
     /** Micro-topics the questions may be filed under, with titles and summaries for the model. */
     microTopics: Array<{ microTag: string; title: string; summary?: string }>;
+    /** Other micro-topics of the chapter, which are out of scope for this pool. */
+    outside?: Array<{ title: string; summary?: string }>;
 }
 
 export type StepStatus = "pending" | "running" | "done" | "failed";

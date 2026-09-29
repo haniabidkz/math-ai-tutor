@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { batchFocus, conceptPrompt, questionPrompt, scopeRules, verificationPrompt } from "@/lib/ai-studio/prompts";
+import { batchFocus, checkerTopic, conceptPrompt, questionPrompt, scopeRules, verificationPrompt } from "@/lib/ai-studio/prompts";
+import { normalizeQuestionBatch, questionBatchSchema } from "@/lib/ai-studio/schema";
 import { findNearCopy, isNearCopy, questionSignature } from "@/lib/ai-studio/similarity";
 import { buildTarget, targetKey } from "@/lib/ai-studio/target";
 import { NEW_MICRO_TAG, type GenerationDraft } from "@/lib/ai-studio/types";
@@ -26,7 +27,9 @@ describe("1. strict topic scope", () => {
         const prompt = questionPrompt({ level: "micro", target: micro, concept: null }, { difficulty: "hard", count: 3, avoid: [] });
         expect(prompt.user).toContain(rules);
         expect(prompt.user).toContain("Set micro_tag to c6-negative-numbers for every question.");
-        expect(conceptPrompt({ level: "micro", target: micro }).user).toContain('Explain only "Negative Numbers"');
+        expect(conceptPrompt({ level: "micro", target: micro }).user).toContain('Explain only the micro-topic "Negative Numbers"');
+        expect(conceptPrompt({ level: "sub", target: sub }).user).toContain('Explain only the sub-topic "Signed numbers", made of: Positive Numbers, Negative Numbers.');
+        expect(conceptPrompt({ level: "main", target: main }).user).toContain('Explain the core ideas of the main topic "Integers".');
     });
 
     it("keeps a sub-topic pool inside its micro-topics, and a main-topic pool on the chapter's core ideas", () => {
@@ -54,6 +57,55 @@ describe("1. strict topic scope", () => {
         expect(batchFocus({ level: "micro", target: micro, questions: [] }, 3)).toEqual([]);
         const prompt = questionPrompt({ level: "main", target: main, concept: null }, { difficulty: "easy", count: 2, avoid: [], focus: ["c6-number-line", "c6-integer-addition"] });
         expect(prompt.user).toContain("write one question for each of these micro-topics, in this order, and set micro_tag to match: c6-number-line, c6-integer-addition.");
+    });
+
+    it("lists the chapter's other micro-topics as out of scope", () => {
+        expect(micro.outside?.map((topic) => topic.title)).toEqual(["Introduction to Integers", "Positive Numbers", "Number Line Mechanics", "Integer Comparisons", "Basic Integer Addition", "Basic Integer Subtraction"]);
+        expect(sub.outside).toHaveLength(5);
+        expect(main.outside).toBeUndefined();
+        const rules = scopeRules({ level: "micro", target: micro });
+        expect(rules).toContain("OUT OF SCOPE: never ask about these, not even as one step of a question.");
+        expect(rules).toContain("- Positive Numbers (another lesson of this chapter)");
+    });
+
+    it("writes the boundary first, then holds every question to it", () => {
+        const conceptAsk = conceptPrompt({ level: "micro", target: micro }).user;
+        expect(conceptAsk).toContain("- covers: 3 to 6 specific skills");
+        expect(conceptAsk).toContain("- excludes: 3 to 6 neighbouring ideas");
+        expect(conceptAsk).toContain("The chapter's other lessons, which belong to their own pools: Introduction to Integers; Positive Numbers");
+
+        const concept = {
+            title: "Sets", example: { english: "e", romanUrdu: "r" }, explanation: { english: "A set is a well-defined collection.", romanUrdu: "r" },
+            scope: { covers: ["meaning of a set", "decide if a collection is well-defined"], excludes: ["infinite sets", "set notation"] },
+        };
+        const target = targetFor({ level: "micro", classLevel: 8, chapter: { topicId: null, title: "Sets" }, microTopic: { microTag: null, title: "Definition of sets" } });
+        const rules = scopeRules({ level: "micro", target }, concept);
+        expect(rules).toContain("IN SCOPE: only these skills.\n- meaning of a set\n- decide if a collection is well-defined");
+        expect(rules).toContain("OUT OF SCOPE: never ask about these, not even as one step of a question.\n- infinite sets\n- set notation");
+        expect(questionPrompt({ level: "micro", target, concept }, { difficulty: "easy", count: 3, avoid: [] }).user)
+            .toContain("Set skill to the IN SCOPE skill each question tests");
+
+        // The model cannot name a skill outside the list, and the reply is checked again in code.
+        const schema = questionBatchSchema([NEW_MICRO_TAG], concept.scope.covers) as any;
+        expect(schema.properties.questions.items.properties.skill).toEqual({ type: "string", enum: concept.scope.covers });
+        expect(schema.properties.questions.items.required).toContain("skill");
+        const reply = { questions: [{ skill: "infinite sets", micro_tag: NEW_MICRO_TAG, question_text: "Is it a set?", options: ["Yes", "No", "Maybe", "Never"], correct_option: "A",
+            hint: { english: "h", roman_urdu: "h" }, step_by_step_explanation: { english: "s", roman_urdu: "s" },
+            wrong_option_analysis: ["B", "C", "D"].map((option) => ({ option, english: "w", roman_urdu: "w", misconception_tag: "arithmetic-slip" })) }] };
+        expect(normalizeQuestionBatch(reply, { difficulty: "easy", count: 1, allowedTags: [NEW_MICRO_TAG], skills: concept.scope.covers }).problems)
+            .toEqual(["question 1 must test one of the covered skills"]);
+        const fixed = normalizeQuestionBatch({ questions: [{ ...reply.questions[0], skill: "meaning of a set" }] }, { difficulty: "easy", count: 1, allowedTags: [NEW_MICRO_TAG], skills: concept.scope.covers });
+        expect(fixed.questions[0].skill).toBe("meaning of a set");
+    });
+
+    it("gives the checker the same boundary", () => {
+        const draft = reviewDraft({ easy: 0, medium: 0, hard: 0 });
+        draft.concept = { ...draft.concept!, scope: { covers: ["read integers"], excludes: ["integer addition"] } };
+        draft.target.outside = [{ title: "Positive Numbers" }];
+        expect(checkerTopic(draft, "c6-integers-intro"))
+            .toBe("Introduction to Integers. Covers only: read integers. Does NOT cover: Positive Numbers (another lesson of this chapter); integer addition");
+        expect(verificationPrompt([{ key: "q1", questionText: "?", options: ["1", "2", "3", "4"], topic: "t" }], "micro").user)
+            .toContain('Mark on_topic false if it tests or needs anything listed under "Does NOT cover"');
     });
 
     it("asks the checker whether each question stays on its topic", () => {

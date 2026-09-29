@@ -19,16 +19,24 @@ const bilingual = {
 export const conceptSchema = {
     type: "object",
     additionalProperties: false,
-    required: ["title", "real_life_example", "english", "roman_urdu"],
+    required: ["title", "real_life_example", "english", "roman_urdu", "covers", "excludes"],
     properties: {
         title: { type: "string" },
         real_life_example: bilingual,
         english: { type: "string" },
         roman_urdu: { type: "string" },
+        // The scope boundary: every question must test one covered skill and none of the excluded ideas.
+        covers: { type: "array", items: { type: "string" } },
+        excludes: { type: "array", items: { type: "string" } },
     },
 };
 
-export function questionBatchSchema(allowedTags: string[]) {
+/**
+ * With covered skills known, each question must name the one it tests from that exact list,
+ * so a question outside the topic cannot be expressed at all.
+ */
+export function questionBatchSchema(allowedTags: string[], skills: string[] = []) {
+    const skillField = skills.length ? { skill: { type: "string", enum: skills } } : {};
     return {
         type: "object",
         additionalProperties: false,
@@ -39,8 +47,9 @@ export function questionBatchSchema(allowedTags: string[]) {
                 items: {
                     type: "object",
                     additionalProperties: false,
-                    required: ["micro_tag", "question_text", "options", "correct_option", "hint", "step_by_step_explanation", "wrong_option_analysis"],
+                    required: [...(skills.length ? ["skill"] : []), "micro_tag", "question_text", "options", "correct_option", "hint", "step_by_step_explanation", "wrong_option_analysis"],
                     properties: {
+                        ...skillField,
                         micro_tag: { type: "string", enum: allowedTags },
                         question_text: { type: "string" },
                         options: { type: "array", items: { type: "string" } },
@@ -97,6 +106,7 @@ export const verificationSchema = {
 
 interface RawBilingual { english?: unknown; roman_urdu?: unknown }
 interface RawQuestion {
+    skill?: unknown;
     micro_tag?: unknown;
     question_text?: unknown;
     options?: unknown;
@@ -109,17 +119,27 @@ interface RawQuestion {
 const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 const pair = (value: RawBilingual | undefined) => ({ english: text(value?.english), romanUrdu: text(value?.roman_urdu) });
 
+/** Unique, trimmed, short list entries, at most six. */
+function list(value: unknown): string[] {
+    const items = Array.isArray(value) ? value.map((item) => text(item).slice(0, 140)).filter(Boolean) : [];
+    const seen = new Set<string>();
+    return items.filter((item) => !seen.has(item.toLowerCase()) && seen.add(item.toLowerCase())).slice(0, 6);
+}
+
 export function normalizeConcept(raw: unknown): { concept: DraftConcept | null; problems: string[] } {
-    const data = (raw ?? {}) as { title?: unknown; real_life_example?: RawBilingual; english?: unknown; roman_urdu?: unknown };
+    const data = (raw ?? {}) as { title?: unknown; real_life_example?: RawBilingual; english?: unknown; roman_urdu?: unknown; covers?: unknown; excludes?: unknown };
     const concept: DraftConcept = {
         title: text(data.title),
         example: pair(data.real_life_example),
         explanation: { english: text(data.english), romanUrdu: text(data.roman_urdu) },
+        scope: { covers: list(data.covers), excludes: list(data.excludes) },
     };
     const problems: string[] = [];
     if (!concept.title) problems.push("the concept title is empty");
     if (!concept.explanation.english || !concept.explanation.romanUrdu) problems.push("the explanation must be in both English and Roman Urdu");
     if (!concept.example.english || !concept.example.romanUrdu) problems.push("the real-life example must be in both English and Roman Urdu");
+    if (concept.scope!.covers.length < 2) problems.push("covers must list 2 to 6 specific skills this topic includes");
+    if (concept.scope!.excludes.length < 2) problems.push("excludes must list 2 to 6 neighbouring ideas that belong to other lessons");
     return { concept: problems.length ? null : concept, problems };
 }
 
@@ -129,7 +149,7 @@ export function normalizeConcept(raw: unknown): { concept: DraftConcept | null; 
  */
 export function normalizeQuestionBatch(
     raw: unknown,
-    expected: { difficulty: Difficulty; count: number; allowedTags: string[] },
+    expected: { difficulty: Difficulty; count: number; allowedTags: string[]; skills?: string[] },
     makeKey: () => string = () => randomUUID(),
 ): { questions: DraftQuestion[]; problems: string[] } {
     const items = Array.isArray((raw as { questions?: unknown })?.questions) ? (raw as { questions: RawQuestion[] }).questions : [];
@@ -147,6 +167,8 @@ export function normalizeQuestionBatch(
         else if (new Set(options.map((option) => option.toLowerCase())).size !== 4) problems.push(`${label} has repeated options`);
         if (!OPTION_LETTERS.includes(correct)) problems.push(`${label} has no valid correct option`);
         if (!expected.allowedTags.includes(microTag)) problems.push(`${label} is filed under an unknown micro-topic`);
+        const skill = text(item.skill);
+        if (expected.skills?.length && !expected.skills.includes(skill)) problems.push(`${label} must test one of the covered skills`);
 
         const hint = pair(item.hint);
         const solution = pair(item.step_by_step_explanation);
@@ -172,6 +194,7 @@ export function normalizeQuestionBatch(
             key: makeKey(),
             difficulty: expected.difficulty,
             microTag,
+            ...(skill ? { skill } : {}),
             questionText: text(item.question_text),
             options,
             correctOption: correct,
