@@ -44,6 +44,9 @@ export interface DraftQuestion {
         note?: string;
         /** Fingerprint of the question when it was checked, so edits reset the check. */
         fingerprint?: string;
+        /** Whether the checker found the question inside its micro-topic, and why not. */
+        onTopic?: boolean;
+        topicNote?: string;
     };
     origin: "ai" | "manual";
 }
@@ -61,8 +64,8 @@ export interface DraftTarget {
     subTopic: string | null;
     /** Micro-topic being written. A null microTag means it is created on approval. */
     microTopic: { microTag: string | null; title: string } | null;
-    /** Micro-topics the questions may be filed under, with titles for the model. */
-    microTopics: Array<{ microTag: string; title: string }>;
+    /** Micro-topics the questions may be filed under, with titles and summaries for the model. */
+    microTopics: Array<{ microTag: string; title: string; summary?: string }>;
 }
 
 export type StepStatus = "pending" | "running" | "done" | "failed";
@@ -88,6 +91,8 @@ export interface GenerationDraft {
     level: GenerationLevel;
     curriculum: string;
     target: DraftTarget;
+    /** Same value for drafts of the same request, so a new one can replace an unfinished one. */
+    targetKey?: string;
     quota: Quota;
     concept: DraftConcept | null;
     questions: DraftQuestion[];

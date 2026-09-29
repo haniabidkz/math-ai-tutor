@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { DocumentSnapshot } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { MICRO_CONCEPTS } from "@/lib/curriculum";
-import { QUESTION_BANK } from "@/lib/question-bank";
+import { builtInQuestionsEnabled, QUESTION_BANK } from "@/lib/question-bank";
 import { AiError } from "@/lib/ai-studio/ai";
 import { NEW_MICRO_TAG, type GenerationDraft } from "@/lib/ai-studio/types";
 import { authErrorResponse } from "@/lib/server-auth";
@@ -55,25 +55,55 @@ export async function allConcepts(): Promise<MicroConcept[]> {
     return [...stored, ...MICRO_CONCEPTS.filter((concept) => !storedTags.has(concept.microTag))];
 }
 
-/** Question texts already live for these micro-topics, used to stop repeats. */
-export async function liveQuestionTexts(microTags: string[]): Promise<string[]> {
+interface StoredPoolQuestion {
+    id: string;
+    microTag: string;
+    text: string;
+    status: string;
+    diagnostic: boolean;
+}
+
+async function storedQuestions(microTags: string[]): Promise<StoredPoolQuestion[]> {
     const tags = [...new Set(microTags.filter((tag) => tag !== NEW_MICRO_TAG))];
-    const texts: string[] = [];
+    const found: StoredPoolQuestion[] = [];
     for (let start = 0; start < tags.length; start += 30) {
-        const chunk = tags.slice(start, start + 30);
-        const snapshot = await adminDb.collection("questions").where("microTag", "in", chunk).get();
-        const stored = new Set<string>();
+        const snapshot = await adminDb.collection("questions").where("microTag", "in", tags.slice(start, start + 30)).get();
         for (const doc of snapshot.docs) {
             const data = doc.data();
-            stored.add(data.microTag);
-            if (data.status !== "archived" && data.question?.english) texts.push(data.question.english);
+            found.push({
+                id: doc.id,
+                microTag: String(data.microTag),
+                text: String(data.question?.english ?? ""),
+                status: String(data.status ?? ""),
+                diagnostic: data.purpose === "diagnostic",
+            });
         }
-        // Micro-topics never seeded to Firestore still serve the bundled bank.
-        for (const tag of chunk) {
-            if (!stored.has(tag)) texts.push(...QUESTION_BANK.filter((question) => question.microTag === tag).map((question) => question.question.english));
+    }
+    return found;
+}
+
+/** Question texts already live for these micro-topics, used to stop repeats. */
+export async function liveQuestionTexts(microTags: string[]): Promise<string[]> {
+    const stored = await storedQuestions(microTags);
+    const texts = stored.filter((question) => question.status !== "archived" && question.text).map((question) => question.text);
+    // Outside production, micro-topics never seeded to Firestore still serve the bundled bank.
+    if (builtInQuestionsEnabled()) {
+        const seeded = new Set(stored.map((question) => question.microTag));
+        for (const tag of new Set(microTags)) {
+            if (!seeded.has(tag)) texts.push(...QUESTION_BANK.filter((question) => question.microTag === tag).map((question) => question.question.english));
         }
     }
     return texts;
+}
+
+/**
+ * The practice questions these micro-topics already have, which "replace older questions" on
+ * approval removes. Diagnostic test questions are never included.
+ */
+export async function replaceablePoolQuestions(microTags: string[]): Promise<Array<{ id: string; microTag: string }>> {
+    return (await storedQuestions(microTags))
+        .filter((question) => !question.diagnostic)
+        .map(({ id, microTag }) => ({ id, microTag }));
 }
 
 export function studioErrorResponse(error: unknown, fallback: string) {

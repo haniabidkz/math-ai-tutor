@@ -14,8 +14,8 @@ const bodySchema = z.object({
 const BATCH_SIZE = 400;
 
 /**
- * Deletes many questions in one request. Students' past sessions keep their own copies of the
- * questions they answered, so their history and reports are unaffected.
+ * Deletes many questions in one request. Diagnostic test questions are always skipped, and
+ * students' past sessions keep their own copies of the questions they answered.
  */
 export async function POST(request: NextRequest) {
     try {
@@ -24,22 +24,35 @@ export async function POST(request: NextRequest) {
         if (!parsed.success) {
             return NextResponse.json({ success: false, error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
         }
-        const ids = [...new Set(parsed.data.ids)];
-        for (let start = 0; start < ids.length; start += BATCH_SIZE) {
+        const requested = [...new Set(parsed.data.ids)];
+        const deletable: string[] = [];
+        let skipped = 0;
+        for (let start = 0; start < requested.length; start += BATCH_SIZE) {
+            const refs = requested.slice(start, start + BATCH_SIZE).map((id) => adminDb.collection("questions").doc(id));
+            const snapshots = await adminDb.getAll(...refs);
             const batch = adminDb.batch();
-            for (const id of ids.slice(start, start + BATCH_SIZE)) batch.delete(adminDb.collection("questions").doc(id));
+            snapshots.forEach((snapshot, index) => {
+                if (snapshot.data()?.purpose === "diagnostic") {
+                    skipped += 1;
+                    return;
+                }
+                deletable.push(refs[index].id);
+                batch.delete(refs[index]);
+            });
             await batch.commit();
         }
-        const shown = ids.slice(0, 20).join(",");
-        await writeAuditLog({
-            actorUid: admin.uid,
-            actorEmail: admin.email,
-            action: "questions.bulkDelete",
-            targetType: "question",
-            targetId: ids.length > 20 ? `${shown},…` : shown,
-            summary: `Deleted ${ids.length} question(s)`,
-        });
-        return NextResponse.json({ success: true, deleted: ids.length });
+        if (deletable.length) {
+            const shown = deletable.slice(0, 20).join(",");
+            await writeAuditLog({
+                actorUid: admin.uid,
+                actorEmail: admin.email,
+                action: "questions.bulkDelete",
+                targetType: "question",
+                targetId: deletable.length > 20 ? `${shown},…` : shown,
+                summary: `Deleted ${deletable.length} question(s)${skipped ? `; kept ${skipped} diagnostic test question(s)` : ""}`,
+            });
+        }
+        return NextResponse.json({ success: true, deleted: deletable.length, skippedDiagnostic: skipped });
     } catch (error) {
         const auth = authErrorResponse(error);
         return auth

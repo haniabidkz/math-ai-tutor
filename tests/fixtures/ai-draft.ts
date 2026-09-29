@@ -11,7 +11,8 @@ export function draftQuestion(overrides: Partial<DraftQuestion> = {}): DraftQues
         key: `q${counter}`,
         difficulty: "easy",
         microTag: "c6-integers-intro",
-        questionText: `Ali has Rs. ${counter * 10}. He spends Rs. 5. How much is left?`,
+        // Each question is its own sum; a template with only the numbers changed would count as a repeat.
+        questionText: `How much is ${counter * 10} minus 5?`,
         options: [`${counter * 10 - 5}`, `${counter * 10 + 5}`, `${counter * 10}`, `${counter * 10 - 10}`],
         correctOption: "A",
         hint: { english: "Take away what he spent.", romanUrdu: "Jo kharch kiya wo nikaal dein." },

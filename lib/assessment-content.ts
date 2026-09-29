@@ -1,7 +1,7 @@
 import { adminDb } from "@/lib/firebase-admin";
 import { MICRO_CONCEPTS, getConcept } from "@/lib/curriculum";
 import { getBuiltInDiagnosticQuestion } from "@/lib/diagnostic-questions";
-import { QUESTION_BANK } from "@/lib/question-bank";
+import { builtInQuestionsEnabled, QUESTION_BANK } from "@/lib/question-bank";
 import { selectQuizQuestionSet } from "@/lib/question-selection";
 import { DEFAULT_ASSESSMENT_CONFIG } from "@/types/curriculum";
 import type {
@@ -62,10 +62,10 @@ export async function getPublishedQuestions(microTag: string): Promise<QuestionB
         // Diagnostic test questions belong to the diagnostic alone and never appear in quizzes.
         .filter((question) => question.status === "published" && question.classLevel === concept.classLevel && question.purpose !== "diagnostic");
 
-    // The bundled bank keeps local development usable before the first idempotent seed.
-    return sortById(questions.length ? questions : QUESTION_BANK.filter(
-        (question) => question.microTag === microTag && question.classLevel === concept.classLevel,
-    ));
+    // The bundled bank keeps local development usable before the first seed; production never
+    // falls back to it, so a lesson whose questions were deleted stays empty until new ones exist.
+    if (questions.length || !builtInQuestionsEnabled()) return sortById(questions);
+    return sortById(QUESTION_BANK.filter((question) => question.microTag === microTag && question.classLevel === concept.classLevel));
 }
 
 const isUsableQuestion = (question: Partial<QuestionBankItem>) =>

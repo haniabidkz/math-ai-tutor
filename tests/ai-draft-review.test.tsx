@@ -50,7 +50,8 @@ describe("AI draft review (Rule C)", { timeout: 30_000 }, () => {
 
         await waitFor(() => expect(onPublished).toHaveBeenCalled());
         const call = api.mock.calls.find(([path]) => path === `${base}/approve`)!;
-        expect(JSON.parse(String(call[1]?.body))).toEqual({ replaceLesson: false });
+        // No older questions exist here, so nothing is replaced.
+        expect(JSON.parse(String(call[1]?.body))).toEqual({ replaceLesson: false, replaceOld: false });
         expect(await screen.findByText(/30 questions are now live/)).toBeInTheDocument();
     });
 
@@ -125,6 +126,58 @@ describe("AI draft review (Rule C)", { timeout: 30_000 }, () => {
 
         await waitFor(() => expect(sent).toEqual(["concept", "easy-1", "easy-1", "verify"]), { timeout: 4000 });
         await waitFor(() => expect(screen.getByText("Answers checked: 1/1")).toBeInTheDocument());
+    });
+
+    it("replaces a micro-topic's older questions by default, and reports how many went", async () => {
+        const ready = reviewDraft({ easy: 10, medium: 10, hard: 10 });
+        const onPublished = vi.fn();
+        api.mockImplementation(async (path: string, init?: RequestInit) => {
+            const method = init?.method ?? "GET";
+            if (path === base && method === "GET") return { draft: ready, liveTexts: [], olderQuestionCount: 20 };
+            if (path === `${base}/approve`) return { questionIds: ready.questions.map((question) => question.key), microTag: null, removed: 20 };
+            throw new Error(`Unexpected ${method} ${path}`);
+        });
+        render(<AiDraftReview draftId="d1" onClose={vi.fn()} onPublished={onPublished} />);
+
+        const replace = await screen.findByLabelText(/Replace the 20 older practice question\(s\) of “Introduction to Integers”/);
+        expect(replace).toBeChecked();
+        fireEvent.click(approveButton());
+        await waitFor(() => expect(onPublished).toHaveBeenCalled());
+        const call = api.mock.calls.find(([path]) => path === `${base}/approve`)!;
+        expect(JSON.parse(String(call[1]?.body))).toMatchObject({ replaceOld: true });
+        expect(await screen.findByText(/30 questions are now live\. 20 older question\(s\) were removed\./)).toBeInTheDocument();
+    });
+
+    it("keeps older questions when the admin unticks the replace option", async () => {
+        const ready = reviewDraft({ easy: 10, medium: 10, hard: 10 });
+        api.mockImplementation(async (path: string, init?: RequestInit) => {
+            const method = init?.method ?? "GET";
+            if (path === base && method === "GET") return { draft: ready, liveTexts: [], olderQuestionCount: 5 };
+            if (path === `${base}/approve`) return { questionIds: [], microTag: null, removed: 0 };
+            throw new Error(`Unexpected ${method} ${path}`);
+        });
+        render(<AiDraftReview draftId="d1" onClose={vi.fn()} onPublished={vi.fn()} />);
+        fireEvent.click(await screen.findByLabelText(/Replace the 5 older practice question/));
+        fireEvent.click(approveButton());
+        await waitFor(() => expect(api.mock.calls.some(([path]) => path === `${base}/approve`)).toBe(true));
+        const call = api.mock.calls.find(([path]) => path === `${base}/approve`)!;
+        expect(JSON.parse(String(call[1]?.body))).toMatchObject({ replaceOld: false });
+    });
+
+    it("holds back a question the checker found off topic until the admin keeps it", async () => {
+        const offTopic = reviewDraft({ easy: 10, medium: 10, hard: 10 });
+        offTopic.questions[0] = draftQuestion({ key: "wander", verification: { status: "agrees", aiAnswer: "A", onTopic: false, topicNote: "This is about fractions, not integers." } });
+        const kept = { ...offTopic, questions: offTopic.questions.map((question) => (question.key === "wander" ? { ...question, verification: { ...question.verification, status: "confirmed" as const } } : question)) };
+        serve(offTopic, { [`PATCH ${base}`]: () => ({ draft: kept, addedKey: null }) });
+        render(<AiDraftReview draftId="d1" onClose={vi.fn()} onPublished={vi.fn()} />);
+
+        expect(await screen.findByText(/The checker says this question goes outside its micro-topic\./)).toBeInTheDocument();
+        expect(screen.getByText("Why: This is about fractions, not integers.")).toBeInTheDocument();
+        expect(approveButton()).toBeDisabled();
+        fireEvent.click(screen.getByRole("button", { name: /Keep it: it is on topic/ }));
+        await waitFor(() => expect(approveButton()).toBeEnabled());
+        const patch = api.mock.calls.find(([path, init]) => path === base && init?.method === "PATCH")!;
+        expect(JSON.parse(String(patch[1]?.body))).toEqual({ op: "confirm", key: "wander" });
     });
 
     it("waits out a gateway timeout and a dropped connection instead of stopping", async () => {

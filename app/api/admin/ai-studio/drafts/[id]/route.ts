@@ -6,7 +6,7 @@ import { writeAuditLog } from "@/lib/admin-audit";
 import { draftEditSchema } from "@/lib/ai-studio/input";
 import {
     assertOpen, clean, draftFrom, draftsCollection, liveQuestionTexts, loadDraft,
-    studioErrorResponse, StudioError, toClientDraft,
+    replaceablePoolQuestions, studioErrorResponse, StudioError, toClientDraft,
 } from "@/lib/ai-studio/store";
 import { OPTION_LETTERS, type DraftQuestion, type GenerationDraft } from "@/lib/ai-studio/types";
 import { questionFingerprint } from "@/lib/ai-studio/validate";
@@ -20,8 +20,10 @@ export async function GET(request: NextRequest, context: Context) {
         await requireSuperAdmin(request);
         const { id } = await context.params;
         const draft = await loadDraft(id);
-        const liveTexts = await liveQuestionTexts(draft.target.microTopics.map((topic) => topic.microTag));
-        return NextResponse.json({ success: true, draft: toClientDraft(draft), liveTexts });
+        const tags = draft.target.microTopics.map((topic) => topic.microTag);
+        const [liveTexts, replaceable] = await Promise.all([liveQuestionTexts(tags), replaceablePoolQuestions(tags)]);
+        // How many older practice questions "replace older questions" would remove on approval.
+        return NextResponse.json({ success: true, draft: toClientDraft(draft), liveTexts, olderQuestionCount: replaceable.length });
     } catch (error) {
         return studioErrorResponse(error, "The draft could not be loaded");
     }

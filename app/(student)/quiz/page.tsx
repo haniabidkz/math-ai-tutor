@@ -116,7 +116,14 @@ function QuizContent() {
                 }),
             });
             const data = await response.json();
-            if (!response.ok) throw new Error(data.error);
+            if (!response.ok) {
+                // A lesson without practice questions yet explains itself instead of failing.
+                if (data.code === "no_questions") {
+                    setError(data.error);
+                    return;
+                }
+                throw new Error(data.error);
+            }
             // A fresh session invalidates anything still queued from an abandoned one.
             clearSessionQueue(data.session.id);
             setPendingCount(0);

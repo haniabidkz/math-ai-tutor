@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { checkBatchSize, completeJson } from "@/lib/ai-studio/ai";
-import { verificationPrompt } from "@/lib/ai-studio/prompts";
+import { topicSummary, verificationPrompt } from "@/lib/ai-studio/prompts";
 import { verificationSchema } from "@/lib/ai-studio/schema";
 import {
     assertOpen, clean, draftFrom, draftsCollection, loadDraft,
@@ -20,9 +20,14 @@ const needsCheck = (question: DraftQuestion) =>
     question.questionText.trim().length > 0 &&
     question.options.every((option) => option.trim().length > 0);
 
-interface Answer { id: string; chosen_option: string; answer?: string; working: string }
+interface Answer { id: string; chosen_option: string; answer?: string; working: string; on_topic?: boolean; topic_note?: string }
 
 const noteFor = (answer: Answer) => [answer.answer ? `Answer: ${answer.answer}.` : "", answer.working ?? ""].join(" ").trim().slice(0, 600);
+
+/** The scope check: false only when the checker says so, with its reason. */
+const topicFields = (answer: Answer) => (answer.on_topic === false
+    ? { onTopic: false, topicNote: (answer.topic_note ?? "").trim().slice(0, 300) }
+    : { onTopic: true });
 
 /**
  * A second, independent solve: a reasoning model from another service answers a batch of
@@ -42,10 +47,18 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             return NextResponse.json({ success: true, checked: 0, remaining: 0, draft: toClientDraft(draft) });
         }
 
-        // Short ids keep the reply small and easy to match back.
+        // Short ids keep the reply small and easy to match back. Each question carries its
+        // micro-topic, so the checker also says whether the question stays inside it.
+        const topics = new Map(draft.target.microTopics.map((topic) => {
+            const summary = topicSummary(topic, draft.concept);
+            return [topic.microTag, summary ? `${topic.title} (${summary})` : topic.title];
+        }));
         const reply = await completeJson<{ answers: Answer[] }>({
             role: "verification",
-            ...verificationPrompt(batch.map((question, index) => ({ ...question, key: `q${index + 1}` }))),
+            ...verificationPrompt(
+                batch.map((question, index) => ({ ...question, key: `q${index + 1}`, topic: topics.get(question.microTag) ?? draft.target.chapter.title })),
+                draft.level,
+            ),
             schemaName: "independent_solve",
             schema: verificationSchema,
             maxOutputTokens: 30_000,
@@ -67,7 +80,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
                 const chosen = answer?.chosen_option;
                 // "none": no option equals the checker's answer, so the question itself is broken.
                 if (answer && chosen === "none") {
-                    return { ...question, verification: { status: "disagrees", aiAnswer: null, note: noteFor(answer), fingerprint: entry.fingerprint } };
+                    return { ...question, verification: { status: "disagrees", aiAnswer: null, note: noteFor(answer), fingerprint: entry.fingerprint, ...topicFields(answer) } };
                 }
                 if (!answer || !OPTION_LETTERS.includes(chosen as OptionLetter)) {
                     return { ...question, verification: { status: "error", note: "the checker did not answer this question", fingerprint: entry.fingerprint } };
@@ -79,6 +92,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
                         aiAnswer: chosen as OptionLetter,
                         note: noteFor(answer),
                         fingerprint: entry.fingerprint,
+                        ...topicFields(answer),
                     },
                 };
             });

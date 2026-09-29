@@ -7,7 +7,7 @@ import { approveSchema } from "@/lib/ai-studio/input";
 import { aiQuestionId, newConceptFromDraft, toQuestionBankItem } from "@/lib/ai-studio/publish";
 import {
     allConcepts, draftFrom, draftsCollection, liveQuestionTexts, loadDraft,
-    studioErrorResponse, StudioError,
+    replaceablePoolQuestions, studioErrorResponse, StudioError,
 } from "@/lib/ai-studio/store";
 import { NEW_MICRO_TAG } from "@/lib/ai-studio/types";
 import { blockingIssues, normalizeText, validateDraft } from "@/lib/ai-studio/validate";
@@ -24,12 +24,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     try {
         const admin = await requireSuperAdmin(request);
         const { id } = await context.params;
-        const { replaceLesson = false } = approveSchema.parse(await request.json().catch(() => ({})));
+        const { replaceLesson = false, replaceOld = false } = approveSchema.parse(await request.json().catch(() => ({})));
         const ref = draftsCollection().doc(id);
 
         const preview = await loadDraft(id);
         const tags = preview.target.microTopics.map((topic) => topic.microTag);
-        const [liveTexts, concepts] = await Promise.all([liveQuestionTexts(tags), allConcepts()]);
+        const [liveTexts, concepts, older] = await Promise.all([
+            liveQuestionTexts(tags),
+            allConcepts(),
+            replaceOld ? replaceablePoolQuestions(tags) : Promise.resolve([]),
+        ]);
         const liveSet = new Set(liveTexts.map(normalizeText));
         const conceptByTag = new Map(concepts.map((concept) => [concept.microTag, concept]));
 
@@ -95,11 +99,22 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             return { ids, microTag: newConcept?.microTag ?? null, name: target.microTopic?.title ?? target.subTopic ?? target.chapter.title, level: draft.level };
         });
 
+        // The new pool is live; now the questions these micro-topics had before go, so students
+        // see only the new content. Diagnostic test questions were never in this list.
+        const fresh = new Set(result.ids);
+        const removeIds = older.map((question) => question.id).filter((questionId) => !fresh.has(questionId));
+        for (let start = 0; start < removeIds.length; start += 400) {
+            const batch = adminDb.batch();
+            for (const questionId of removeIds.slice(start, start + 400)) batch.delete(adminDb.collection("questions").doc(questionId));
+            await batch.commit();
+        }
+
         await writeAuditLog({
             actorUid: admin.uid, actorEmail: admin.email, action: "aiStudio.draft.approve", targetType: "generationDraft", targetId: id,
-            summary: `Pushed ${result.ids.length} AI questions for ${result.name} (${result.level}-topic) to the live bank${result.microTag ? `, new micro-topic ${result.microTag}` : ""}`,
+            summary: `Pushed ${result.ids.length} AI questions for ${result.name} (${result.level}-topic) to the live bank`
+                + `${result.microTag ? `, new micro-topic ${result.microTag}` : ""}${removeIds.length ? `, removed ${removeIds.length} older question(s)` : ""}`,
         });
-        return NextResponse.json({ success: true, questionIds: result.ids, microTag: result.microTag });
+        return NextResponse.json({ success: true, questionIds: result.ids, microTag: result.microTag, removed: removeIds.length });
     } catch (error) {
         return studioErrorResponse(error, "The draft could not be pushed live");
     }

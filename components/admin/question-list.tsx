@@ -25,6 +25,8 @@ interface Filters {
 
 const NO_FILTERS: Filters = { text: "", microTag: "", classLevel: "", difficulty: "", status: "", type: "" };
 
+const isProtected = (question: QuestionBankItem) => question.purpose === "diagnostic";
+
 function matches(question: QuestionBankItem, filters: Filters): boolean {
     const text = filters.text.trim().toLowerCase();
     if (text && !`${question.id} ${question.microTag} ${question.question.english}`.toLowerCase().includes(text)) return false;
@@ -45,14 +47,10 @@ function matches(question: QuestionBankItem, filters: Filters): boolean {
  */
 export function confirmDeletion(questions: QuestionBankItem[]): boolean {
     const count = questions.length;
-    const diagnostic = questions.filter((question) => question.purpose === "diagnostic").length;
     const lines = [
         count === 1 ? `Delete ${questions[0].id}?` : `Delete ${count} questions? This cannot be undone.`,
-        diagnostic
-            ? `${diagnostic} of them ${diagnostic === 1 ? "is a diagnostic test question" : "are diagnostic test questions"}. The test keeps working from its built-in copy, but your edits to ${diagnostic === 1 ? "it" : "them"} are lost.`
-            : "",
-        "Students' past results are not affected.",
-    ].filter(Boolean);
+        "Diagnostic test questions are never deleted. Students' past results are not affected.",
+    ];
     if (count <= TYPED_CONFIRM_THRESHOLD) return window.confirm(lines.join("\n\n"));
     const typed = window.prompt(`${lines.join("\n\n")}\n\nType ${count} to confirm.`);
     return typed?.trim() === String(count);
@@ -78,9 +76,11 @@ export function QuestionList({
     const headerCheckbox = useRef<HTMLInputElement>(null);
 
     const visible = useMemo(() => questions.filter((question) => matches(question, filters)), [questions, filters]);
+    // Diagnostic test questions are protected: they can be edited but never selected or deleted.
+    const deletable = useMemo(() => visible.filter((question) => !isProtected(question)), [visible]);
     const filtered = Object.values(filters).some(Boolean);
-    const selectedVisible = visible.filter((question) => selected.has(question.id));
-    const allVisibleSelected = visible.length > 0 && selectedVisible.length === visible.length;
+    const selectedVisible = deletable.filter((question) => selected.has(question.id));
+    const allVisibleSelected = deletable.length > 0 && selectedVisible.length === deletable.length;
 
     // A new filter starts a new selection, so nothing hidden is ever deleted by mistake.
     useEffect(() => setSelected(new Set()), [filters]);
@@ -109,7 +109,7 @@ export function QuestionList({
     }
 
     function toggleAllVisible() {
-        setSelected(allVisibleSelected ? new Set() : new Set(visible.map((question) => question.id)));
+        setSelected(allVisibleSelected ? new Set() : new Set(deletable.map((question) => question.id)));
     }
 
     async function remove(targets: QuestionBankItem[]) {
@@ -151,11 +151,16 @@ export function QuestionList({
                     <Button size="sm" variant="outline" disabled={!selectedVisible.length || deleting} onClick={() => remove(selectedVisible)}>
                         <Trash2 className="mr-2 h-4 w-4 text-destructive" />Delete selected ({selectedVisible.length})
                     </Button>
-                    <Button size="sm" variant="destructive" disabled={!visible.length || deleting} onClick={() => remove(visible)}>
-                        <Trash2 className="mr-2 h-4 w-4" />{filtered ? `Delete all shown (${visible.length})` : `Delete all (${visible.length})`}
+                    <Button size="sm" variant="destructive" disabled={!deletable.length || deleting} onClick={() => remove(deletable)}>
+                        <Trash2 className="mr-2 h-4 w-4" />{filtered ? `Delete all shown (${deletable.length})` : `Delete all (${deletable.length})`}
                     </Button>
                 </div>
             </div>
+            {visible.length > deletable.length ? (
+                <p className="text-xs text-muted-foreground">
+                    {visible.length - deletable.length} diagnostic test question(s) are protected: they can be edited, but no delete removes them.
+                </p>
+            ) : null}
 
             {truncated ? (
                 <Alert><AlertDescription>Only the first {questions.length} questions were loaded. Delete or filter some to see the rest.</AlertDescription></Alert>
@@ -166,7 +171,7 @@ export function QuestionList({
                     <thead className="sticky top-0 z-10 bg-slate-100">
                         <tr>
                             <th className="w-10 p-2">
-                                <input ref={headerCheckbox} type="checkbox" aria-label="Select all shown questions" checked={allVisibleSelected} disabled={!visible.length} onChange={toggleAllVisible} />
+                                <input ref={headerCheckbox} type="checkbox" aria-label="Select all shown questions" checked={allVisibleSelected} disabled={!deletable.length} onChange={toggleAllVisible} />
                             </th>
                             <th className="p-2">ID</th><th className="p-2">Concept</th><th className="p-2">Class</th><th className="p-2">Difficulty</th>
                             <th className="p-2">Status</th><th className="p-2">Reasons</th><th className="p-2">Question</th><th className="p-2">Actions</th>
@@ -175,11 +180,13 @@ export function QuestionList({
                     <tbody className="divide-y">
                         {visible.map((question) => {
                             const written = Object.keys(question.optionAnalysis ?? {}).length;
-                            const isSelected = selected.has(question.id);
+                            const locked = isProtected(question);
+                            const isSelected = !locked && selected.has(question.id);
                             return (
                                 <tr key={question.id} className={isSelected ? "bg-sky-50" : undefined}>
                                     <td className="p-2">
-                                        <input type="checkbox" aria-label={`Select ${question.id}`} checked={isSelected} onChange={() => toggle(question.id)} />
+                                        <input type="checkbox" aria-label={`Select ${question.id}`} checked={isSelected} disabled={locked}
+                                            title={locked ? "Diagnostic test questions are protected" : undefined} onChange={() => toggle(question.id)} />
                                     </td>
                                     <td className="p-2 font-mono text-xs">
                                         {question.id}
@@ -194,7 +201,8 @@ export function QuestionList({
                                     <td className="p-2">
                                         <div className="flex gap-1">
                                             <Button size="icon" variant="ghost" title="Edit" aria-label={`Edit ${question.id}`} onClick={() => onEdit(question)}><Pencil className="h-4 w-4" /></Button>
-                                            <Button size="icon" variant="ghost" title="Delete" aria-label={`Delete ${question.id}`} disabled={deleting} onClick={() => remove([question])}>
+                                            <Button size="icon" variant="ghost" title={locked ? "Diagnostic test questions are protected" : "Delete"} aria-label={`Delete ${question.id}`}
+                                                disabled={deleting || locked} onClick={() => remove([question])}>
                                                 <Trash2 className="h-4 w-4 text-destructive" />
                                             </Button>
                                         </div>

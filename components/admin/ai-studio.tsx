@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import { Bot, FolderOpen, Loader2, PlugZap, Sparkles } from "lucide-react";
+import { Bot, Eraser, FolderOpen, Loader2, PlugZap, Sparkles } from "lucide-react";
 import { AiDraftReview, NativeSelect } from "@/components/admin/ai-draft-review";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,7 @@ import { adminApi, jsonInit } from "@/lib/admin-api";
 import { topicsForClass } from "@/lib/concept-autofill";
 import type { AiStatus } from "@/lib/ai-studio/ai";
 import { LEVEL_LABELS, quotaFor, quotaTotal } from "@/lib/ai-studio/quotas";
-import { buildTarget, chapterConcepts, type TargetInput } from "@/lib/ai-studio/target";
+import { buildTarget, chapterConcepts, targetKey, type TargetInput } from "@/lib/ai-studio/target";
 import { CURRICULUM_NAME, type DraftStatus, type GenerationLevel } from "@/lib/ai-studio/types";
 import type { AssessmentConfig, MicroConcept, StudentClassLevel } from "@/types/curriculum";
 
@@ -30,7 +30,10 @@ interface DraftSummary {
     total: number;
     createdByEmail: string;
     createdAt: number | null;
+    targetKey: string;
 }
+
+const isUnfinished = (draft: DraftSummary) => draft.status === "generating" || draft.status === "needs_review";
 
 const STATUS_LABELS: Record<DraftStatus, string> = {
     generating: "Generating",
@@ -132,6 +135,10 @@ export function AiStudio({ concepts, config, onPublished }: {
     }
 
     async function create() {
+        // Only the content of this request is kept: an unfinished draft of the same request is replaced.
+        const key = "target" in built ? targetKey(level, built.target) : null;
+        const earlier = drafts.filter((draft) => isUnfinished(draft) && draft.targetKey === key);
+        if (earlier.length && !window.confirm(`You already have ${earlier.length === 1 ? "an unfinished draft" : `${earlier.length} unfinished drafts`} for this topic. Starting again discards ${earlier.length === 1 ? "it" : "them"}, so only the new content is kept. Continue?`)) return;
         setCreating(true);
         setError("");
         try {
@@ -141,6 +148,18 @@ export function AiStudio({ concepts, config, onPublished }: {
             setError(caught instanceof Error ? caught.message : "The draft could not be created");
         } finally {
             setCreating(false);
+        }
+    }
+
+    async function clearUnfinished() {
+        const count = drafts.filter(isUnfinished).length;
+        if (!window.confirm(`Discard all ${count} unfinished draft(s)? Live questions, lessons and the diagnostic tests are not touched.`)) return;
+        setError("");
+        try {
+            await adminApi("/api/admin/ai-studio/drafts/clear", { method: "POST" });
+            await loadDrafts();
+        } catch (caught) {
+            setError(caught instanceof Error ? caught.message : "The drafts could not be cleared");
         }
     }
 
@@ -262,7 +281,14 @@ export function AiStudio({ concepts, config, onPublished }: {
             </section>
 
             <section className="bg-white p-4">
-                <h2 className="mb-3 font-semibold">Drafts</h2>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="font-semibold">Drafts</h2>
+                    {drafts.some(isUnfinished) ? (
+                        <Button size="sm" variant="outline" onClick={clearUnfinished}>
+                            <Eraser className="mr-2 h-4 w-4" />Clear unfinished drafts ({drafts.filter(isUnfinished).length})
+                        </Button>
+                    ) : null}
+                </div>
                 {drafts.length ? (
                     <div className="overflow-auto">
                         <table className="w-full min-w-[760px] text-left text-sm">

@@ -49,4 +49,6 @@ export const draftEditSchema = z.discriminatedUnion("op", [
 export const approveSchema = z.object({
     /** Micro-topic that already exists: also use the new explanation as its lesson. */
     replaceLesson: z.boolean().optional(),
+    /** Remove the practice questions these micro-topics had before; diagnostic questions are never touched. */
+    replaceOld: z.boolean().optional(),
 });

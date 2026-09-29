@@ -144,6 +144,14 @@ export const QUESTION_BANK: QuestionBankItem[] = MICRO_CONCEPTS.flatMap((concept
     Array.from({ length: 20 }, (_, index) => makeQuestion(concept, index))
 );
 
+/**
+ * The generated bank above is starter content for development and tests only. In production
+ * students see only questions stored in Firestore, so deleted questions never come back.
+ */
+export function builtInQuestionsEnabled(): boolean {
+    return process.env.NODE_ENV !== "production";
+}
+
 export function getQuestionsForConcept(microTag: string, difficulty?: Difficulty) {
     return QUESTION_BANK.filter(
         (question) => question.microTag === microTag && (!difficulty || question.difficulty === difficulty)

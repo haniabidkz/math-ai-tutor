@@ -15,6 +15,19 @@ export interface TargetInput {
 
 const same = (left: string, right: string) => left.trim().toLowerCase() === right.trim().toLowerCase();
 
+/** A micro-topic as the model sees it: its title and what it teaches, which sets the scope. */
+const asTopic = (concept: MicroConcept) => ({ microTag: concept.microTag, title: concept.title.english, summary: concept.concept.english });
+
+/**
+ * Identifies a request: the same level, class and micro-topics give the same key, so starting
+ * the same generation again can replace an unfinished draft of it.
+ */
+export function targetKey(level: GenerationLevel, target: DraftTarget): string {
+    const tags = target.microTopics.map((topic) => topic.microTag).sort().join(",");
+    const newTopic = target.microTopic && !target.microTopic.microTag ? `:new:${target.chapter.title.trim().toLowerCase()}/${target.microTopic.title.trim().toLowerCase()}` : "";
+    return `${level}:${target.classLevel}:${tags}${newTopic}`;
+}
+
 /** Live, taught concepts only: foundations are tested by the diagnostic and have no pools. */
 const isTaught = (concept: MicroConcept) => concept.status !== "archived" && !concept.foundationOnly;
 
@@ -61,7 +74,7 @@ export function buildTarget(input: TargetInput, concepts: MicroConcept[]): { tar
                     classLevel: input.classLevel, chapter,
                     subTopic: subTopic ?? concept.subTopic?.english ?? null,
                     microTopic: { microTag: concept.microTag, title: concept.title.english },
-                    microTopics: [{ microTag: concept.microTag, title: concept.title.english }],
+                    microTopics: [asTopic(concept)],
                 },
             };
         }
@@ -89,7 +102,7 @@ export function buildTarget(input: TargetInput, concepts: MicroConcept[]): { tar
         return {
             target: {
                 classLevel: input.classLevel, chapter, subTopic, microTopic: null,
-                microTopics: (chosen as MicroConcept[]).map((concept) => ({ microTag: concept.microTag, title: concept.title.english })),
+                microTopics: (chosen as MicroConcept[]).map(asTopic),
             },
         };
     }
@@ -97,7 +110,7 @@ export function buildTarget(input: TargetInput, concepts: MicroConcept[]): { tar
     return {
         target: {
             classLevel: input.classLevel, chapter, subTopic: null, microTopic: null,
-            microTopics: inChapter.map((concept) => ({ microTag: concept.microTag, title: concept.title.english })),
+            microTopics: inChapter.map(asTopic),
         },
     };
 }

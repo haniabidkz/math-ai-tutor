@@ -7,7 +7,7 @@ import { questionBatchSize } from "@/lib/ai-studio/ai";
 import { createDraftSchema } from "@/lib/ai-studio/input";
 import { planSteps, quotaFor, quotaTotal } from "@/lib/ai-studio/quotas";
 import { allConcepts, draftsCollection, studioErrorResponse, StudioError } from "@/lib/ai-studio/store";
-import { buildTarget } from "@/lib/ai-studio/target";
+import { buildTarget, targetKey } from "@/lib/ai-studio/target";
 import { CURRICULUM_NAME, type GenerationDraft } from "@/lib/ai-studio/types";
 import { requireSuperAdmin } from "@/lib/server-auth";
 import type { AssessmentConfig } from "@/types/curriculum";
@@ -33,6 +33,7 @@ export async function GET(request: NextRequest) {
                 stepsTotal: draft.steps.length,
                 createdByEmail: draft.createdByEmail,
                 createdAt: (draft.createdAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? null,
+                targetKey: draft.targetKey ?? targetKey(draft.level, draft.target),
             }));
         return NextResponse.json({ success: true, drafts });
     } catch (error) {
@@ -53,12 +54,24 @@ export async function POST(request: NextRequest) {
         if ("error" in built) throw new StudioError(400, built.error);
 
         const quota = quotaFor(input.level, effectiveConfig(configDoc.data() as Partial<AssessmentConfig> | undefined));
+        const key = targetKey(input.level, built.target);
+
+        // A new request replaces any unfinished draft of the same request, so the Studio holds
+        // only the content being generated now. Approved drafts stay as history.
+        const open = await draftsCollection().where("status", "in", ["generating", "needs_review"]).get();
+        const replaced = open.docs.filter((doc) => {
+            const data = doc.data() as GenerationDraft;
+            return (data.targetKey ?? targetKey(data.level, data.target)) === key;
+        });
         const ref = draftsCollection().doc();
-        await ref.set({
+        const batch = adminDb.batch();
+        for (const doc of replaced) batch.update(doc.ref, { status: "discarded", discardedReason: "replaced", updatedAt: FieldValue.serverTimestamp() });
+        batch.set(ref, {
             status: "generating",
             level: input.level,
             curriculum: CURRICULUM_NAME,
             target: built.target,
+            targetKey: key,
             quota,
             concept: null,
             questions: [],
@@ -69,9 +82,11 @@ export async function POST(request: NextRequest) {
             createdAt: FieldValue.serverTimestamp(),
             updatedAt: FieldValue.serverTimestamp(),
         });
+        await batch.commit();
         const name = built.target.microTopic?.title ?? built.target.subTopic ?? built.target.chapter.title;
-        await writeAuditLog({ actorUid: admin.uid, actorEmail: admin.email, action: "aiStudio.draft.create", targetType: "generationDraft", targetId: ref.id, summary: `Started ${input.level}-topic pool for ${name} (${quotaTotal(quota)} questions)` });
-        return NextResponse.json({ success: true, id: ref.id }, { status: 201 });
+        const cleared = replaced.length ? `; replaced ${replaced.length} unfinished draft(s) of it` : "";
+        await writeAuditLog({ actorUid: admin.uid, actorEmail: admin.email, action: "aiStudio.draft.create", targetType: "generationDraft", targetId: ref.id, summary: `Started ${input.level}-topic pool for ${name} (${quotaTotal(quota)} questions)${cleared}` });
+        return NextResponse.json({ success: true, id: ref.id, replacedDrafts: replaced.length }, { status: 201 });
     } catch (error) {
         return studioErrorResponse(error, "The draft could not be created");
     }

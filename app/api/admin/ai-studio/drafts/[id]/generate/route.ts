@@ -4,14 +4,15 @@ import { z } from "zod";
 import { adminDb } from "@/lib/firebase-admin";
 import { findForeignContext } from "@/lib/ai-studio/context-check";
 import { AiError, completeJson } from "@/lib/ai-studio/ai";
-import { conceptPrompt, questionPrompt } from "@/lib/ai-studio/prompts";
+import { batchFocus, conceptPrompt, questionPrompt } from "@/lib/ai-studio/prompts";
+import { findNearCopy, questionSignature } from "@/lib/ai-studio/similarity";
 import { conceptSchema, normalizeConcept, normalizeQuestionBatch, questionBatchSchema } from "@/lib/ai-studio/schema";
 import {
     assertOpen, clean, draftFrom, draftsCollection, liveQuestionTexts,
     studioErrorResponse, StudioError, toClientDraft,
 } from "@/lib/ai-studio/store";
 import type { DraftConcept, DraftQuestion, GenerationDraft, GenerationStep } from "@/lib/ai-studio/types";
-import { normalizeText } from "@/lib/ai-studio/validate";
+import { brevityIssues, normalizeText } from "@/lib/ai-studio/validate";
 import { requireSuperAdmin } from "@/lib/server-auth";
 
 export const maxDuration = 300;
@@ -21,6 +22,12 @@ const STALE_AFTER_MS = 320_000;
 
 /** Longest wait for one model, leaving time for a backup model inside the 300-second limit. */
 const PER_MODEL_MS = 150_000;
+
+/**
+ * Short, clean questions need little thinking, so easy ones come back fast; hard ones keep a
+ * high effort because the first hard batches had wrong answers at the default effort.
+ */
+const REASONING_BY_DIFFICULTY = { easy: "low", medium: "medium", hard: "high" } as const;
 
 const bodySchema = z.object({ stepId: z.string().min(1) });
 
@@ -43,25 +50,41 @@ async function runStep(draft: GenerationDraft, step: GenerationStep) {
 
     const difficulty = step.difficulty!;
     const count = step.count!;
-    const existing = [...await liveQuestionTexts(tags), ...draft.questions.map((question) => question.questionText)];
-    const prompt = questionPrompt(draft, { difficulty, count, avoid: existing, feedback: step.feedback });
-    // Questions think hard: a first run at the default effort put a wrong answer or no right
-    // option in 2 of 10 hard questions. The extra thinking costs little.
+    const live = await liveQuestionTexts(tags);
+    const inDraft = draft.questions.map((question) => question.questionText);
+    const focus = batchFocus(draft, count);
+    const prompt = questionPrompt(draft, { difficulty, count, avoid: [...live, ...inDraft], feedback: step.feedback, focus });
     const reply = await completeJson<unknown>({
         role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags),
-        temperature: 0.6, maxOutputTokens: 48_000, timeoutMs: PER_MODEL_MS, reasoningEffort: "high",
+        temperature: 0.6, maxOutputTokens: 48_000, timeoutMs: PER_MODEL_MS, reasoningEffort: REASONING_BY_DIFFICULTY[difficulty],
     });
     const { questions, problems } = normalizeQuestionBatch(reply.data, { difficulty, count, allowedTags: tags });
 
-    // Rule A and no repeats: the whole batch is redone with the reasons, never patched up.
-    const seen = new Set(existing.map(normalizeText));
+    // Rule A, short questions and no repeats: the whole batch is redone with the reasons, never patched up.
+    const seen = new Set([...live, ...inDraft].map(normalizeText));
+    const poolSignatures = inDraft.map((text) => questionSignature(text));
     questions.forEach((question, index) => {
+        const label = `question ${index + 1}`;
         const foreign = findForeignContext(question.questionText, ...question.options, question.hint.english, question.solution.english);
-        if (foreign.length) problems.push(`question ${index + 1} uses a foreign setting (${foreign.join(", ")}); use Pakistani daily life, Rupees and kilometres`);
+        if (foreign.length) problems.push(`${label} uses a foreign setting (${foreign.join(", ")}); use Pakistani daily life, Rupees and kilometres`);
+        for (const issue of brevityIssues(question)) {
+            if (issue.severity === "error") problems.push(`${label}: ${issue.message}`);
+        }
         const text = normalizeText(question.questionText);
-        if (seen.has(text)) problems.push(`question ${index + 1} repeats an existing question`);
+        if (seen.has(text)) problems.push(`${label} repeats an existing question`);
+        else {
+            const copied = findNearCopy(text, poolSignatures);
+            if (copied >= 0) problems.push(`${label} is almost the same as an earlier question ("${[...inDraft, ...questions.map((item) => item.questionText)][copied].slice(0, 80)}"); change the idea or situation, not just the numbers`);
+        }
         seen.add(text);
+        poolSignatures.push(questionSignature(text));
     });
+    // Sub-topic and main-topic pools stay evenly spread: each batch covers the micro-topics it was given.
+    if (focus.length && questions.length) {
+        const wanted = [...focus].sort().join(",");
+        const got = questions.map((question) => question.microTag).sort().join(",");
+        if (wanted !== got) problems.push(`write one question for each of these micro-topics: ${focus.join(", ")} (the reply covered ${got})`);
+    }
 
     const outcome: Outcome = problems.length
         ? { ok: false, problems, error: `The reply broke ${problems.length} rule(s)` }

@@ -1,5 +1,6 @@
 import { findForeignContext } from "@/lib/ai-studio/context-check";
 import { DIFFICULTIES } from "@/lib/ai-studio/quotas";
+import { isNearCopy, questionSignature, wordCount } from "@/lib/ai-studio/similarity";
 import { OPTION_LETTERS, type DraftQuestion, type GenerationDraft } from "@/lib/ai-studio/types";
 import { MISCONCEPTIONS } from "@/lib/mistake-analysis";
 
@@ -21,6 +22,30 @@ export const stripOptionLabel = (value: string) => value.replace(/^\s*\(?[A-Da-d
 
 /** A worked solution that admits no option is right means the question itself is broken. */
 const SAYS_NO_ANSWER = /\bno (correct|right|valid) (answer|option)|none of the (given |above |listed )?(options|choices|answers)|no option is (correct|right)/i;
+
+/** Questions check an idea quickly: short to read, with short answers. */
+export const MAX_QUESTION_WORDS = 40;
+export const MAX_OPTION_WORDS = 12;
+
+/**
+ * Problems with length and numbers. Long text is an error; big or fiddly numbers are a warning,
+ * since a few topics (place value, large-number arithmetic) need them.
+ */
+export function brevityIssues(question: Pick<DraftQuestion, "questionText" | "options">): Array<{ severity: DraftIssue["severity"]; message: string }> {
+    const found: Array<{ severity: DraftIssue["severity"]; message: string }> = [];
+    const words = wordCount(question.questionText);
+    if (words > MAX_QUESTION_WORDS) {
+        found.push({ severity: "error", message: `Too long (${words} words). Keep the question under ${MAX_QUESTION_WORDS} words so it checks the idea, not reading.` });
+    }
+    const longOption = question.options.find((option) => wordCount(option) > MAX_OPTION_WORDS);
+    if (longOption) found.push({ severity: "error", message: `An option is too long (${wordCount(longOption)} words). Keep answers under ${MAX_OPTION_WORDS} words.` });
+    const text = [question.questionText, ...question.options].join(" ");
+    const big = (text.match(/\d[\d,]*/g) ?? []).find((value) => Number(value.replace(/,/g, "")) >= 10_000);
+    if (big) found.push({ severity: "warning", message: `Uses a large number (${big}). Small, clean numbers keep the focus on the idea.` });
+    const fiddly = text.match(/\d\.\d{3,}/);
+    if (fiddly) found.push({ severity: "warning", message: `Uses a long decimal (${fiddly[0]}). Keep calculations quick.` });
+    return found;
+}
 
 /** A stable fingerprint of what a solver sees, so any edit invalidates an earlier check. */
 export function questionFingerprint(question: Pick<DraftQuestion, "questionText" | "options" | "correctOption">): string {
@@ -54,8 +79,13 @@ export function questionIssues(question: DraftQuestion, allowedTags: Set<string>
 
     const foreign = findForeignContext(question.questionText, ...question.options, question.hint.english, question.solution.english);
     if (foreign.length) add(`Uses a foreign setting (${foreign.join(", ")}). Rewrite it with a local example.`);
+    for (const issue of brevityIssues(question)) add(issue.message, issue.severity);
 
     const verification = question.verification;
+    // A person's "I checked" overrides the checker on scope as well as on the answer.
+    if (verification.onTopic === false && verification.status !== "confirmed" && verification.status !== "pending") {
+        add(`The checker says this question goes outside its micro-topic${verification.topicNote ? `: ${verification.topicNote}` : "."} Rewrite or remove it, or keep it if it is on topic.`);
+    }
     if (verification.status === "pending") add("Not checked yet: the answer has not been solved independently.");
     else if (verification.status === "error") add(`The independent check failed: ${verification.note ?? "try again"}.`);
     else if (verification.status === "disagrees") {
@@ -99,13 +129,28 @@ export function validateDraft(draft: Pick<GenerationDraft, "quota" | "concept" |
     }
 
     const seen = new Map<string, string>();
+    const earlier: Array<{ text: string; signature: ReturnType<typeof questionSignature> }> = [];
+    const live = [...existingQuestionTexts].map((text) => questionSignature(text));
     for (const question of draft.questions) {
         issues.push(...questionIssues(question, allowedTags));
         const text = normalizeText(question.questionText);
         if (!text) continue;
-        if (seen.has(text)) issues.push({ severity: "error", where: question.key, message: "This question repeats another one in the pool." });
-        else seen.set(text, question.key);
-        if (existingQuestionTexts.has(text)) issues.push({ severity: "error", where: question.key, message: "This question is already in the live question bank." });
+        const signature = questionSignature(text);
+        if (seen.has(text)) {
+            issues.push({ severity: "error", where: question.key, message: "This question repeats another one in the pool." });
+        } else {
+            const copied = earlier.find((other) => isNearCopy(signature, other.signature));
+            if (copied) {
+                issues.push({ severity: "error", where: question.key, message: `Almost the same as another question in the pool ("${copied.text.slice(0, 70)}"). Change the idea or situation, not just the numbers.` });
+            }
+            seen.set(text, question.key);
+        }
+        earlier.push({ text, signature });
+        if (existingQuestionTexts.has(text)) {
+            issues.push({ severity: "error", where: question.key, message: "This question is already in the live question bank." });
+        } else if (live.some((other) => isNearCopy(signature, other))) {
+            issues.push({ severity: "warning", where: question.key, message: "Very similar to a question already in the live bank." });
+        }
     }
     return issues;
 }

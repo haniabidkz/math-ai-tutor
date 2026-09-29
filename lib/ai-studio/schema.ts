@@ -78,7 +78,7 @@ export const verificationSchema = {
             items: {
                 type: "object",
                 additionalProperties: false,
-                required: ["id", "working", "answer", "chosen_option"],
+                required: ["id", "working", "answer", "chosen_option", "on_topic", "topic_note"],
                 properties: {
                     id: { type: "string" },
                     working: { type: "string" },
@@ -86,6 +86,9 @@ export const verificationSchema = {
                     answer: { type: "string" },
                     // "none" when no option equals the checker's answer, so a broken question is caught.
                     chosen_option: { type: "string", enum: [...OPTION_LETTERS, "none"] },
+                    // Whether the question stays inside the micro-topic it is filed under.
+                    on_topic: { type: "boolean" },
+                    topic_note: { type: "string" },
                 },
             },
         },

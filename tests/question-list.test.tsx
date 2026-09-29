@@ -47,24 +47,30 @@ describe("question list bulk actions", { timeout: 30_000 }, () => {
     });
 
     it("asks for the number to be typed before deleting many, and stops on a wrong number", async () => {
-        const prompt = vi.spyOn(window, "prompt").mockReturnValueOnce("50").mockReturnValueOnce(String(questions.length));
+        const prompt = vi.spyOn(window, "prompt").mockReturnValueOnce("50").mockReturnValueOnce(String(practice.length));
         const onDelete = renderList();
-        expect(questions.length).toBeGreaterThan(TYPED_CONFIRM_THRESHOLD);
+        expect(practice.length).toBeGreaterThan(TYPED_CONFIRM_THRESHOLD);
 
-        fireEvent.click(button(new RegExp(`Delete all \\(${questions.length}\\)`)));
+        // "Delete all" covers the practice questions only; the diagnostic test is never included.
+        fireEvent.click(button(new RegExp(`Delete all \\(${practice.length}\\)`)));
         expect(onDelete).not.toHaveBeenCalled();
 
-        fireEvent.click(button(new RegExp(`Delete all \\(${questions.length}\\)`)));
-        await waitFor(() => expect(onDelete).toHaveBeenCalledWith(questions.map((question) => question.id)));
-        expect(prompt.mock.calls[1][0]).toContain(`Type ${questions.length} to confirm.`);
-        expect(prompt.mock.calls[1][0]).toContain("15 of them are diagnostic test questions");
+        fireEvent.click(button(new RegExp(`Delete all \\(${practice.length}\\)`)));
+        await waitFor(() => expect(onDelete).toHaveBeenCalledWith(practice.map((question) => question.id)));
+        expect(prompt.mock.calls[1][0]).toContain(`Type ${practice.length} to confirm.`);
+        expect(prompt.mock.calls[1][0]).toContain("Diagnostic test questions are never deleted");
     });
 
-    it("filters diagnostic questions by the test they belong to", () => {
+    it("protects diagnostic questions: shown and editable, never selectable or deletable", () => {
         renderList();
         select("Type", "diagnostic-7");
         expect(screen.getByText(/Showing 15 of 55/)).toBeInTheDocument();
-        expect(button(/Delete all shown \(15\)/)).toBeEnabled();
+        expect(button(/Delete all shown \(0\)/)).toBeDisabled();
+        expect(screen.getByText(/15 diagnostic test question\(s\) are protected/)).toBeInTheDocument();
+        expect(screen.getByLabelText("Select diag-c7-01")).toBeDisabled();
+        expect(screen.getByLabelText("Delete diag-c7-01")).toBeDisabled();
+        expect(screen.getByLabelText("Edit diag-c7-01")).toBeEnabled();
+        expect(screen.getByLabelText("Select all shown questions")).toBeDisabled();
         const row = screen.getByText("diag-c7-01").closest("tr")!;
         expect(within(row).getByText("Diagnostic · Class 7 test")).toBeInTheDocument();
         select("Type", "practice");

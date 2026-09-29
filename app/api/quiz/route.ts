@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
     getAssessmentConfig,
     getPublishedConcept,
+    getPublishedQuestions,
     selectQuestion,
     selectQuizQuestions,
     toClientQuestion,
@@ -31,7 +32,9 @@ async function weeklyQuestions(
     const classTags = getClassConcepts(classLevel).map((concept) => concept.microTag);
     const eligibleTags = new Set(classTags);
     const tags = [...weakTags.filter((microTag) => eligibleTags.has(microTag)), ...classTags];
-    const uniqueTags = [...new Set(tags)];
+    // Lessons whose practice questions have not been written yet are skipped.
+    const pools = await Promise.all([...new Set(tags)].map(async (microTag) => ({ microTag, size: (await getPublishedQuestions(microTag)).length })));
+    const uniqueTags = pools.filter((pool) => pool.size > 0).map((pool) => pool.microTag);
     const selected: QuestionBankItem[] = [];
     for (let index = 0; selected.length < count && uniqueTags.length; index += 1) {
         const microTag = uniqueTags[index % uniqueTags.length];
@@ -126,7 +129,13 @@ export async function POST(request: NextRequest) {
                 history.seenIds,
                 history.previousAttemptIds,
             );
-        if (!questions.length) return NextResponse.json({ success: false, error: "No published questions are available" }, { status: 409 });
+        if (!questions.length) {
+            return NextResponse.json({
+                success: false,
+                code: "no_questions",
+                error: "Practice questions for this lesson are being prepared. Please try another lesson, or check back soon.",
+            }, { status: 409 });
+        }
         if (kind === "weekly") microTag = "weekly-review";
 
         const sessionId = `${kind}_${randomUUID()}`;

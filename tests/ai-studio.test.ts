@@ -181,7 +181,12 @@ describe("what the questions are filed under", () => {
 
     it("files a micro-topic pool under the chosen micro-topic", () => {
         const result = buildTarget({ ...base, level: "micro", microTopic: { microTag: "c6-negative-numbers", title: "" } }, MICRO_CONCEPTS);
-        expect("target" in result && result.target.microTopics).toEqual([{ microTag: "c6-negative-numbers", title: "Negative Numbers" }]);
+        // The summary tells the model exactly what the micro-topic covers.
+        expect("target" in result && result.target.microTopics).toEqual([{
+            microTag: "c6-negative-numbers",
+            title: "Negative Numbers",
+            summary: "Negative numbers are less than zero and appear to the left of zero.",
+        }]);
     });
 
     it("holds a new micro-topic under a placeholder until approval, and refuses a duplicate title", () => {

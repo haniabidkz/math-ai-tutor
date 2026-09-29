@@ -13,6 +13,9 @@ type ParsedQuestion = ReturnType<typeof questionInputSchema.parse>;
 
 const QUESTION_LIST_LIMIT = 3000;
 
+/** Diagnostic test questions can be edited, but no delete removes them. */
+const DIAGNOSTIC_PROTECTED = "Diagnostic test questions are protected and cannot be deleted. You can still edit them.";
+
 /**
  * Every wrong option is saved with its analysis at creation time. Authored reasons are kept
  * as written; any option left blank gets the predefined reason for its misconception tag.
@@ -120,7 +123,11 @@ export async function DELETE(request: NextRequest) {
         const admin = await requireSuperAdmin(request);
         const id = request.nextUrl.searchParams.get("id");
         if (!id) return NextResponse.json({ success: false, error: "Question id is required" }, { status: 400 });
-        await adminDb.collection("questions").doc(id).delete();
+        const ref = adminDb.collection("questions").doc(id);
+        if ((await ref.get()).data()?.purpose === "diagnostic") {
+            return NextResponse.json({ success: false, error: DIAGNOSTIC_PROTECTED }, { status: 409 });
+        }
+        await ref.delete();
         await writeAuditLog({ actorUid: admin.uid, actorEmail: admin.email, action: "question.delete", targetType: "question", targetId: id, summary: `Deleted ${id}` });
         return NextResponse.json({ success: true });
     } catch (error) {

@@ -73,14 +73,18 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
     const [openEditors, setOpenEditors] = useState<Set<string>>(new Set());
     const [newKey, setNewKey] = useState<string | null>(null);
     const [replaceLesson, setReplaceLesson] = useState(true);
+    /** Unset means the default: a micro-topic pool replaces the older questions, larger pools add to them. */
+    const [replaceOldChoice, setReplaceOldChoice] = useState<boolean | null>(null);
+    const [olderQuestionCount, setOlderQuestionCount] = useState(0);
     const stopRef = useRef(false);
     const startedRef = useRef(false);
     const base = `/api/admin/ai-studio/drafts/${draftId}`;
 
     const load = useCallback(async () => {
-        const data = await adminApi<{ draft: GenerationDraft; liveTexts: string[] }>(base);
+        const data = await adminApi<{ draft: GenerationDraft; liveTexts: string[]; olderQuestionCount?: number }>(base);
         setDraft(data.draft);
         setLiveTexts(data.liveTexts);
+        setOlderQuestionCount(data.olderQuestionCount ?? 0);
         return data.draft;
     }, [base]);
 
@@ -230,16 +234,17 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
         if (!window.confirm(`Push ${draft.questions.length} questions to the live question bank? Students will start seeing them.`)) return;
         setPhase("approving");
         setError("");
-        let data: { questionIds: string[]; microTag: string | null };
+        let data: { questionIds: string[]; microTag: string | null; removed?: number };
         try {
-            data = await adminApi(`${base}/approve`, jsonInit("POST", { replaceLesson }));
+            data = await adminApi(`${base}/approve`, jsonInit("POST", { replaceLesson, replaceOld: olderQuestionCount > 0 && (replaceOldChoice ?? draft.level === "micro") }));
         } catch (caught) {
             setError(errorText(caught));
             setPhase("idle");
             return;
         }
         // The pool is live from here on; a failed reload must not read as a failed approval.
-        setNotice(`Done. ${data.questionIds.length} questions are now live${data.microTag ? ` under the new micro-topic ${data.microTag}` : ""}.`);
+        const removed = data.removed ? ` ${data.removed} older question(s) were removed.` : "";
+        setNotice(`Done. ${data.questionIds.length} questions are now live${data.microTag ? ` under the new micro-topic ${data.microTag}` : ""}.${removed}`);
         try {
             await load();
         } catch {
@@ -462,6 +467,12 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                             ) : null}
                             {draft.level === "sub" ? (
                                 <p className="text-muted-foreground">The chosen micro-topics will be grouped under the sub-topic &ldquo;{draft.target.subTopic}&rdquo;.</p>
+                            ) : null}
+                            {olderQuestionCount > 0 ? (
+                                <label className="flex items-center gap-2">
+                                    <input type="checkbox" checked={replaceOldChoice ?? draft.level === "micro"} onChange={(event) => setReplaceOldChoice(event.target.checked)} />
+                                    Replace the {olderQuestionCount} older practice question(s) of {draft.target.microTopics.length === 1 ? `“${draft.target.microTopics[0].title}”` : "these micro-topics"}, so students see only this new pool (diagnostic tests are never touched)
+                                </label>
                             ) : null}
                             {draft.status === "generating" ? <p className="text-muted-foreground">Finish every generation step first.</p> : null}
                             {openEditors.size ? <p className="text-amber-700">Save or cancel the open edits first.</p> : null}
@@ -724,6 +735,25 @@ function QuestionCard({ question, number, topicTitles, issues, readOnly, showDet
                             </Button>
                             <Button size="sm" variant="outline" disabled={saving} onClick={() => run({ op: "recheck", key: question.key })}>
                                 <RotateCcw className="mr-1 h-4 w-4" />Check again
+                            </Button>
+                        </div>
+                    ) : null}
+                </div>
+            ) : null}
+            {!editing && verification.onTopic === false && verification.status !== "confirmed" && verification.status !== "pending" ? (
+                <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+                    <p>
+                        The checker says this question goes outside its micro-topic.
+                        {verification.topicNote ? <span className="block text-xs text-muted-foreground">Why: {verification.topicNote}</span> : null}
+                    </p>
+                    {!readOnly ? (
+                        <div className="flex flex-wrap gap-2">
+                            <Button size="sm" variant="outline" disabled={saving} onClick={() => run({ op: "confirm", key: question.key })}>
+                                <CheckCircle2 className="mr-1 h-4 w-4" />Keep it: it is on topic
+                            </Button>
+                            <Button size="sm" variant="outline" className="text-destructive" disabled={saving}
+                                onClick={() => window.confirm("Remove this question from the draft?") && run({ op: "remove", key: question.key })}>
+                                <Trash2 className="mr-1 h-4 w-4" />Remove it
                             </Button>
                         </div>
                     ) : null}
