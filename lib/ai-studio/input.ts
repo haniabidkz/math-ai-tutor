@@ -34,7 +34,7 @@ export const draftConceptSchema = z.object({
     example: pair,
     explanation: pair,
     /** Left out by the edit form; the stored boundary is then kept. */
-    scope: z.object({ covers: z.array(short).max(6), excludes: z.array(short).max(6) }).optional(),
+    scope: z.object({ covers: z.array(short).max(10), excludes: z.array(short).max(6) }).optional(),
 });
 
 export const draftEditSchema = z.discriminatedUnion("op", [

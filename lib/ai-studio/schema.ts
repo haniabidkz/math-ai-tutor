@@ -119,11 +119,11 @@ interface RawQuestion {
 const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 const pair = (value: RawBilingual | undefined) => ({ english: text(value?.english), romanUrdu: text(value?.roman_urdu) });
 
-/** Unique, trimmed, short list entries, at most six. */
-function list(value: unknown): string[] {
+/** Unique, trimmed, short list entries; a chapter may need one covered skill per micro-topic. */
+function list(value: unknown, limit: number): string[] {
     const items = Array.isArray(value) ? value.map((item) => text(item).slice(0, 140)).filter(Boolean) : [];
     const seen = new Set<string>();
-    return items.filter((item) => !seen.has(item.toLowerCase()) && seen.add(item.toLowerCase())).slice(0, 6);
+    return items.filter((item) => !seen.has(item.toLowerCase()) && seen.add(item.toLowerCase())).slice(0, limit);
 }
 
 export function normalizeConcept(raw: unknown): { concept: DraftConcept | null; problems: string[] } {
@@ -132,7 +132,7 @@ export function normalizeConcept(raw: unknown): { concept: DraftConcept | null; 
         title: text(data.title),
         example: pair(data.real_life_example),
         explanation: { english: text(data.english), romanUrdu: text(data.roman_urdu) },
-        scope: { covers: list(data.covers), excludes: list(data.excludes) },
+        scope: { covers: list(data.covers, 10), excludes: list(data.excludes, 6) },
     };
     const problems: string[] = [];
     if (!concept.title) problems.push("the concept title is empty");

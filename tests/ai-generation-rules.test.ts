@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { batchFocus, checkerTopic, conceptPrompt, questionPrompt, scopeRules, verificationPrompt } from "@/lib/ai-studio/prompts";
-import { normalizeQuestionBatch, questionBatchSchema } from "@/lib/ai-studio/schema";
+import { normalizeConcept, normalizeQuestionBatch, questionBatchSchema } from "@/lib/ai-studio/schema";
 import { findNearCopy, isNearCopy, questionSignature } from "@/lib/ai-studio/similarity";
 import { buildTarget, targetKey } from "@/lib/ai-studio/target";
 import { NEW_MICRO_TAG, type GenerationDraft } from "@/lib/ai-studio/types";
@@ -96,6 +96,18 @@ describe("1. strict topic scope", () => {
             .toEqual(["question 1 must test one of the covered skills"]);
         const fixed = normalizeQuestionBatch({ questions: [{ ...reply.questions[0], skill: "meaning of a set" }] }, { difficulty: "easy", count: 1, allowedTags: [NEW_MICRO_TAG], skills: concept.scope.covers });
         expect(fixed.questions[0].skill).toBe("meaning of a set");
+    });
+
+    it("keeps every micro-topic of a sub-topic or chapter inside its boundary", () => {
+        const mainAsk = conceptPrompt({ level: "main", target: main }).user;
+        expect(mainAsk).toContain("- covers: one specific skill for each of these micro-topics, in this order");
+        expect(mainAsk).toContain("- c6-integer-comparisons: Integer Comparisons");
+        expect(mainAsk).toContain("- excludes: 3 to 6 ideas from OUTSIDE this chapter that questions must not test. Never exclude anything that one of the micro-topics above teaches.");
+        expect(conceptPrompt({ level: "sub", target: sub }).user).toContain("from OUTSIDE this sub-topic");
+        // A chapter of seven micro-topics keeps a covered skill for each of them.
+        const covers = Array.from({ length: 8 }, (_, index) => `skill ${index + 1}`);
+        const read = normalizeConcept({ title: "T", english: "E", roman_urdu: "R", real_life_example: { english: "x", roman_urdu: "y" }, covers, excludes: ["a", "b"] });
+        expect(read.concept?.scope?.covers).toHaveLength(8);
     });
 
     it("gives the checker the same boundary", () => {

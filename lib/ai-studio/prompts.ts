@@ -149,6 +149,14 @@ export function conceptPrompt(draft: Pick<GenerationDraft, "level" | "target">) 
     const siblings = target.outside?.length
         ? `\nThe chapter's other lessons, which belong to their own pools: ${target.outside.map((topic) => topic.title).join("; ")}.`
         : "";
+    // A micro-topic is fenced off from its neighbours; a sub-topic or chapter must keep every one
+    // of its own micro-topics inside the boundary.
+    const boundaryAsk = draft.level === "micro"
+        ? `- covers: 3 to 6 specific skills this micro-topic includes, each a short phrase a teacher could test (for example "decide whether a collection is well-defined").
+- excludes: 3 to 6 neighbouring ideas that a Class ${target.classLevel} textbook teaches in OTHER lessons of this chapter, which questions must not test (for example, for "Adding like fractions": unlike fractions, mixed numbers, subtracting fractions).`
+        : `- covers: one specific skill for each of these micro-topics, in this order, each a short phrase a teacher could test (at most 10):
+${target.microTopics.map((topic) => topicLine(topic)).join("\n")}
+- excludes: 3 to 6 ideas from OUTSIDE ${draft.level === "sub" ? "this sub-topic" : "this chapter"} that questions must not test. Never exclude anything that one of the micro-topics above teaches.`;
     return {
         system: `You write math lessons for Pakistani middle-school students.\n\n${STYLE_RULES}`,
         user: `${scope(draft)}
@@ -160,8 +168,7 @@ Write the concept explanation for this ${LEVEL_WORDS[draft.level]}, and fix its 
 - english: a very simple explanation in 3 to 5 short sentences, with one tiny worked example.
 - roman_urdu: the same explanation in warm, conversational Roman Urdu.
 - real_life_example: one short, relatable local word problem from Pakistani daily life, in English and in Roman Urdu.
-- covers: 3 to 6 specific skills this ${LEVEL_WORDS[draft.level]} includes, each a short phrase a teacher could test (for example "decide whether a collection is well-defined").
-- excludes: 3 to 6 neighbouring ideas that a Class ${target.classLevel} textbook teaches in OTHER lessons of this chapter, which questions must not test (for example, for "Adding like fractions": unlike fractions, mixed numbers, subtracting fractions).`,
+${boundaryAsk}`,
     };
 }
 
@@ -179,7 +186,7 @@ export function questionPrompt(
         ? `In this batch write one question for each of these micro-topics, in this order, and set micro_tag to match: ${request.focus.join(", ")}.`
         : `Set micro_tag to ${tags[0]} for every question.`;
     const skills = draft.concept?.scope?.covers.length
-        ? "\nSet skill to the IN SCOPE skill each question tests, and use different skills across the batch where you can."
+        ? `\nSet skill to the IN SCOPE skill each question tests${request.focus?.length ? ", matching the micro-topic the question is written for" : ""}, and use different skills across the batch where you can.`
         : "";
     const avoid = request.avoid.length
         ? `\n\nNO REPEATS (strict)
