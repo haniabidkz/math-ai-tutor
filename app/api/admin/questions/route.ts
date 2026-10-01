@@ -4,7 +4,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { questionInputSchema } from "@/lib/admin-schemas";
 import { writeAuditLog } from "@/lib/admin-audit";
-import { getConcept } from "@/lib/curriculum";
+import { builtInCurriculumEnabled, getConcept } from "@/lib/curriculum";
 import { buildOptionAnalysis } from "@/lib/mistake-analysis";
 import type { QuestionBankItem } from "@/types/curriculum";
 import { authErrorResponse, requireSuperAdmin } from "@/lib/server-auth";
@@ -31,7 +31,7 @@ async function requireMatchingConceptClasses(items: ParsedQuestion[]) {
     const storedConcepts = new Map(snapshots.filter((snapshot) => snapshot.exists).map((snapshot) => [snapshot.id, snapshot.data()]));
 
     for (const item of items) {
-        const classLevel = storedConcepts.get(item.microTag)?.classLevel ?? getConcept(item.microTag)?.classLevel;
+        const classLevel = storedConcepts.get(item.microTag)?.classLevel ?? (builtInCurriculumEnabled() ? getConcept(item.microTag)?.classLevel : undefined);
         if (!classLevel) throw new Error(`Concept ${item.microTag} does not exist`);
         if (item.classLevel !== classLevel) {
             throw new Error(`Question class must match ${item.microTag} (Class ${classLevel})`);

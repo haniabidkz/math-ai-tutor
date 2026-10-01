@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { NextRequest, NextResponse } from "next/server";
 import { writeAuditLog } from "@/lib/admin-audit";
-import { getPublishedConcept } from "@/lib/assessment-content";
-import { getClassConcepts, isLearningConceptForClass } from "@/lib/curriculum";
+import { getPublishedConcept, getRuntimeConcepts } from "@/lib/assessment-content";
+import { groupTopics, isLearningConceptForClass } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
 import { ALL_CLASSES, effectiveTeacherClasses, homeworkInputSchema, homeworkStatus, isOverdue, sortHomework } from "@/lib/homework";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
@@ -74,13 +74,22 @@ export async function GET(request: NextRequest) {
         const classes = user.role === "teacher" ? effectiveTeacherClasses(assignedClasses) : [...ALL_CLASSES];
         const hasAssignedClasses = user.role !== "teacher" || (Array.isArray(assignedClasses) && assignedClasses.length > 0);
 
-        const [snapshot, ...counts] = await Promise.all([
+        const [snapshot, concepts, ...counts] = await Promise.all([
             adminDb.collection("homework").orderBy("createdAt", "desc").limit(200).get(),
+            getRuntimeConcepts(),
             ...classes.map((level) => adminDb.collection("students").where("class", "==", level).count().get()),
         ]);
         return NextResponse.json({
             success: true,
             myClasses: classes.map((classLevel, index) => ({ classLevel, students: counts[index].data().count })),
+            // The modules a teacher can assign are the lessons that exist now, chapter by chapter.
+            modules: Object.fromEntries(classes.map((classLevel) => [classLevel, groupTopics(
+                concepts.filter((concept) => isLearningConceptForClass(concept, classLevel)),
+            ).map((topic) => ({
+                topicId: topic.topicId,
+                title: topic.title,
+                concepts: topic.concepts.map((concept) => ({ microTag: concept.microTag, title: concept.title })),
+            }))])),
             hasAssignedClasses,
             homework: snapshot.docs
                 .map((doc) => toAssignment(doc.id, doc.data()))
@@ -115,10 +124,9 @@ export async function POST(request: NextRequest) {
         for (const [index, concept] of concepts.entries()) {
             if (!concept) return NextResponse.json({ success: false, error: `Module ${parsed.microTags[index]} was not found` }, { status: 404 });
             if (!isLearningConceptForClass(concept, parsed.classLevel)) {
-                const available = getClassConcepts(parsed.classLevel).length;
                 return NextResponse.json({
                     success: false,
-                    error: `${concept.microTag} is not a Class ${parsed.classLevel} module (${available} available)`,
+                    error: `${concept.microTag} is not a Class ${parsed.classLevel} module`,
                 }, { status: 400 });
             }
         }

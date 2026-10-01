@@ -96,7 +96,10 @@ export default function PlacementPage() {
     if (loading) return <div className="flex min-h-screen items-center justify-center bg-slate-50"><p className="font-medium text-slate-600">Preparing your diagnostic...</p></div>;
 
     if (profile) {
-        const learningUrl = `/learn?microTag=${encodeURIComponent(profile.recommendedMicroTag)}&class=${profile.assessedClassLevel}`;
+        // A class whose lessons are not written yet still gets its result, and goes to the dashboard.
+        const learningUrl = profile.recommendedMicroTag
+            ? `/learn?microTag=${encodeURIComponent(profile.recommendedMicroTag)}&class=${profile.assessedClassLevel}`
+            : "/dashboard";
         return (
             <main className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
                 <Card className="w-full max-w-2xl rounded-lg border-t-4 border-t-emerald-500">
@@ -126,12 +129,12 @@ export default function PlacementPage() {
                             <div><dt className="text-sm text-muted-foreground">Math level</dt><dd className="mt-1 text-xl font-semibold">Class {profile.mathLevel}</dd></div>
                             <div><dt className="text-sm text-muted-foreground">Enrolled class</dt><dd className="mt-1 text-xl font-semibold">Class {profile.assessedClassLevel}</dd></div>
                             <div><dt className="text-sm text-muted-foreground">Weakest topic</dt><dd className="mt-1 font-semibold">{profile.weakTopic?.english ?? "No major weakness identified"}</dd></div>
-                            <div><dt className="text-sm text-muted-foreground">Recommended starting topic</dt><dd className="mt-1 font-semibold">{profile.recommendedTopic.english}</dd></div>
+                            <div><dt className="text-sm text-muted-foreground">Recommended starting topic</dt><dd className="mt-1 font-semibold">{profile.recommendedTopic?.english ?? "Lessons for your class are being prepared"}</dd></div>
                         </dl>
                     </CardContent>
                     <CardFooter>
                         <Button asChild size="lg" className="w-full">
-                            <Link href={learningUrl}>Start learning {profile.recommendedTopic.english}<ArrowRight className="ml-2 h-4 w-4" /></Link>
+                            <Link href={learningUrl}>{profile.recommendedTopic ? `Start learning ${profile.recommendedTopic.english}` : "Go to my dashboard"}<ArrowRight className="ml-2 h-4 w-4" /></Link>
                         </Button>
                     </CardFooter>
                 </Card>

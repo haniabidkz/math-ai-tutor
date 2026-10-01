@@ -8,15 +8,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getTopicsForClass } from "@/lib/curriculum";
 import { MAX_HOMEWORK_QUESTIONS, MAX_PACKET_MODULES, MIN_HOMEWORK_QUESTIONS } from "@/lib/homework";
-import type { StudentClassLevel } from "@/types/curriculum";
+import type { LocalizedText, StudentClassLevel } from "@/types/curriculum";
 import type { HomeworkAssignment } from "@/types/homework";
 
 interface AssignableStudent {
     uid: string;
     name: string;
     class: number;
+}
+
+/** A chapter and its lessons, as the server lists them for one class. */
+interface ModuleTopic {
+    topicId: string;
+    title: LocalizedText;
+    concepts: Array<{ microTag: string; title: LocalizedText }>;
 }
 
 interface ClassSummary {
@@ -45,11 +51,12 @@ export function HomeworkAssigner({ getToken, students }: { getToken: () => Promi
     const [allStudents, setAllStudents] = useState(true);
     const [selectedUids, setSelectedUids] = useState<string[]>([]);
     const [assignments, setAssignments] = useState<HomeworkAssignment[]>([]);
+    const [modules, setModules] = useState<Partial<Record<StudentClassLevel, ModuleTopic[]>>>({});
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
 
-    const topics = useMemo(() => (classLevel ? getTopicsForClass(classLevel) : []), [classLevel]);
+    const topics = useMemo(() => (classLevel ? modules[classLevel] ?? [] : []), [classLevel, modules]);
     const classStudents = students.filter((student) => Number(student.class) === classLevel);
 
     useEffect(() => { void load(); }, []);
@@ -62,6 +69,7 @@ export function HomeworkAssigner({ getToken, students }: { getToken: () => Promi
             if (!response.ok) throw new Error(data.error);
             setAssignments(data.homework ?? []);
             setMyClasses(data.myClasses ?? []);
+            setModules(data.modules ?? {});
             setHasAssignedClasses(data.hasAssignedClasses !== false);
             setClassLevel((current) => current ?? data.myClasses?.[0]?.classLevel ?? null);
         } catch (caught) {
@@ -164,6 +172,7 @@ export function HomeworkAssigner({ getToken, students }: { getToken: () => Promi
 
                         <div className="space-y-3">
                             <Label>Modules {microTags.length ? <Badge variant="secondary" className="ml-2">{microTags.length} selected</Badge> : null}</Label>
+                            {!topics.length ? <p className="text-sm text-muted-foreground">No lessons exist for this class yet.</p> : null}
                             {topics.map((topic) => (
                                 <div key={topic.topicId} className="rounded-lg border p-3">
                                     <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">{topic.title.english}</p>

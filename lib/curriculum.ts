@@ -209,6 +209,14 @@ export const MICRO_CONCEPT_BY_TAG = new Map(MICRO_CONCEPTS.map((item) => [item.m
 
 export const getConcept = (microTag: string) => MICRO_CONCEPT_BY_TAG.get(microTag);
 
+/**
+ * The curriculum above is the starting template for development, tests and seeding. In
+ * production the database alone decides which topics exist, so a removed topic never comes back.
+ */
+export function builtInCurriculumEnabled(): boolean {
+    return process.env.NODE_ENV !== "production";
+}
+
 export function getClassConcepts(classLevel: StudentClassLevel): MicroConcept[] {
     return MICRO_CONCEPTS.filter((item) => item.classLevel === classLevel && !item.foundationOnly);
 }
@@ -218,7 +226,11 @@ export function isLearningConceptForClass(concept: MicroConcept, classLevel: Stu
 }
 
 export function getTopicsForClass(classLevel: StudentClassLevel) {
-    const concepts = getClassConcepts(classLevel);
+    return groupTopics(getClassConcepts(classLevel));
+}
+
+/** Lessons grouped by chapter, each chapter in teaching order. */
+export function groupTopics(concepts: MicroConcept[]) {
     return Array.from(new Set(concepts.map((item) => item.topicId))).map((topicId) => ({
         topicId,
         title: concepts.find((item) => item.topicId === topicId)!.topicTitle,

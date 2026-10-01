@@ -39,6 +39,7 @@ export function ConceptBrowser({
 
     return (
         <section className="space-y-6">
+            {!topics.length ? <p className="text-sm text-muted-foreground">Lessons for this class are being prepared. Please check back soon.</p> : null}
             {topics.map((topic) => {
                 const masteredCount = topic.concepts.filter((concept) => concept.mastered).length;
                 const percent = topic.concepts.length ? Math.round((masteredCount / topic.concepts.length) * 100) : 0;

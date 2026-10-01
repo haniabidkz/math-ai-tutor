@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { DocumentSnapshot } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
-import { MICRO_CONCEPTS } from "@/lib/curriculum";
+import { MICRO_CONCEPTS, builtInCurriculumEnabled } from "@/lib/curriculum";
 import { builtInQuestionsEnabled, QUESTION_BANK } from "@/lib/question-bank";
 import { AiError } from "@/lib/ai-studio/ai";
 import { NEW_MICRO_TAG, type GenerationDraft } from "@/lib/ai-studio/types";
@@ -47,10 +47,14 @@ export function assertOpen(draft: GenerationDraft) {
     if (draft.status === "discarded") throw new StudioError(409, "This draft was discarded.");
 }
 
-/** Every concept, stored or bundled, so a new micro-topic tag never collides with either. */
+/**
+ * Every stored concept, plus the bundled ones outside production, so a new micro-topic tag
+ * never collides. In production, topics removed from the database stay removed.
+ */
 export async function allConcepts(): Promise<MicroConcept[]> {
     const snapshot = await adminDb.collection("microConcepts").get();
     const stored = snapshot.docs.map((doc) => ({ ...doc.data(), microTag: doc.id }) as MicroConcept);
+    if (!builtInCurriculumEnabled()) return stored;
     const storedTags = new Set(stored.map((concept) => concept.microTag));
     return [...stored, ...MICRO_CONCEPTS.filter((concept) => !storedTags.has(concept.microTag))];
 }

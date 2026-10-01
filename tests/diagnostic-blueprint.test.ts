@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
     DIAGNOSTIC_QUESTION_COUNT,
     DIAGNOSTIC_QUESTIONS_PER_TOPIC,
@@ -13,7 +13,7 @@ import {
 import { DIAGNOSTIC_QUESTIONS, getDiagnosticQuestionOrder } from "@/lib/diagnostic-questions";
 import { buildDiagnosticProfile, type StoredAnswer } from "@/lib/assessment-session";
 import { validateDiagnosticTests } from "@/lib/content-validation";
-import { getConcept } from "@/lib/curriculum";
+import { MICRO_CONCEPTS, builtInCurriculumEnabled, getConcept } from "@/lib/curriculum";
 
 const classes = [6, 7, 8] as const;
 
@@ -162,7 +162,7 @@ describe("diagnostic profile", () => {
         const profile = buildDiagnosticProfile(answersFor(7, (index) => index < 12), 7, "c7-variable-constant-isolation", "medium");
         expect(profile.weakMicroTag).toBe("c6-basic-geometry");
         expect(profile.recommendedMicroTag).toBe("c7-variable-constant-isolation");
-        expect(getConcept(profile.recommendedMicroTag)?.classLevel).toBe(7);
+        expect(getConcept(profile.recommendedMicroTag!)?.classLevel).toBe(7);
     });
 
     it("splits foundations into strong and weak by the majority of their three questions", () => {
@@ -184,8 +184,34 @@ describe("diagnostic profile", () => {
     it("always recommends a lesson of the enrolled class", () => {
         for (const classLevel of classes) {
             const profile = buildDiagnosticProfile(answersFor(classLevel, () => false), classLevel, "missing-tag", "easy");
-            expect(getConcept(profile.recommendedMicroTag)?.classLevel).toBe(classLevel);
-            expect(getConcept(profile.recommendedMicroTag)?.foundationOnly).toBeFalsy();
+            expect(getConcept(profile.recommendedMicroTag!)?.classLevel).toBe(classLevel);
+            expect(getConcept(profile.recommendedMicroTag!)?.foundationOnly).toBeFalsy();
         }
+    });
+
+    it("still scores the test, recommending no lesson, when only the diagnostic topics exist", () => {
+        const diagnosticTopics = MICRO_CONCEPTS.filter((concept) => concept.foundationOnly);
+        for (const classLevel of classes) {
+            const profile = buildDiagnosticProfile(answersFor(classLevel, (index) => index % 3 === 0), classLevel, null, "easy", diagnosticTopics);
+            expect(profile.overallCorrect).toBe(5);
+            expect(profile.weakMicroTags).toHaveLength(5);
+            expect(profile.recommendedMicroTag).toBeNull();
+            expect(profile.recommendedTopic).toBeNull();
+        }
+    });
+
+    it("never serves the bundled topics in production, so removed topics stay removed", () => {
+        vi.stubEnv("NODE_ENV", "production");
+        expect(builtInCurriculumEnabled()).toBe(false);
+        vi.unstubAllEnvs();
+        expect(builtInCurriculumEnabled()).toBe(true);
+    });
+
+    it("recommends only lessons that still exist", () => {
+        const removed = new Set(["c6-integers-intro"]);
+        const live = MICRO_CONCEPTS.filter((concept) => !removed.has(concept.microTag));
+        const profile = buildDiagnosticProfile(answersFor(6, (index) => index >= 3), 6, "c6-integers-intro", "medium", live);
+        expect(profile.recommendedMicroTag).not.toBe("c6-integers-intro");
+        expect(live.some((concept) => concept.microTag === profile.recommendedMicroTag && concept.classLevel === 6 && !concept.foundationOnly)).toBe(true);
     });
 });

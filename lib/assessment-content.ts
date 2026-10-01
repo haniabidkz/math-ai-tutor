@@ -1,5 +1,5 @@
 import { adminDb } from "@/lib/firebase-admin";
-import { MICRO_CONCEPTS, getConcept } from "@/lib/curriculum";
+import { MICRO_CONCEPTS, builtInCurriculumEnabled, getConcept } from "@/lib/curriculum";
 import { getBuiltInDiagnosticQuestion } from "@/lib/diagnostic-questions";
 import { builtInQuestionsEnabled, QUESTION_BANK } from "@/lib/question-bank";
 import { newestFirst, selectQuizQuestionSet } from "@/lib/question-selection";
@@ -47,10 +47,11 @@ export async function getAssessmentConfig(): Promise<AssessmentConfig> {
 
 export async function getPublishedConcept(microTag: string): Promise<MicroConcept | undefined> {
     const snapshot = await adminDb.collection("microConcepts").doc(microTag).get();
-    if (snapshot.exists && snapshot.data()?.status === "published") {
-        return { ...snapshot.data(), microTag: snapshot.id } as MicroConcept;
+    // A stored topic decides for itself: archived means gone, even if the bundled curriculum has it.
+    if (snapshot.exists) {
+        return snapshot.data()?.status === "published" ? { ...snapshot.data(), microTag: snapshot.id } as MicroConcept : undefined;
     }
-    return getConcept(microTag);
+    return builtInCurriculumEnabled() ? getConcept(microTag) : undefined;
 }
 
 export async function getPublishedQuestions(microTag: string): Promise<QuestionBankItem[]> {
@@ -115,6 +116,6 @@ export async function selectQuizQuestions(
 
 export async function getRuntimeConcepts() {
     const snapshot = await adminDb.collection("microConcepts").where("status", "==", "published").get();
-    if (snapshot.empty) return MICRO_CONCEPTS;
+    if (snapshot.empty && builtInCurriculumEnabled()) return MICRO_CONCEPTS;
     return snapshot.docs.map((doc) => ({ ...doc.data(), microTag: doc.id }) as MicroConcept);
 }

@@ -25,6 +25,7 @@ export function ActiveTopicList({
     classLevel: number;
     linkable?: boolean;
 }) {
+    if (!topics.length) return <p className="text-sm text-muted-foreground">Lessons for this class are being prepared. Please check back soon.</p>;
     return (
         <ol className="grid gap-2">
             {topics.map((topic, index) => {

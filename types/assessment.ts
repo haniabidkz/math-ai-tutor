@@ -45,8 +45,9 @@ export interface DiagnosticProfile {
     weakMicroTags: string[];
     weakMicroTag: string | null;
     weakTopic: LocalizedText | null;
-    recommendedMicroTag: string;
-    recommendedTopic: LocalizedText;
+    /** Null while the enrolled class has no lessons yet. */
+    recommendedMicroTag: string | null;
+    recommendedTopic: LocalizedText | null;
     accuracyPercent: number;
 }
 

@@ -3,7 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { conceptInputSchema } from "@/lib/admin-schemas";
 import { writeAuditLog } from "@/lib/admin-audit";
-import { getConcept } from "@/lib/curriculum";
+import { builtInCurriculumEnabled, getConcept } from "@/lib/curriculum";
 import { authErrorResponse, requireSuperAdmin } from "@/lib/server-auth";
 import type { MicroConcept } from "@/types/curriculum";
 
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
 
         const ref = adminDb.collection("microConcepts").doc(parsed.microTag);
         // A new concept must not silently replace one that already uses this tag.
-        if (body.isNew === true && ((await ref.get()).exists || getConcept(parsed.microTag))) {
+        if (body.isNew === true && ((await ref.get()).exists || (builtInCurriculumEnabled() && getConcept(parsed.microTag)))) {
             return NextResponse.json({ success: false, error: `A concept with the tag ${parsed.microTag} already exists. Change the title slightly.` }, { status: 409 });
         }
 

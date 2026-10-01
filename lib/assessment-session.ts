@@ -1,5 +1,5 @@
-import type { Difficulty, Locale, MisconceptionTag, MistakeType, QuestionBankItem } from "@/types/curriculum";
-import { getClassConcepts, getConcept } from "@/lib/curriculum";
+import type { Difficulty, Locale, MicroConcept, MisconceptionTag, MistakeType, QuestionBankItem } from "@/types/curriculum";
+import { MICRO_CONCEPTS, isLearningConceptForClass } from "@/lib/curriculum";
 import { XP_FIRST_ATTEMPT_CORRECT, XP_QUIZ_COMPLETED } from "@/lib/gamification";
 import type { TimestampLike } from "@/lib/learner-metrics";
 import { getDiagnosticBlueprint, overallBand, topicBand, type TopicBand } from "@/lib/diagnostic-blueprint";
@@ -73,9 +73,13 @@ export function sessionXp(session: Pick<StoredQuizSession, "answers">): number {
 export function buildDiagnosticProfile(
     answers: StoredAnswer[],
     classLevel: 6 | 7 | 8,
-    fallbackMicroTag: string,
+    fallbackMicroTag: string | null,
     baselineDifficulty: Difficulty,
+    /** The topics that exist now; lessons are recommended only from these. */
+    concepts: MicroConcept[] = MICRO_CONCEPTS,
 ): DiagnosticProfile {
+    const byTag = new Map(concepts.map((concept) => [concept.microTag, concept]));
+    const getConcept = (microTag: string) => byTag.get(microTag);
     const answerById = new Map(answers.map((answer) => [answer.questionId, answer]));
     const blueprint = getDiagnosticBlueprint(classLevel);
 
@@ -112,7 +116,9 @@ export function buildDiagnosticProfile(
     const hasWeakness = Boolean(weakestTopic) && weakestTopic.correct < weakestTopic.total;
     const weakTag = hasWeakness ? blueprint[weakestIndex].microTag : null;
     const weakConcept = weakTag ? getConcept(weakTag) : undefined;
-    const currentConcepts = getClassConcepts(classLevel);
+    const currentConcepts = concepts
+        .filter((concept) => isLearningConceptForClass(concept, classLevel))
+        .sort((left, right) => left.topicId.localeCompare(right.topicId) || left.order - right.order);
 
     // First, a lesson of this class that the weak topic leads straight into.
     let recommendedConcept = hasWeakness
@@ -126,7 +132,8 @@ export function buildDiagnosticProfile(
     if (!recommendedConcept && weakConcept) {
         recommendedConcept = currentConcepts.find((concept) => {
             let prerequisite = concept.prerequisiteTag;
-            while (prerequisite) {
+            // The depth limit guards against a prerequisite loop typed in by hand.
+            for (let depth = 0; prerequisite && depth < 50; depth += 1) {
                 if (prerequisite === weakConcept.microTag) return true;
                 prerequisite = getConcept(prerequisite)?.prerequisiteTag ?? null;
             }
@@ -134,10 +141,8 @@ export function buildDiagnosticProfile(
         });
     }
 
-    recommendedConcept ??= getConcept(fallbackMicroTag)?.classLevel === classLevel
-        ? getConcept(fallbackMicroTag)
-        : currentConcepts[0];
-    if (!recommendedConcept) throw new Error(`No learning concept is available for Class ${classLevel}`);
+    // With no lessons for the class yet, the diagnostic still scores; it just recommends none.
+    recommendedConcept ??= currentConcepts.find((concept) => concept.microTag === fallbackMicroTag) ?? currentConcepts[0];
 
     return {
         assessedClassLevel: classLevel,
@@ -151,8 +156,8 @@ export function buildDiagnosticProfile(
         weakMicroTags,
         weakMicroTag: weakConcept?.microTag ?? null,
         weakTopic: hasWeakness ? weakestTopic.title : null,
-        recommendedMicroTag: recommendedConcept.microTag,
-        recommendedTopic: recommendedConcept.topicTitle,
+        recommendedMicroTag: recommendedConcept?.microTag ?? null,
+        recommendedTopic: recommendedConcept?.topicTitle ?? null,
         accuracyPercent: overallTotal ? Math.round((overallCorrect / overallTotal) * 100) : 0,
     };
 }

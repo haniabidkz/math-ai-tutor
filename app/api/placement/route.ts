@@ -2,9 +2,8 @@ import { randomUUID } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { NextRequest, NextResponse } from "next/server";
 import { addDays, nextDiagnosticDifficulty } from "@/lib/adaptive-engine";
-import { loadDiagnosticQuestion, toClientQuestion } from "@/lib/assessment-content";
+import { getRuntimeConcepts, loadDiagnosticQuestion, toClientQuestion } from "@/lib/assessment-content";
 import { buildDiagnosticProfile, type StoredAnswer } from "@/lib/assessment-session";
-import { getClassConcepts } from "@/lib/curriculum";
 import { DIAGNOSTIC_QUESTION_COUNT, DIAGNOSTIC_VERSION, getDiagnosticQuestionIds } from "@/lib/diagnostic-blueprint";
 import { getOptionAnalysis, isPossibleMisconception, mistakeProfileId } from "@/lib/mistake-analysis";
 import { adminDb } from "@/lib/firebase-admin";
@@ -130,8 +129,9 @@ export async function PATCH(request: NextRequest) {
         const nextDifficulty = nextDiagnosticDifficulty(initial.currentDifficulty, answers.map((answer) => answer.isCorrect));
         const completed = answers.length >= sequence.length;
         const nextQuestion = completed ? null : await loadDiagnosticQuestion(sequence[answers.length]);
+        // The recommendation comes from the topics that exist now, never from removed ones.
         const profile = completed
-            ? buildDiagnosticProfile(answers, initial.classLevel, getClassConcepts(initial.classLevel)[0].microTag, nextDifficulty)
+            ? buildDiagnosticProfile(answers, initial.classLevel, null, nextDifficulty, await getRuntimeConcepts())
             : null;
         let duplicate = false;
 

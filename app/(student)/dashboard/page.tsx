@@ -187,7 +187,7 @@ export default function StudentDashboard() {
                                     </Link>
                                 </Button>
                             </>
-                        ) : <p className="text-sm text-muted-foreground">Every topic in your class is mastered.</p>}
+                        ) : <p className="text-sm text-muted-foreground">{data.metrics.total ? "Every topic in your class is mastered." : "Lessons for your class are being prepared. Please check back soon."}</p>}
                     </CardContent>
                 </Card>
             </div>
