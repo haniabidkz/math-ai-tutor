@@ -11,6 +11,7 @@ import { AiStudio } from "@/components/admin/ai-studio";
 import { ConceptEditor, type ConceptPayload } from "@/components/admin/concept-editor";
 import { QuestionEditor, type QuestionPayload } from "@/components/admin/question-editor";
 import { QuestionList } from "@/components/admin/question-list";
+import { RegenerateQuestionDialog } from "@/components/admin/regenerate-question";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,7 @@ export default function SuperAdminPage() {
     const [config, setConfig] = useState<AssessmentConfig | null>(null);
     const [configDraft, setConfigDraft] = useState<Record<string, string>>({});
     const [editingQuestion, setEditingQuestion] = useState<QuestionBankItem | null>(null);
+    const [regenerating, setRegenerating] = useState<QuestionBankItem | null>(null);
     const [editorKey, setEditorKey] = useState(0);
     const [editingConcept, setEditingConcept] = useState<MicroConcept | null>(null);
     const [conceptEditorKey, setConceptEditorKey] = useState(0);
@@ -309,8 +311,20 @@ export default function SuperAdminPage() {
                                 concepts={concepts}
                                 truncated={questionsTruncated}
                                 onEdit={editQuestion}
+                                onRegenerate={setRegenerating}
                                 onDelete={deleteQuestions}
                             />
+                            {regenerating ? (
+                                <RegenerateQuestionDialog
+                                    question={regenerating}
+                                    onClose={() => setRegenerating(null)}
+                                    onReplaced={async () => {
+                                        setRegenerating(null);
+                                        await loadAll();
+                                        showNotice("Question replaced with the regenerated, checked version.");
+                                    }}
+                                />
+                            ) : null}
                         </section>
                     </TabsContent>
 

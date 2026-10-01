@@ -48,6 +48,8 @@ export interface StoredQuizSession {
     remedialTag: string | null;
     /** Set when the session was started from an assigned homework. */
     homeworkId?: string | null;
+    /** The lesson's title when the session started; micro-topics made in AI Studio are not in the bundled curriculum. */
+    topicTitle?: string;
     /** Written by the server when the session is created; used to measure time spent. */
     startedAt?: TimestampLike;
     /** Targeted practice plus a re-check, served when a misconception is detected. */

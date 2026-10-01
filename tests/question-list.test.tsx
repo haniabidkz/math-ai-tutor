@@ -96,4 +96,12 @@ describe("question list bulk actions", { timeout: 30_000 }, () => {
         expect(onDelete).not.toHaveBeenCalled();
         expect(button(/Delete selected \(1\)/)).toBeEnabled();
     });
+
+    it("offers Regenerate on practice questions but never on diagnostic test questions", () => {
+        const onRegenerate = vi.fn();
+        render(<QuestionList questions={questions} concepts={MICRO_CONCEPTS} onEdit={vi.fn()} onRegenerate={onRegenerate} onDelete={vi.fn()} />);
+        fireEvent.click(screen.getByLabelText(`Regenerate ${practice[0].id}`));
+        expect(onRegenerate).toHaveBeenCalledWith(practice[0]);
+        expect(screen.getByLabelText(`Regenerate ${diagnostic[0].id}`)).toBeDisabled();
+    });
 });

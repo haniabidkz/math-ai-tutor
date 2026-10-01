@@ -8,7 +8,8 @@ import {
     assertOpen, clean, draftFrom, draftsCollection, loadDraft,
     studioErrorResponse, toClientDraft,
 } from "@/lib/ai-studio/store";
-import { OPTION_LETTERS, type DraftQuestion, type OptionLetter } from "@/lib/ai-studio/types";
+import { verificationFromAnswer, type CheckerAnswer } from "@/lib/ai-studio/check";
+import type { DraftQuestion } from "@/lib/ai-studio/types";
 import { questionFingerprint } from "@/lib/ai-studio/validate";
 import { requireSuperAdmin } from "@/lib/server-auth";
 
@@ -19,15 +20,6 @@ const needsCheck = (question: DraftQuestion) =>
     question.verification.status === "pending" &&
     question.questionText.trim().length > 0 &&
     question.options.every((option) => option.trim().length > 0);
-
-interface Answer { id: string; chosen_option: string; answer?: string; working: string; on_topic?: boolean; topic_note?: string }
-
-const noteFor = (answer: Answer) => [answer.answer ? `Answer: ${answer.answer}.` : "", answer.working ?? ""].join(" ").trim().slice(0, 600);
-
-/** The scope check: false only when the checker says so, with its reason. */
-const topicFields = (answer: Answer) => (answer.on_topic === false
-    ? { onTopic: false, topicNote: (answer.topic_note ?? "").trim().slice(0, 300) }
-    : { onTopic: true });
 
 /**
  * A second, independent solve: a reasoning model from another service answers a batch of
@@ -49,7 +41,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
         // Short ids keep the reply small and easy to match back. Each question carries its
         // micro-topic and the written boundary, so the checker also says whether it stays inside.
-        const reply = await completeJson<{ answers: Answer[] }>({
+        const reply = await completeJson<{ answers: CheckerAnswer[] }>({
             role: "verification",
             ...verificationPrompt(
                 batch.map((question, index) => ({ ...question, key: `q${index + 1}`, topic: checkerTopic(draft, question.microTag) })),
@@ -72,25 +64,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
                 const entry = sent.get(question.key);
                 // Skip questions deleted, edited or confirmed while the check was running.
                 if (!entry || !needsCheck(question) || questionFingerprint(question) !== entry.fingerprint) return question;
-                const answer = entry.answer;
-                const chosen = answer?.chosen_option;
-                // "none": no option equals the checker's answer, so the question itself is broken.
-                if (answer && chosen === "none") {
-                    return { ...question, verification: { status: "disagrees", aiAnswer: null, note: noteFor(answer), fingerprint: entry.fingerprint, ...topicFields(answer) } };
-                }
-                if (!answer || !OPTION_LETTERS.includes(chosen as OptionLetter)) {
-                    return { ...question, verification: { status: "error", note: "the checker did not answer this question", fingerprint: entry.fingerprint } };
-                }
-                return {
-                    ...question,
-                    verification: {
-                        status: chosen === question.correctOption ? "agrees" : "disagrees",
-                        aiAnswer: chosen as OptionLetter,
-                        note: noteFor(answer),
-                        fingerprint: entry.fingerprint,
-                        ...topicFields(answer),
-                    },
-                };
+                return { ...question, verification: verificationFromAnswer(question, entry.answer, entry.fingerprint) };
             });
             transaction.update(ref, {
                 questions: clean(questions),

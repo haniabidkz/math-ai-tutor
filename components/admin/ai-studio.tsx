@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import { Bot, Eraser, FolderOpen, Loader2, PlugZap, Sparkles } from "lucide-react";
+import { Bot, Eraser, FolderOpen, Loader2, PlugZap, Sparkles, Trash2 } from "lucide-react";
 import { AiDraftReview, NativeSelect } from "@/components/admin/ai-draft-review";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -31,9 +31,21 @@ interface DraftSummary {
     createdByEmail: string;
     createdAt: number | null;
     targetKey: string;
+    /** Approved pools: questions pushed live, and how many of them are still in the bank. */
+    publishedCount?: number;
+    liveCount?: number | null;
 }
 
 const isUnfinished = (draft: DraftSummary) => draft.status === "generating" || draft.status === "needs_review";
+
+/** An approved pool is live only while its questions are still in the bank students practise from. */
+function liveBadge(draft: DraftSummary) {
+    const live = draft.liveCount ?? 0;
+    const published = draft.publishedCount || draft.questionCount;
+    if (live === 0) return <Badge variant="destructive" title="Its questions were deleted from the question bank, so students do not see them.">Not in the bank (0 live)</Badge>;
+    if (live < published) return <Badge title="Some of its questions were deleted from the question bank.">Live · {live} of {published} questions</Badge>;
+    return <Badge className="bg-emerald-600" title="Students practise these questions in their lessons.">Live · students see {live} questions</Badge>;
+}
 
 const STATUS_LABELS: Record<DraftStatus, string> = {
     generating: "Generating",
@@ -160,6 +172,25 @@ export function AiStudio({ concepts, config, onPublished }: {
             await loadDrafts();
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : "The drafts could not be cleared");
+        }
+    }
+
+    async function removePool(draft: DraftSummary) {
+        const name = draft.microTopic ?? draft.subTopic ?? draft.chapter;
+        const live = draft.liveCount ?? 0;
+        const message = [
+            `Remove the ${LEVEL_LABELS[draft.level].toLowerCase()} "${name}" (Class ${draft.classLevel})?`,
+            live ? `Its ${live} question(s) still in the question bank will be deleted, so students stop seeing them.` : "None of its questions are in the question bank any more; only this record is removed.",
+            "A micro-topic this pool created is archived. Diagnostic tests and all other questions are not touched. This cannot be undone.",
+        ].join("\n\n");
+        if (!window.confirm(message)) return;
+        setError("");
+        try {
+            await adminApi(`/api/admin/ai-studio/drafts/${draft.id}/remove`, { method: "POST" });
+            await loadDrafts();
+            onPublished();
+        } catch (caught) {
+            setError(caught instanceof Error ? caught.message : "The pool could not be removed");
         }
     }
 
@@ -302,8 +333,15 @@ export function AiStudio({ concepts, config, onPublished }: {
                                         <td className="p-2">{LEVEL_LABELS[draft.level]}</td>
                                         <td className="p-2">Class {draft.classLevel} · {draft.chapter}{draft.subTopic ? ` › ${draft.subTopic}` : ""}{draft.microTopic && draft.level === "micro" ? ` › ${draft.microTopic}` : ""}</td>
                                         <td className="p-2">{draft.questionCount}/{draft.total}</td>
-                                        <td className="p-2"><Badge variant={draft.status === "approved" ? "default" : "outline"}>{STATUS_LABELS[draft.status]}</Badge></td>
-                                        <td className="p-2"><Button size="sm" variant="outline" onClick={() => setOpen({ id: draft.id, autoRun: false })}><FolderOpen className="mr-2 h-4 w-4" />Open</Button></td>
+                                        <td className="p-2">{draft.status === "approved" ? liveBadge(draft) : <Badge variant="outline">{STATUS_LABELS[draft.status]}</Badge>}</td>
+                                        <td className="p-2">
+                                            <div className="flex flex-wrap gap-1">
+                                                <Button size="sm" variant="outline" onClick={() => setOpen({ id: draft.id, autoRun: false })}><FolderOpen className="mr-2 h-4 w-4" />Open</Button>
+                                                {draft.status === "approved" ? (
+                                                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => removePool(draft)}><Trash2 className="mr-1 h-4 w-4" />Remove</Button>
+                                                ) : null}
+                                            </div>
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>

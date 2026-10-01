@@ -5,6 +5,7 @@ import {
     getAssessmentConfig,
     getPublishedConcept,
     getPublishedQuestions,
+    getRuntimeConcepts,
     selectQuestion,
     selectQuizQuestions,
     toClientQuestion,
@@ -29,7 +30,11 @@ async function weeklyQuestions(
     excludedIds: string[],
     previousAttemptIds: string[],
 ) {
-    const classTags = getClassConcepts(classLevel).map((concept) => concept.microTag);
+    // Lessons stored in the database, including micro-topics created in AI Studio, all take part.
+    const classTags = (await getRuntimeConcepts())
+        .filter((concept) => isLearningConceptForClass(concept, classLevel))
+        .sort((left, right) => left.topicId.localeCompare(right.topicId) || left.order - right.order)
+        .map((concept) => concept.microTag);
     const eligibleTags = new Set(classTags);
     const tags = [...weakTags.filter((microTag) => eligibleTags.has(microTag)), ...classTags];
     // Lessons whose practice questions have not been written yet are skipped.
@@ -95,12 +100,14 @@ export async function POST(request: NextRequest) {
             const byTopic = getClassConcepts(classLevel).find((concept) => concept.topicId === microTag);
             microTag = byTopic?.microTag ?? microTag;
         }
+        let topicTitle: string | undefined;
         if (kind === "mastery") {
             const concept = await getPublishedConcept(microTag);
             if (!concept) return NextResponse.json({ success: false, error: "Concept not found" }, { status: 404 });
             if (!isLearningConceptForClass(concept, classLevel)) {
                 return NextResponse.json({ success: false, error: `This concept is not available for Class ${classLevel}` }, { status: 400 });
             }
+            topicTitle = concept.title.english;
         }
 
         // Students do not pick a level: it follows the diagnostic and their last result here.
@@ -157,6 +164,7 @@ export async function POST(request: NextRequest) {
             retryOf: typeof body.retryOf === "string" ? body.retryOf : null,
             remedialTag: null,
             homeworkId,
+            ...(topicTitle ? { topicTitle } : {}),
         };
         await adminDb.collection("students").doc(user.uid).collection("assessmentSessions").doc(sessionId).set({
             ...session,

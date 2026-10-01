@@ -11,6 +11,15 @@ export const NEW_MICRO_TAG = "__new_micro_topic__";
 export type OptionLetter = LocalizedOption["id"];
 export const OPTION_LETTERS: OptionLetter[] = ["A", "B", "C", "D"];
 
+/** Why the Super Admin asked for a question to be regenerated; the reason is sent to the writer. */
+export const REWRITE_REASONS = {
+    wrong: { label: "Wrong answer", prompt: "The marked answer is wrong, or no option is correct." },
+    off_topic: { label: "Out of scope", prompt: "It goes outside its micro-topic, or asks a broader sub-topic or main-topic question." },
+    flawed: { label: "Flawed or unclear", prompt: "It is unclear, too long, has a bad or repeated option, or has another flaw." },
+} as const;
+export type RewriteReason = keyof typeof REWRITE_REASONS;
+export const REWRITE_REASON_KEYS = Object.keys(REWRITE_REASONS) as [RewriteReason, ...RewriteReason[]];
+
 export interface Quota {
     easy: number;
     medium: number;

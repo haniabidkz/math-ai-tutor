@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Pencil, Trash2, X } from "lucide-react";
+import { Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,12 +61,15 @@ export function QuestionList({
     concepts,
     truncated = false,
     onEdit,
+    onRegenerate,
     onDelete,
 }: {
     questions: QuestionBankItem[];
     concepts: MicroConcept[];
     truncated?: boolean;
     onEdit: (question: QuestionBankItem) => void;
+    /** Opens the AI rewrite for a flawed question; diagnostic test questions are never offered. */
+    onRegenerate?: (question: QuestionBankItem) => void;
     /** Deletes the given questions; resolves true when they are gone. */
     onDelete: (ids: string[]) => Promise<boolean>;
 }) {
@@ -201,6 +204,13 @@ export function QuestionList({
                                     <td className="p-2">
                                         <div className="flex gap-1">
                                             <Button size="icon" variant="ghost" title="Edit" aria-label={`Edit ${question.id}`} onClick={() => onEdit(question)}><Pencil className="h-4 w-4" /></Button>
+                                            {onRegenerate ? (
+                                                <Button size="icon" variant="ghost" aria-label={`Regenerate ${question.id}`}
+                                                    title={locked ? "Diagnostic test questions are fixed and are never regenerated" : "Regenerate: the AI rewrites and checks this question"}
+                                                    disabled={locked} onClick={() => onRegenerate(question)}>
+                                                    <RefreshCw className="h-4 w-4 text-sky-700" />
+                                                </Button>
+                                            ) : null}
                                             <Button size="icon" variant="ghost" title={locked ? "Diagnostic test questions are protected" : "Delete"} aria-label={`Delete ${question.id}`}
                                                 disabled={deleting || locked} onClick={() => remove([question])}>
                                                 <Trash2 className="h-4 w-4 text-destructive" />

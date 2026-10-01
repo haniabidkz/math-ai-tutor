@@ -41,3 +41,16 @@ export function selectQuizQuestionSet(
 
     return selected;
 }
+
+const createdMillis = (question: QuestionBankItem) => {
+    const createdAt = (question as { createdAt?: { toMillis?: () => number } }).createdAt;
+    return typeof createdAt?.toMillis === "function" ? createdAt.toMillis() : 0;
+};
+
+/**
+ * Newest questions first, so a pool approved in AI Studio is what students meet next instead
+ * of waiting behind older questions of the lesson. Questions added together keep id order.
+ */
+export function newestFirst(questions: QuestionBankItem[]): QuestionBankItem[] {
+    return [...questions].sort((a, b) => createdMillis(b) - createdMillis(a) || a.id.localeCompare(b.id));
+}

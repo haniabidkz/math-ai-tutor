@@ -1,5 +1,8 @@
 import { MISCONCEPTIONS, MISCONCEPTION_TAGS } from "@/lib/mistake-analysis";
-import { CURRICULUM_NAME, NEW_MICRO_TAG, type DraftConcept, type DraftQuestion, type GenerationDraft, type GenerationLevel } from "@/lib/ai-studio/types";
+import {
+    CURRICULUM_NAME, NEW_MICRO_TAG, REWRITE_REASONS,
+    type DraftConcept, type DraftQuestion, type GenerationDraft, type GenerationLevel, type RewriteReason,
+} from "@/lib/ai-studio/types";
 import type { Difficulty } from "@/types/curriculum";
 
 /**
@@ -32,6 +35,9 @@ const DIFFICULTY_RULES: Record<Difficulty, string> = {
     medium: "MEDIUM: apply the idea in a slightly new way or spot a common mistake, in at most two quick steps, Oxford Countdown style.",
     hard: "HARD: needs real understanding (reason about why, compare, find the error or choose a method) in at most two or three quick steps. Make it hard through thinking, never through length, extra conditions or big numbers.",
 };
+
+/** The owner's own wording for a micro-topic pool, sent word for word with every micro-topic request. */
+export const MICRO_SCOPE_CONSTRAINT = "Generate questions strictly for the selected micro-topic. Do not add broader main-topic or sub-topic questions. Keep questions completely bound to the micro-topic.";
 
 const LEVEL_WORDS: Record<GenerationLevel, string> = {
     micro: "micro-topic",
@@ -95,6 +101,7 @@ export function scopeRules(draft: Pick<GenerationDraft, "level" | "target">, con
         const topic = target.microTopics[0];
         const summary = topicSummary(topic, concept);
         return `STRICT SCOPE: this micro-topic only
+${MICRO_SCOPE_CONSTRAINT}
 Every question must test "${topic.title}" and nothing else${summary ? `: ${summary}` : "."}
 Do not ask about other ideas from ${target.subTopic ? `the sub-topic "${target.subTopic}" or ` : ""}the main topic "${target.chapter.title}", even closely related ones. Leave out any question that needs a skill from another part of the chapter. A narrow topic is fine: vary the situations and the kind of thinking, never the topic.${limits ? `\n${limits}` : ""}`;
     }
@@ -221,6 +228,45 @@ Before you finish, solve every question again from the start. Exactly one option
     };
 }
 
+type FlaggedQuestion = Pick<DraftQuestion, "difficulty" | "microTag" | "questionText" | "options" | "correctOption" | "skill">;
+
+/**
+ * Regenerating one question: the normal question request for its micro-topic and difficulty,
+ * plus the flagged question and what is wrong with it, so the replacement fixes that problem.
+ */
+export function rewritePrompt(
+    draft: Pick<GenerationDraft, "level" | "target" | "concept">,
+    request: { original: FlaggedQuestion; reason: RewriteReason; note?: string; avoid: string[]; feedback?: string[] },
+) {
+    const { original } = request;
+    const base = questionPrompt(draft, {
+        difficulty: original.difficulty,
+        count: 1,
+        avoid: request.avoid,
+        feedback: request.feedback,
+        focus: draft.level === "micro" ? undefined : [original.microTag],
+    });
+    const topic = draft.target.microTopics.find((item) => item.microTag === original.microTag);
+    const note = request.note?.trim() ? ` The Super Admin adds: "${request.note.trim().slice(0, 300)}"` : "";
+    const flagged = [
+        `Question: ${original.questionText || "(empty)"}`,
+        ...original.options.map((option, index) => `${"ABCD"[index]}) ${option}`),
+        `Marked answer: ${original.correctOption}`,
+    ].join("\n");
+    const keep = original.skill
+        ? `Test the same skill ("${original.skill}") if it is inside the micro-topic; otherwise choose an IN SCOPE skill.`
+        : "Test the same idea if it is inside the micro-topic; otherwise choose another idea from inside it.";
+    return {
+        system: base.system,
+        user: `${base.user}
+
+REWRITE ONE QUESTION (strict)
+The Super Admin flagged this question and wants a corrected replacement. The problem: ${REWRITE_REASONS[request.reason].prompt}${note}
+${flagged}
+Write exactly 1 new ${original.difficulty.toUpperCase()} question for the micro-topic "${topic?.title ?? draft.target.chapter.title}" that fixes this problem. ${keep} Use new wording, new numbers and new options; never copy the flagged question.`,
+    };
+}
+
 export function verificationPrompt(
     questions: Array<Pick<DraftQuestion, "key" | "questionText" | "options"> & { topic: string }>,
     level: GenerationLevel = "micro",
@@ -232,7 +278,7 @@ export function verificationPrompt(
         ...question.options.map((option, index) => `${"ABCD"[index]}) ${option}`),
     ].join("\n")).join("\n\n");
     const strictness = level === "micro"
-        ? "Each question must test only its topic. Mark on_topic false if it tests or needs anything listed under \"Does NOT cover\", or mainly needs another part of the chapter."
+        ? "Each question must test only its micro-topic. Mark on_topic false if it tests or needs anything listed under \"Does NOT cover\", mainly needs another part of the chapter, or is a broader sub-topic or main-topic question rather than one about this micro-topic."
         : "Mark on_topic false if the question tests anything listed under \"Does NOT cover\", or does not belong to its topic at all.";
     return {
         system: "You are a careful math examiner. Solve each multiple-choice question yourself from scratch before looking at the options, then pick the option that equals your answer. Do not guess, and never pick an option just because it is the closest.",

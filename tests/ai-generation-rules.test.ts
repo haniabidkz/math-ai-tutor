@@ -123,7 +123,7 @@ describe("1. strict topic scope", () => {
     it("asks the checker whether each question stays on its topic", () => {
         const prompt = verificationPrompt([{ key: "q1", questionText: "What is 2 + 2?", options: ["4", "3", "5", "6"], topic: "Negative Numbers" }], "micro");
         expect(prompt.user).toContain("topic: Negative Numbers");
-        expect(prompt.user).toContain("Each question must test only its topic");
+        expect(prompt.user).toContain("Each question must test only its micro-topic");
     });
 
     it("blocks an off-topic question until a person keeps it", () => {

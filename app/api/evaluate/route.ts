@@ -532,7 +532,7 @@ function completeOrContinue(
 
     const percentage = Math.round(masteryPercentage(session.score, session.maxScore));
     const mastered = isMastered(session.score, session.maxScore, config.masteryThresholdPercent);
-    const topicName = session.kind === "weekly" ? "Weekly Review" : getConcept(session.microTag)?.title.english ?? session.microTag;
+    const topicName = session.kind === "weekly" ? "Weekly Review" : session.topicTitle ?? getConcept(session.microTag)?.title.english ?? session.microTag;
     const timeSpentSeconds = sessionDurationSeconds(session.startedAt, Date.now());
     const understandingLevel = percentage >= 85 ? "EXCELLENT" : percentage >= 70 ? "GOOD" : percentage >= 50 ? "AVERAGE" : "WEAK";
 

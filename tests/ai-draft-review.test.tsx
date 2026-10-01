@@ -255,6 +255,37 @@ describe("AI draft review (Rule C)", { timeout: 30_000 }, () => {
         expect(screen.queryByText(/connection dropped/)).not.toBeInTheDocument();
     });
 
+    it("regenerates one question in place with the reason chosen, and shows the checker's verdict", async () => {
+        const pool = reviewDraft({ easy: 10, medium: 10, hard: 10 });
+        pool.questions[0] = draftQuestion({ key: "flawed", questionText: "A long and muddled question about zero?" });
+        const rewritten = { ...pool, questions: pool.questions.map((question) => (question.key === "flawed" ? draftQuestion({ key: "flawed", questionText: "Which integer is 3 below zero?" }) : question)) };
+        serve(pool, { [`POST ${base}/regenerate`]: () => ({ draft: rewritten, passed: true }) });
+        render(<AiDraftReview draftId="d1" onClose={vi.fn()} onPublished={vi.fn()} />);
+
+        await screen.findByText("A long and muddled question about zero?");
+        fireEvent.click(screen.getAllByRole("button", { name: /^Regenerate$/ })[0]);
+        fireEvent.click(screen.getByRole("radio", { name: "Out of scope" }));
+        fireEvent.change(screen.getByLabelText("Note for the AI"), { target: { value: "keep it about zero" } });
+        fireEvent.click(screen.getByRole("button", { name: /Regenerate now/ }));
+
+        expect(await screen.findByText("Which integer is 3 below zero?")).toBeInTheDocument();
+        expect(screen.getByText(/The AI check solved the new version and agrees/)).toBeInTheDocument();
+        const call = api.mock.calls.find(([path]) => path === `${base}/regenerate`)!;
+        expect(JSON.parse(String(call[1]?.body))).toEqual({ key: "flawed", reason: "off_topic", note: "keep it about zero" });
+    });
+
+    it("offers a one-click regenerate when the checker disagrees with the answer", async () => {
+        const pool = reviewDraft({ easy: 10, medium: 10, hard: 10 });
+        pool.questions[0] = draftQuestion({ key: "bad", verification: { status: "disagrees", aiAnswer: "C", note: "I got 10." } });
+        serve(pool, { [`POST ${base}/regenerate`]: () => { throw new ApiError("The AI could not write a clean replacement. Try again.", 502, { code: "bad_output" }); } });
+        render(<AiDraftReview draftId="d1" onClose={vi.fn()} onPublished={vi.fn()} />);
+
+        fireEvent.click(await screen.findByRole("button", { name: /Regenerate it/ }));
+        expect(await screen.findByText(/could not write a clean replacement/)).toBeInTheDocument();
+        const call = api.mock.calls.find(([path]) => path === `${base}/regenerate`)!;
+        expect(JSON.parse(String(call[1]?.body))).toEqual({ key: "bad", reason: "wrong" });
+    });
+
     it("stops at once when the key is rejected instead of retrying", async () => {
         const fresh = reviewDraft({ easy: 0, medium: 0, hard: 0 }, { status: "generating", concept: null, steps: [{ id: "concept", kind: "concept", status: "pending", attempts: 0 }] });
         let calls = 0;

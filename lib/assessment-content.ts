@@ -2,7 +2,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { MICRO_CONCEPTS, getConcept } from "@/lib/curriculum";
 import { getBuiltInDiagnosticQuestion } from "@/lib/diagnostic-questions";
 import { builtInQuestionsEnabled, QUESTION_BANK } from "@/lib/question-bank";
-import { selectQuizQuestionSet } from "@/lib/question-selection";
+import { newestFirst, selectQuizQuestionSet } from "@/lib/question-selection";
 import { DEFAULT_ASSESSMENT_CONFIG } from "@/types/curriculum";
 import type {
     AssessmentConfig,
@@ -64,7 +64,7 @@ export async function getPublishedQuestions(microTag: string): Promise<QuestionB
 
     // The bundled bank keeps local development usable before the first seed; production never
     // falls back to it, so a lesson whose questions were deleted stays empty until new ones exist.
-    if (questions.length || !builtInQuestionsEnabled()) return sortById(questions);
+    if (questions.length || !builtInQuestionsEnabled()) return newestFirst(questions);
     return sortById(QUESTION_BANK.filter((question) => question.microTag === microTag && question.classLevel === concept.classLevel));
 }
 

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
     AlertTriangle, ArrowLeft, CheckCircle2, Circle, Loader2, Pause, Pencil, Play,
-    Plus, RotateCcw, Rocket, ShieldCheck, SkipForward, Trash2, XCircle,
+    Plus, RefreshCw, RotateCcw, Rocket, ShieldCheck, SkipForward, Trash2, XCircle,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -13,8 +13,8 @@ import { Label } from "@/components/ui/label";
 import { ApiError, adminApi, jsonInit } from "@/lib/admin-api";
 import { DIFFICULTIES, LEVEL_LABELS } from "@/lib/ai-studio/quotas";
 import {
-    NEW_MICRO_TAG, OPTION_LETTERS,
-    type DraftConcept, type DraftQuestion, type GenerationDraft, type GenerationStep, type OptionLetter,
+    NEW_MICRO_TAG, OPTION_LETTERS, REWRITE_REASON_KEYS, REWRITE_REASONS,
+    type DraftConcept, type DraftQuestion, type GenerationDraft, type GenerationStep, type OptionLetter, type RewriteReason,
 } from "@/lib/ai-studio/types";
 import { blockingIssues, normalizeText, validateDraft, type DraftIssue } from "@/lib/ai-studio/validate";
 import { MISCONCEPTION_TAGS, MISCONCEPTIONS } from "@/lib/mistake-analysis";
@@ -53,6 +53,9 @@ function stepLabels(steps: GenerationStep[]): Map<string, string> {
     }
     return labels;
 }
+
+/** What the card shows after a Regenerate request. */
+export type RewriteResult = { ok: true; passed: boolean } | { ok: false; message: string };
 
 const isChecked = (question: DraftQuestion) => question.verification.status === "agrees" || question.verification.status === "confirmed";
 
@@ -230,6 +233,19 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
             return false;
         }
     }
+
+    /** Rewrites one question with the AI; the server checks the new version before it returns. */
+    const regenerate = useCallback(async (key: string, reason: RewriteReason, note: string): Promise<RewriteResult> => {
+        try {
+            const data = await adminApi<{ draft: GenerationDraft; passed: boolean }>(
+                `${base}/regenerate`, jsonInit("POST", { key, reason, ...(note.trim() ? { note: note.trim() } : {}) }),
+            );
+            setDraft(data.draft);
+            return { ok: true, passed: data.passed };
+        } catch (caught) {
+            return { ok: false, message: describeFailure(caught) };
+        }
+    }, [base]);
 
     const setEditorOpen = useCallback((key: string, open: boolean) => {
         setOpenEditors((current) => {
@@ -440,9 +456,11 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                         topicTitles={topicTitles}
                         issues={issuesByKey.get(question.key) ?? []}
                         readOnly={live}
+                        busy={busy}
                         showDetails={showDetails}
                         startEditing={question.key === newKey}
                         onEdit={edit}
+                        onRegenerate={regenerate}
                         onOpenChange={setEditorOpen}
                     />
                 ))}
@@ -582,20 +600,28 @@ function VerificationBadge({ question }: { question: DraftQuestion }) {
     return <Badge variant="outline">Not checked yet</Badge>;
 }
 
-function QuestionCard({ question, number, topicTitles, issues, readOnly, showDetails, startEditing, onEdit, onOpenChange }: {
+function QuestionCard({ question, number, topicTitles, issues, readOnly, busy, showDetails, startEditing, onEdit, onRegenerate, onOpenChange }: {
     question: DraftQuestion;
     number: number;
     topicTitles: Map<string, string>;
     issues: DraftIssue[];
     readOnly: boolean;
+    /** Generation or checking is running for the whole draft. */
+    busy: boolean;
     showDetails: boolean;
     startEditing: boolean;
     onEdit: (body: Record<string, unknown>) => Promise<boolean>;
+    onRegenerate: (key: string, reason: RewriteReason, note: string) => Promise<RewriteResult>;
     onOpenChange: (key: string, open: boolean) => void;
 }) {
     const [editing, setEditing] = useState(false);
     const [form, setForm] = useState<DraftQuestion>(question);
     const [saving, setSaving] = useState(false);
+    const [rewriteOpen, setRewriteOpen] = useState(false);
+    const [rewriteReason, setRewriteReason] = useState<RewriteReason>("flawed");
+    const [rewriteNote, setRewriteNote] = useState("");
+    const [rewriting, setRewriting] = useState(false);
+    const [rewriteMessage, setRewriteMessage] = useState<{ good: boolean; text: string } | null>(null);
     const radioName = useId();
 
     const open = useCallback((value: boolean) => {
@@ -628,6 +654,22 @@ function QuestionCard({ question, number, topicTitles, issues, readOnly, showDet
         if (await run({ op: "question", question: { key, difficulty, microTag, questionText, options, correctOption, hint, solution, wrongReasons } })) open(false);
     }
 
+    async function regenerate(reason: RewriteReason) {
+        setRewriting(true);
+        setRewriteMessage(null);
+        const result = await onRegenerate(question.key, reason, rewriteNote);
+        setRewriting(false);
+        if (!result.ok) {
+            setRewriteMessage({ good: false, text: result.message });
+            return;
+        }
+        setRewriteOpen(false);
+        setRewriteNote("");
+        setRewriteMessage(result.passed
+            ? { good: true, text: "Regenerated. The AI check solved the new version and agrees with its answer." }
+            : { good: false, text: "Regenerated, but the AI check still has doubts about the new version. Read it below, then regenerate again or fix it by hand." });
+    }
+
     const setReason = (letter: OptionLetter, patch: Partial<{ english: string; romanUrdu: string; misconceptionTag: MisconceptionTag }>) =>
         setForm((current) => ({
             ...current,
@@ -652,7 +694,10 @@ function QuestionCard({ question, number, topicTitles, issues, readOnly, showDet
                 </div>
                 {!readOnly && !editing ? (
                     <div className="flex gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => open(true)}><Pencil className="mr-1 h-4 w-4" />Edit</Button>
+                        <Button size="sm" variant="ghost" disabled={busy || rewriting} onClick={() => { setRewriteOpen((value) => !value); setRewriteMessage(null); }}>
+                            <RefreshCw className={`mr-1 h-4 w-4 ${rewriting ? "animate-spin" : ""}`} />Regenerate
+                        </Button>
+                        <Button size="sm" variant="ghost" disabled={rewriting} onClick={() => open(true)}><Pencil className="mr-1 h-4 w-4" />Edit</Button>
                         <Button size="sm" variant="ghost" className="text-destructive" disabled={saving}
                             onClick={() => window.confirm("Remove this question from the draft?") && run({ op: "remove", key: question.key })}>
                             <Trash2 className="mr-1 h-4 w-4" />Remove
@@ -660,6 +705,37 @@ function QuestionCard({ question, number, topicTitles, issues, readOnly, showDet
                     </div>
                 ) : null}
             </header>
+
+            {!readOnly && !editing && (rewriteOpen || rewriting) ? (
+                <div className="space-y-3 rounded-md border border-sky-300 bg-sky-50 p-3 text-sm">
+                    {rewriting ? (
+                        <p className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Writing a new version and checking its answer. This takes about 30 to 90 seconds.</p>
+                    ) : (
+                        <>
+                            <p className="font-medium">What is wrong with this question? The AI writes a corrected one for the same micro-topic and difficulty.</p>
+                            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Reason">
+                                {REWRITE_REASON_KEYS.map((reason) => (
+                                    <Button key={reason} size="sm" role="radio" aria-checked={rewriteReason === reason}
+                                        variant={rewriteReason === reason ? "default" : "outline"} onClick={() => setRewriteReason(reason)}>
+                                        {REWRITE_REASONS[reason].label}
+                                    </Button>
+                                ))}
+                            </div>
+                            <Input aria-label="Note for the AI" placeholder="Optional note for the AI, e.g. the answer should be 12" maxLength={300}
+                                value={rewriteNote} onChange={(event) => setRewriteNote(event.target.value)} />
+                            <div className="flex gap-2">
+                                <Button size="sm" onClick={() => regenerate(rewriteReason)}><RefreshCw className="mr-1 h-4 w-4" />Regenerate now</Button>
+                                <Button size="sm" variant="outline" onClick={() => setRewriteOpen(false)}>Cancel</Button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            ) : null}
+            {rewriteMessage && !rewriting ? (
+                <p className={`rounded-md border p-2 text-sm ${rewriteMessage.good ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-amber-300 bg-amber-50 text-amber-900"}`}>
+                    {rewriteMessage.text}
+                </p>
+            ) : null}
 
             {editing ? (
                 <div className="space-y-4">
@@ -759,6 +835,9 @@ function QuestionCard({ question, number, topicTitles, issues, readOnly, showDet
                             <Button size="sm" variant="outline" disabled={saving} onClick={() => run({ op: "recheck", key: question.key })}>
                                 <RotateCcw className="mr-1 h-4 w-4" />Check again
                             </Button>
+                            <Button size="sm" variant="outline" disabled={saving || rewriting || busy} onClick={() => regenerate("wrong")}>
+                                <RefreshCw className="mr-1 h-4 w-4" />Regenerate it
+                            </Button>
                         </div>
                     ) : null}
                 </div>
@@ -773,6 +852,9 @@ function QuestionCard({ question, number, topicTitles, issues, readOnly, showDet
                         <div className="flex flex-wrap gap-2">
                             <Button size="sm" variant="outline" disabled={saving} onClick={() => run({ op: "confirm", key: question.key })}>
                                 <CheckCircle2 className="mr-1 h-4 w-4" />Keep it: it is on topic
+                            </Button>
+                            <Button size="sm" variant="outline" disabled={saving || rewriting || busy} onClick={() => regenerate("off_topic")}>
+                                <RefreshCw className="mr-1 h-4 w-4" />Regenerate it
                             </Button>
                             <Button size="sm" variant="outline" className="text-destructive" disabled={saving}
                                 onClick={() => window.confirm("Remove this question from the draft?") && run({ op: "remove", key: question.key })}>

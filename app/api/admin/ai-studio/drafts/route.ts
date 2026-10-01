@@ -12,13 +12,32 @@ import { CURRICULUM_NAME, type GenerationDraft } from "@/lib/ai-studio/types";
 import { requireSuperAdmin } from "@/lib/server-auth";
 import type { AssessmentConfig } from "@/types/curriculum";
 
+/**
+ * How many questions of each approved pool are still in the live bank. A pool whose questions
+ * were deleted later no longer reaches students, and the Studio must not call it live.
+ */
+async function liveCounts(draftIds: string[]): Promise<Map<string, number>> {
+    const counts = new Map<string, number>(draftIds.map((id) => [id, 0]));
+    for (let start = 0; start < draftIds.length; start += 30) {
+        const snapshot = await adminDb.collection("questions").where("aiDraftId", "in", draftIds.slice(start, start + 30)).select("aiDraftId", "status").get();
+        for (const doc of snapshot.docs) {
+            const data = doc.data();
+            if (data.status !== "published") continue;
+            counts.set(String(data.aiDraftId), (counts.get(String(data.aiDraftId)) ?? 0) + 1);
+        }
+    }
+    return counts;
+}
+
 export async function GET(request: NextRequest) {
     try {
         await requireSuperAdmin(request);
         const snapshot = await draftsCollection().orderBy("createdAt", "desc").limit(40).get();
-        const drafts = snapshot.docs
+        const kept = snapshot.docs
             .map((doc) => ({ ...(doc.data() as GenerationDraft), id: doc.id }))
-            .filter((draft) => draft.status !== "discarded")
+            .filter((draft) => draft.status !== "discarded");
+        const live = await liveCounts(kept.filter((draft) => draft.status === "approved").map((draft) => draft.id));
+        const drafts = kept
             .map((draft) => ({
                 id: draft.id,
                 status: draft.status,
@@ -34,6 +53,8 @@ export async function GET(request: NextRequest) {
                 createdByEmail: draft.createdByEmail,
                 createdAt: (draft.createdAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? null,
                 targetKey: draft.targetKey ?? targetKey(draft.level, draft.target),
+                publishedCount: draft.publishedQuestionIds?.length ?? 0,
+                liveCount: draft.status === "approved" ? live.get(draft.id) ?? 0 : null,
             }));
         return NextResponse.json({ success: true, drafts });
     } catch (error) {
