@@ -46,6 +46,8 @@ export const draftEditSchema = z.discriminatedUnion("op", [
     z.object({ op: z.literal("recheck"), key: z.string().min(1) }),
     /** Gives up on a failed step so the admin can write those questions by hand. */
     z.object({ op: z.literal("skipStep"), stepId: z.string().min(1) }),
+    /** Puts a skipped step back into the plan so the AI writes its questions after all. */
+    z.object({ op: z.literal("retryStep"), stepId: z.string().min(1) }),
 ]);
 
 export const approveSchema = z.object({

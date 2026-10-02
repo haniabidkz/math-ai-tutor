@@ -318,10 +318,10 @@ export default function SuperAdminPage() {
                                 <RegenerateQuestionDialog
                                     question={regenerating}
                                     onClose={() => setRegenerating(null)}
-                                    onReplaced={async () => {
+                                    onReplaced={(question) => {
                                         setRegenerating(null);
-                                        await loadAll();
-                                        showNotice("Question replaced with the regenerated, checked version.");
+                                        setQuestions((current) => current.map((item) => (item.id === question.id ? question : item)));
+                                        showNotice(`${question.id} was regenerated, checked and replaced. Students now see the new version.`);
                                     }}
                                 />
                             ) : null}

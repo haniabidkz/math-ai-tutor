@@ -286,6 +286,57 @@ describe("AI draft review (Rule C)", { timeout: 30_000 }, () => {
         expect(JSON.parse(String(call[1]?.body))).toEqual({ key: "bad", reason: "wrong" });
     });
 
+    it("sets a step that keeps failing aside and carries on with the rest of the plan", async () => {
+        const steps = [
+            { id: "concept", kind: "concept" as const, status: "pending" as const, attempts: 0 },
+            { id: "easy-1", kind: "questions" as const, difficulty: "easy" as const, count: 3, status: "pending" as const, attempts: 0 },
+        ];
+        const fresh = reviewDraft({ easy: 0, medium: 0, hard: 0 }, { status: "generating", concept: null, steps });
+        const conceptFailed = { ...fresh, steps: [{ ...steps[0], status: "failed" as const, attempts: 1, error: "The reply broke 1 rule(s)", feedback: ["the explanation uses a foreign setting (dollars)"] }, steps[1]] };
+        const calls = { concept: 0, easy: 0 };
+        serve(fresh, {
+            [`POST ${base}/generate`]: (body) => {
+                if (body.stepId === "concept") {
+                    calls.concept += 1;
+                    throw new ApiError("The reply broke 1 rule(s)", 422, { code: "rejected", problems: ["the explanation uses a foreign setting (dollars)"], draft: conceptFailed });
+                }
+                calls.easy += 1;
+                return { draft: { ...conceptFailed, questions: [draftQuestion(), draftQuestion(), draftQuestion()], steps: [conceptFailed.steps[0], { ...steps[1], status: "done" as const, attempts: 1 }] } };
+            },
+        });
+        render(<AiDraftReview draftId="d1" autoRun onClose={vi.fn()} onPublished={vi.fn()} />);
+
+        expect(await screen.findByText(/One step could not be finished/, {}, { timeout: 15_000 })).toBeInTheDocument();
+        expect(calls).toEqual({ concept: 3, easy: 1 });
+        expect(screen.getByText("the explanation uses a foreign setting (dollars)")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Try this step again/ })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Skip and write these by hand/ })).toBeInTheDocument();
+    });
+
+    it("waits on a step an earlier request still holds, and takes it over when the admin resets it", async () => {
+        const step = { id: "concept", kind: "concept" as const, status: "pending" as const, attempts: 0 };
+        const fresh = reviewDraft({ easy: 0, medium: 0, hard: 0 }, { status: "generating", concept: null, steps: [step] });
+        const held = { ...fresh, steps: [{ ...step, status: "running" as const, startedAt: Date.now() - 90_000 }] };
+        const done = { ...reviewDraft({ easy: 0, medium: 0, hard: 0 }), steps: [{ ...step, status: "done" as const, attempts: 1 }] };
+        const forced: boolean[] = [];
+        serve(held, {
+            [`POST ${base}/generate`]: (body) => {
+                forced.push(body.force === true);
+                if (body.force !== true) throw new ApiError("This step is already running. Wait for it to finish.", 409, { details: { code: "running", startedAt: Date.now() - 90_000 }, draft: held });
+                return { draft: done };
+            },
+            [`POST ${base}/verify`]: () => ({ draft: done, checked: 0, remaining: 0 }),
+        });
+        render(<AiDraftReview draftId="d1" autoRun onClose={vi.fn()} onPublished={vi.fn()} />);
+
+        expect(await screen.findByText(/is still marked as running from an earlier request/)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: /Reset this step and continue/ }));
+
+        await waitFor(() => expect(forced).toEqual([false, true]));
+        expect(await screen.findByText("Ready for review")).toBeInTheDocument();
+        expect(screen.queryByText(/still marked as running/)).not.toBeInTheDocument();
+    });
+
     it("stops at once when the key is rejected instead of retrying", async () => {
         const fresh = reviewDraft({ easy: 0, medium: 0, hard: 0 }, { status: "generating", concept: null, steps: [{ id: "concept", kind: "concept", status: "pending", attempts: 0 }] });
         let calls = 0;

@@ -5,6 +5,7 @@ import { checkerTopic, rewritePrompt, verificationPrompt } from "@/lib/ai-studio
 import { normalizeQuestionBatch, questionBatchSchema, verificationSchema } from "@/lib/ai-studio/schema";
 import { findNearCopy, questionSignature } from "@/lib/ai-studio/similarity";
 import { chapterConcepts } from "@/lib/ai-studio/target";
+import { questionRomanUrduProblems } from "@/lib/ai-studio/urdu-check";
 import type { DraftConcept, DraftQuestion, GenerationDraft, RewriteReason } from "@/lib/ai-studio/types";
 import { brevityIssues, normalizeText } from "@/lib/ai-studio/validate";
 import type { MicroConcept, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
@@ -52,6 +53,7 @@ function ruleProblems(question: DraftQuestion, seen: Set<string>, signatures: Re
     for (const issue of brevityIssues(question)) {
         if (issue.severity === "error") problems.push(issue.message);
     }
+    problems.push(...questionRomanUrduProblems("the", question));
     const text = normalizeText(question.questionText);
     if (seen.has(text)) problems.push("it repeats an existing question");
     else {

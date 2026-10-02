@@ -114,7 +114,8 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ id:
             };
             transaction.set(questionRef, data, { mergeFields: Object.keys(data) });
             transaction.delete(rewriteRef);
-            return { version: version + 1, reason: String(rewrite.reason ?? "") };
+            const question: QuestionBankItem = { id, ...item, status: data.status, source: data.source, version: version + 1 };
+            return { version: version + 1, reason: String(rewrite.reason ?? ""), question };
         });
 
         const why = REWRITE_REASONS[result.reason as keyof typeof REWRITE_REASONS]?.label ?? "flagged";
@@ -122,7 +123,7 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ id:
             actorUid: admin.uid, actorEmail: admin.email, action: "question.regenerate", targetType: "question", targetId: id,
             summary: `Replaced ${id} with an AI-regenerated, checked version (${why})`,
         });
-        return NextResponse.json({ success: true, version: result.version });
+        return NextResponse.json({ success: true, version: result.version, question: result.question });
     } catch (error) {
         return studioErrorResponse(error, "The question could not be replaced");
     }

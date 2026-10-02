@@ -41,7 +41,7 @@ const draft = reviewDraft({ easy: 2, medium: 0, hard: 0 });
 const flagged = draft.questions[0];
 const fixedClock = () => 0;
 
-beforeEach(() => mocked.mockReset());
+beforeEach(() => { mocked.mockReset(); });
 
 describe("point 1: the owner's micro-topic constraint", () => {
     it("is sent word for word with every micro-topic request, and the checker rejects broader questions", () => {

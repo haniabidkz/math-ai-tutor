@@ -2,6 +2,7 @@ import { findForeignContext } from "@/lib/ai-studio/context-check";
 import { DIFFICULTIES } from "@/lib/ai-studio/quotas";
 import { isNearCopy, questionSignature, wordCount } from "@/lib/ai-studio/similarity";
 import { OPTION_LETTERS, type DraftQuestion, type GenerationDraft } from "@/lib/ai-studio/types";
+import { questionRomanUrduIssues, romanUrduIssues } from "@/lib/ai-studio/urdu-check";
 import { MISCONCEPTIONS } from "@/lib/mistake-analysis";
 
 export interface DraftIssue {
@@ -80,6 +81,8 @@ export function questionIssues(question: DraftQuestion, allowedTags: Set<string>
     const foreign = findForeignContext(question.questionText, ...question.options, question.hint.english, question.solution.english);
     if (foreign.length) add(`Uses a foreign setting (${foreign.join(", ")}). Rewrite it with a local example.`);
     for (const issue of brevityIssues(question)) add(issue.message, issue.severity);
+    // Roman Urdu must stay easy; the admin's own wording is a note here, never a block.
+    for (const message of questionRomanUrduIssues("The", question)) add(message, "warning");
 
     const verification = question.verification;
     // A person's "I checked" overrides the checker on scope as well as on the answer.
@@ -126,6 +129,9 @@ export function validateDraft(draft: Pick<GenerationDraft, "quota" | "concept" |
         }
         const foreign = findForeignContext(concept.explanation.english, concept.example.english);
         if (foreign.length) issues.push({ severity: "error", where: "concept", message: `Uses a foreign setting (${foreign.join(", ")}). Rewrite it with a local example.` });
+        for (const message of [...romanUrduIssues("The explanation", concept.explanation), ...romanUrduIssues("The real-life example", concept.example)]) {
+            issues.push({ severity: "warning", where: "concept", message });
+        }
     }
 
     const seen = new Map<string, string>();

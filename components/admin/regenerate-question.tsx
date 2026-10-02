@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Loader2, RefreshCw, X } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,21 +16,24 @@ interface Candidate {
     verification: DraftQuestion["verification"];
 }
 
+type Phase = "choose" | "writing" | "saving" | "failed";
+
 const errorText = (caught: unknown) => (caught instanceof Error ? caught.message : "Something went wrong");
 
 /**
  * Regenerate for a live question: the AI writes a corrected version for the same micro-topic
- * and difficulty, a second AI solves it again, and the admin replaces the question in one click.
+ * and difficulty, a second AI solves it again, and when that check agrees the new version
+ * replaces the question at once. A version the check rejects is shown, never saved.
  */
 export function RegenerateQuestionDialog({ question, onClose, onReplaced }: {
     question: QuestionBankItem;
     onClose: () => void;
-    /** Called after the live question was replaced. */
-    onReplaced: () => void;
+    /** Called with the saved question after the live one was replaced. */
+    onReplaced: (question: QuestionBankItem) => void;
 }) {
     const [reason, setReason] = useState<RewriteReason>("flawed");
     const [note, setNote] = useState("");
-    const [phase, setPhase] = useState<"choose" | "writing" | "review" | "saving">("choose");
+    const [phase, setPhase] = useState<Phase>("choose");
     const [result, setResult] = useState<Candidate | null>(null);
     const [error, setError] = useState("");
     const base = `/api/admin/questions/${encodeURIComponent(question.id)}/regenerate`;
@@ -44,30 +47,35 @@ export function RegenerateQuestionDialog({ question, onClose, onReplaced }: {
         return () => window.removeEventListener("keydown", onKey);
     }, [onClose, working]);
 
-    async function generate() {
+    async function regenerate() {
         setPhase("writing");
         setError("");
+        setResult(null);
+        let data: Candidate;
         try {
-            const data = await adminApi<Candidate>(base, jsonInit("POST", { reason, ...(note.trim() ? { note: note.trim() } : {}) }));
-            setResult({ candidate: data.candidate, passed: data.passed, verification: data.verification });
-            setPhase("review");
+            data = await adminApi<Candidate>(base, jsonInit("POST", { reason, ...(note.trim() ? { note: note.trim() } : {}) }));
         } catch (caught) {
             setError(errorText(caught));
-            setPhase(result ? "review" : "choose");
+            setPhase("choose");
+            return;
+        }
+        setResult(data);
+        if (!data.passed) {
+            setPhase("failed");
+            return;
+        }
+        // The check agreed with the new version, so it replaces the question straight away.
+        setPhase("saving");
+        try {
+            const saved = await adminApi<{ question: QuestionBankItem }>(base, { method: "PUT" });
+            onReplaced(saved.question);
+        } catch (caught) {
+            setError(errorText(caught));
+            setPhase("failed");
         }
     }
 
-    async function replace() {
-        setPhase("saving");
-        setError("");
-        try {
-            await adminApi(base, { method: "PUT" });
-            onReplaced();
-        } catch (caught) {
-            setError(errorText(caught));
-            setPhase("review");
-        }
-    }
+    const { verification } = result ?? {};
 
     return (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="regenerate-title">
@@ -82,9 +90,9 @@ export function RegenerateQuestionDialog({ question, onClose, onReplaced }: {
 
                 <QuestionPreview title="Current question" item={question} />
 
-                {phase === "choose" || phase === "writing" ? (
+                {phase === "choose" || working ? (
                     <div className="space-y-3 rounded-md border border-sky-300 bg-sky-50 p-3 text-sm">
-                        <p className="font-medium">What is wrong with it? The AI writes a corrected question for the same micro-topic and difficulty.</p>
+                        <p className="font-medium">What is wrong with it? The AI writes a corrected question for the same micro-topic and difficulty, a second AI checks it, and it replaces this question at once.</p>
                         <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Reason">
                             {REWRITE_REASON_KEYS.map((key) => (
                                 <Button key={key} size="sm" role="radio" aria-checked={reason === key} disabled={working}
@@ -98,48 +106,40 @@ export function RegenerateQuestionDialog({ question, onClose, onReplaced }: {
                     </div>
                 ) : null}
 
-                {phase === "writing" ? (
-                    <p className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />Writing a new version and checking its answer. This takes about 30 to 90 seconds.</p>
+                {working ? (
+                    <p className="flex items-center gap-2 text-sm">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {phase === "writing" ? "Writing a new version and checking its answer. This takes about 30 to 90 seconds." : "The check agreed. Replacing the question..."}
+                    </p>
                 ) : null}
 
-                {result && (phase === "review" || phase === "saving") ? (
+                {result && phase === "failed" ? (
                     <div className="space-y-2">
-                        <QuestionPreview title="New version" item={result.candidate} details />
-                        {result.passed ? (
-                            <p className="flex items-center gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-2 text-sm text-emerald-800">
-                                <CheckCircle2 className="h-4 w-4" />An independent AI solve agrees with the marked answer, and the question stays inside its micro-topic.
-                            </p>
-                        ) : (
+                        <QuestionPreview title="New version (not saved)" item={result.candidate} details />
+                        {!result.passed ? (
                             <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">
                                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                                 <span>
                                     The answer check is not happy with this version
-                                    {result.verification.status === "disagrees" ? (result.verification.aiAnswer ? ` (it chose ${result.verification.aiAnswer})` : " (no option equals its answer)") : ""}
-                                    {result.verification.onTopic === false ? `, and it says the question leaves its micro-topic${result.verification.topicNote ? `: ${result.verification.topicNote}` : ""}` : ""}.
-                                    {" "}It cannot replace the question. Try again.
+                                    {verification?.status === "disagrees" ? (verification.aiAnswer ? ` (it chose ${verification.aiAnswer})` : " (no option equals its answer)") : ""}
+                                    {verification?.onTopic === false ? `, and it says the question leaves its micro-topic${verification.topicNote ? `: ${verification.topicNote}` : ""}` : ""}.
+                                    {" "}So it did not replace the question. Try again.
                                 </span>
                             </p>
-                        )}
+                        ) : null}
                     </div>
                 ) : null}
 
                 {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
 
                 <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
-                    <Button variant="outline" disabled={working} onClick={onClose}>Cancel</Button>
-                    {phase === "choose" || phase === "writing" ? (
-                        <Button disabled={working} onClick={generate}>
-                            {phase === "writing" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Regenerate
-                        </Button>
+                    <Button variant="outline" disabled={working} onClick={onClose}>{phase === "failed" ? "Close" : "Cancel"}</Button>
+                    {phase === "failed" ? (
+                        <Button onClick={() => { setResult(null); setPhase("choose"); }}><RefreshCw className="mr-2 h-4 w-4" />Try again</Button>
                     ) : (
-                        <>
-                            <Button variant="outline" disabled={working} onClick={() => { setResult(null); setPhase("choose"); }}>
-                                <RefreshCw className="mr-2 h-4 w-4" />Try again
-                            </Button>
-                            <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={working || !result?.passed} onClick={replace}>
-                                {phase === "saving" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}Replace question
-                            </Button>
-                        </>
+                        <Button disabled={working} onClick={regenerate}>
+                            {working ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Regenerate and replace
+                        </Button>
                     )}
                 </div>
             </div>

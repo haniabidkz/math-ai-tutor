@@ -12,7 +12,9 @@ import type { Difficulty } from "@/types/curriculum";
 const STYLE_RULES = `
 LANGUAGE
 - English: very simple, Grade 6 vocabulary, short sentences. No difficult words.
-- Roman Urdu: warm and conversational, the way a friendly Pakistani teacher talks ("Aao dekhte hain...", "Chalo milkar hal karte hain"). Urdu written in English letters, never Urdu script.
+- Roman Urdu: very easy, simple and clean, the way a friendly Pakistani teacher talks to a child ("Aao dekhte hain...", "Chalo milkar hal karte hain"). Urdu written in English letters, never Urdu script.
+- Roman Urdu uses everyday words only. Never use bookish Urdu words; when an Urdu word is hard, put the simple English word inside the Roman Urdu sentence instead. Maths terms stay in English: set, element, fraction, decimal, percent, ratio, equation, variable, integer, factor, multiple, angle, area, solve. So write "fraction" not "kasr", "equation" not "musawat", "set" not "majmua", "ratio" not "nisbat", "decimal" not "ashariya", "variable" not "mutaghayyir", "alag" not "mukhtalif", "saaf" not "wazeh".
+- Numbers are always digits, formatted exactly as in the English: 12, 3/4, 0.75, Rs. 250, 45%, 2:3. Never spell a number out in Urdu ("teen", "paanch"). The Roman Urdu keeps the same numbers, units and symbols as the English.
 
 LOCAL CONTEXT (strict)
 - Real-life settings must come from everyday Pakistani life: the local bazaar, a school tuck shop, cricket matches, sharing roti or mangoes at home, buses and rickshaws, Eid, school trips.
@@ -146,8 +148,11 @@ export function batchFocus(draft: Pick<GenerationDraft, "level" | "target" | "qu
     return Array.from({ length: count }, (_, position) => ordered[position % ordered.length]);
 }
 
-export function conceptPrompt(draft: Pick<GenerationDraft, "level" | "target">) {
+export function conceptPrompt(draft: Pick<GenerationDraft, "level" | "target">, feedback: string[] = []) {
     const { target } = draft;
+    const rejected = feedback.length
+        ? `\n\nYour previous attempt was rejected for these reasons. Fix every one:\n${feedback.map((item) => `- ${item}`).join("\n")}`
+        : "";
     const focus = draft.level === "micro" && target.microTopic
         ? `Explain only the micro-topic "${target.microTopic.title}". Do not teach other parts of the chapter.`
         : draft.level === "sub"
@@ -175,7 +180,7 @@ Write the concept explanation for this ${LEVEL_WORDS[draft.level]}, and fix its 
 - english: a very simple explanation in 3 to 5 short sentences, with one tiny worked example.
 - roman_urdu: the same explanation in warm, conversational Roman Urdu.
 - real_life_example: one short, relatable local word problem from Pakistani daily life, in English and in Roman Urdu.
-${boundaryAsk}`,
+${boundaryAsk}${rejected}`,
     };
 }
 

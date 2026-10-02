@@ -111,8 +111,18 @@ export async function PATCH(request: NextRequest, context: Context) {
                 case "skipStep": {
                     const step = draft.steps.find((item) => item.id === edit.stepId);
                     if (!step || step.status !== "failed") throw new StudioError(409, "Only a failed step can be skipped.");
-                    const steps = draft.steps.map((item) => (item.id === edit.stepId ? { ...item, status: "done" as const, error: "Skipped: add these questions by hand." } : item));
+                    const steps = draft.steps.map((item) => (item.id === edit.stepId ? { ...item, status: "done" as const, skipped: true, error: "Skipped: add these questions by hand." } : item));
                     changes = { steps, ...(steps.every((item) => item.status === "done") ? { status: "needs_review" as const } : {}) };
+                    break;
+                }
+                case "retryStep": {
+                    const step = draft.steps.find((item) => item.id === edit.stepId);
+                    if (!step?.skipped) throw new StudioError(409, "Only a skipped step can be generated again.");
+                    // The step starts fresh: its old feedback described replies that no longer exist.
+                    const steps = draft.steps.map((item) => (item.id === edit.stepId
+                        ? { id: item.id, kind: item.kind, difficulty: item.difficulty, count: item.count, attempts: item.attempts, status: "pending" as const }
+                        : item));
+                    changes = { steps, status: "generating" };
                     break;
                 }
             }

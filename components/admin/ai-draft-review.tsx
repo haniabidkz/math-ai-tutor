@@ -81,7 +81,30 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
     const [olderQuestionCount, setOlderQuestionCount] = useState(0);
     const stopRef = useRef(false);
     const startedRef = useRef(false);
+    /** Set by "Reset this step": the next request for that step takes it over. */
+    const forceRef = useRef<string | null>(null);
+    const wakeRef = useRef<(() => void) | null>(null);
+    /** The step a request is in flight for and when it started, so the screen shows it moving. */
+    const [running, setRunning] = useState<{ stepId: string; since: number } | null>(null);
+    const [stuck, setStuck] = useState<{ stepId: string; startedAt: number | null } | null>(null);
+    const [now, setNow] = useState(() => Date.now());
     const base = `/api/admin/ai-studio/drafts/${draftId}`;
+
+    /** A wait the admin can cut short, for example by resetting a stuck step. */
+    const pause = useCallback((ms: number) => new Promise<void>((resolve) => {
+        const timer = window.setTimeout(() => { wakeRef.current = null; resolve(); }, ms);
+        wakeRef.current = () => { window.clearTimeout(timer); wakeRef.current = null; resolve(); };
+    }), []);
+
+    useEffect(() => {
+        if (!running) return;
+        const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+        return () => window.clearInterval(timer);
+    }, [running]);
+    const elapsed = (since: number) => {
+        const seconds = Math.max(0, Math.round((now - since) / 1000));
+        return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+    };
 
     const load = useCallback(async () => {
         const data = await adminApi<{ draft: GenerationDraft; liveTexts: string[]; olderQuestionCount?: number }>(base);
@@ -138,23 +161,35 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
         }
     }, [base]);
 
-    /** Runs the plan one step per request, retrying rejected replies with the reasons attached. */
-    const generate = useCallback(async (start: GenerationDraft) => {
+    /**
+     * Runs the plan one step per request, retrying rejected replies with the reasons attached.
+     * A step that keeps failing is set aside for the admin and the rest of the plan carries on,
+     * so one bad batch never freezes the queue. With `only`, just that step runs.
+     */
+    const generate = useCallback(async (start: GenerationDraft, only?: string) => {
         stopRef.current = false;
+        forceRef.current = null;
         setError("");
         setPhase("generating");
         let current = start;
         const tries = new Map<string, number>();
+        const givenUp: string[] = [];
+        let lastFailure = "";
         let waits = 0;
         let limitWaits = 0;
         try {
             while (!stopRef.current) {
-                const step = current.steps.find((item) => item.status !== "done");
+                const step = current.steps.find((item) => item.status !== "done" && !givenUp.includes(item.id) && (!only || item.id === only));
                 if (!step) break;
                 try {
-                    const data = await adminApi<{ draft: GenerationDraft }>(`${base}/generate`, jsonInit("POST", { stepId: step.id }));
+                    setRunning({ stepId: step.id, since: Date.now() });
+                    const force = forceRef.current === step.id;
+                    forceRef.current = null;
+                    const data = await adminApi<{ draft: GenerationDraft }>(`${base}/generate`, jsonInit("POST", { stepId: step.id, ...(force ? { force: true } : {}) }));
                     setWaiting("");
+                    setStuck(null);
                     limitWaits = 0;
+                    waits = 0;
                     current = data.draft;
                     setDraft(current);
                 } catch (caught) {
@@ -163,10 +198,13 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                         current = body.draft as GenerationDraft;
                         setDraft(current);
                     }
-                    // Another tab is running this step: wait for it instead of failing.
-                    if (caught instanceof ApiError && caught.status === 409 && current.status === "generating" && waits < 36) {
+                    // An earlier request (another tab, or one cut off by a timeout) still holds this
+                    // step. Wait for it to finish or go stale; the admin can reset it at any time.
+                    if (caught instanceof ApiError && caught.status === 409 && current.status === "generating" && waits < 40) {
                         waits += 1;
-                        await sleep(10_000);
+                        const details = body.details as { startedAt?: number | null } | undefined;
+                        setStuck({ stepId: step.id, startedAt: details?.startedAt ?? null });
+                        await pause(10_000);
                         current = await load();
                         continue;
                     }
@@ -174,26 +212,34 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                     if (WAIT_MS[code] && limitWaits < MAX_WAITS_IN_A_ROW) {
                         limitWaits += 1;
                         setWaiting(`${errorText(caught)} Waiting ${WAIT_MS[code] / 1000} seconds, then continuing...`);
-                        await sleep(WAIT_MS[code]);
+                        await pause(WAIT_MS[code]);
                         continue;
                     }
                     const count = (tries.get(step.id) ?? 0) + 1;
                     tries.set(step.id, count);
                     if (RETRYABLE.has(code) && count < MAX_TRIES) {
-                        await sleep(1_000);
+                        await pause(1_000);
                         continue;
                     }
-                    setError(describeFailure(caught));
-                    return;
+                    givenUp.push(step.id);
+                    lastFailure = describeFailure(caught);
+                    setStuck(null);
                 }
             }
             setWaiting("");
+            if (givenUp.length) {
+                setError(givenUp.length === 1
+                    ? `One step could not be finished: ${lastFailure} It has "Try again" and "Skip" below; the other steps carried on.`
+                    : `${givenUp.length} steps could not be finished. The last problem: ${lastFailure} Each one has "Try again" and "Skip" below.`);
+            }
             if (!stopRef.current && current.steps.every((item) => item.status === "done")) await check();
         } finally {
+            setRunning(null);
+            setStuck(null);
             setWaiting("");
             setPhase("idle");
         }
-    }, [base, check, load]);
+    }, [base, check, load, pause]);
 
     useEffect(() => {
         let cancelled = false;
@@ -255,6 +301,17 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
         });
     }, []);
 
+    /** Puts a skipped step back into the plan and writes its questions. */
+    async function retryStep(stepId: string) {
+        try {
+            const data = await adminApi<{ draft: GenerationDraft }>(base, jsonInit("PATCH", { op: "retryStep", stepId }));
+            setDraft(data.draft);
+            await generate(data.draft, stepId);
+        } catch (caught) {
+            setError(errorText(caught));
+        }
+    }
+
     async function approve() {
         if (!draft) return;
         if (!window.confirm(`Push ${draft.questions.length} questions to the live question bank? Students will start seeing them.`)) return;
@@ -309,7 +366,8 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
     const busy = phase !== "idle";
     const labels = stepLabels(draft.steps);
     const pendingSteps = draft.steps.filter((step) => step.status !== "done");
-    const failedStep = draft.steps.find((step) => step.status === "failed");
+    const failedSteps = draft.steps.filter((step) => step.status === "failed");
+    const skippedSteps = draft.steps.filter((step) => step.skipped);
     const checkable = draft.questions.filter((question) => question.verification.status === "pending" && question.questionText.trim() && question.options.every((option) => option.trim()));
     const checked = draft.questions.filter(isChecked).length;
     const disagreements = draft.questions.filter((question) => question.verification.status === "disagrees").length;
@@ -353,16 +411,30 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                 {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
                 {notice ? <Alert className="border-emerald-300 bg-emerald-50"><AlertDescription>{notice}</AlertDescription></Alert> : null}
                 {waiting ? <Alert className="border-amber-300 bg-amber-50"><Loader2 className="h-4 w-4 animate-spin" /><AlertDescription>{waiting}</AlertDescription></Alert> : null}
+                {stuck ? (
+                    <Alert className="border-amber-300 bg-amber-50">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+                            <span>
+                                {labels.get(stuck.stepId)} is still marked as running from an earlier request{stuck.startedAt ? ` (started ${elapsed(stuck.startedAt)} ago)` : ""}.
+                                {" "}Waiting for it to finish or time out. If that request is gone, reset the step.
+                            </span>
+                            <Button size="sm" variant="outline" onClick={() => { forceRef.current = stuck.stepId; wakeRef.current?.(); }}>
+                                <RotateCcw className="mr-2 h-4 w-4" />Reset this step and continue
+                            </Button>
+                        </AlertDescription>
+                    </Alert>
+                ) : null}
                 {live ? <Alert className="border-emerald-300 bg-emerald-50"><ShieldCheck className="h-4 w-4" /><AlertDescription>This pool is live in the question bank. It can no longer be edited here; use the Questions tab for changes.</AlertDescription></Alert> : null}
             </section>
 
-            {!live && (pendingSteps.length || draft.status === "generating") ? (
+            {!live && (pendingSteps.length || draft.status === "generating" || skippedSteps.length) ? (
                 <section className="space-y-3 bg-white p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
                             <h3 className="font-semibold">Generating</h3>
                             <p className="text-xs text-muted-foreground">
-                                {draft.questions.length} of {draft.quota.easy + draft.quota.medium + draft.quota.hard} questions written. Each step is one AI request for a small batch of questions; a reply that breaks a rule is rejected and written again.
+                                {draft.questions.length} of {draft.quota.easy + draft.quota.medium + draft.quota.hard} questions written. Each step is one AI request for a small batch of questions; a reply that breaks a rule is rejected and written again. A step that keeps failing is set aside and the others carry on.
                             </p>
                         </div>
                         {phase === "generating"
@@ -372,30 +444,39 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                     <ol className="grid gap-1 text-sm md:grid-cols-2">
                         {draft.steps.map((step) => (
                             <li key={step.id} className="flex items-start gap-2">
-                                {step.status === "done" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                                    : step.status === "running" ? <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-sky-600" />
-                                        : step.status === "failed" ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                                            : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-300" />}
+                                {step.skipped ? <SkipForward className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+                                    : step.status === "done" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                                        : step.status === "running" || running?.stepId === step.id ? <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-sky-600" />
+                                            : step.status === "failed" ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                                                : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-300" />}
                                 <span>
                                     {labels.get(step.id)}
                                     {step.attempts > 1 ? <span className="text-xs text-muted-foreground"> · {step.attempts} attempts</span> : null}
-                                    {step.error && step.status !== "running" ? <span className="block text-xs text-muted-foreground">{step.error}</span> : null}
+                                    {running?.stepId === step.id ? (
+                                        <span className="text-xs text-sky-700"> · {elapsed(running.since)}{now - running.since > 120_000 ? " · hard questions can take up to 3 minutes; nothing is stuck while this timer runs" : ""}</span>
+                                    ) : null}
+                                    {step.error && step.status !== "running" && running?.stepId !== step.id ? <span className="block text-xs text-muted-foreground">{step.error}</span> : null}
+                                    {step.skipped && phase === "idle" ? (
+                                        <Button size="sm" variant="link" className="h-auto p-0 text-xs" onClick={() => retryStep(step.id)}>
+                                            <RotateCcw className="mr-1 h-3 w-3" />Generate again
+                                        </Button>
+                                    ) : null}
                                 </span>
                             </li>
                         ))}
                     </ol>
-                    {failedStep && phase === "idle" ? (
-                        <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
-                            <p><strong>{labels.get(failedStep.id)}</strong> did not pass the checks.</p>
-                            {failedStep.feedback?.length ? (
-                                <ul className="list-disc pl-5 text-xs">{failedStep.feedback.slice(0, 5).map((item) => <li key={item}>{item}</li>)}</ul>
+                    {phase === "idle" ? failedSteps.map((step) => (
+                        <div key={step.id} className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
+                            <p><strong>{labels.get(step.id)}</strong> did not pass the checks{step.error ? `: ${step.error}` : "."}</p>
+                            {step.feedback?.length ? (
+                                <ul className="list-disc pl-5 text-xs">{step.feedback.slice(0, 5).map((item) => <li key={item}>{item}</li>)}</ul>
                             ) : null}
                             <div className="flex flex-wrap gap-2">
-                                <Button size="sm" onClick={() => generate(draft)}><RotateCcw className="mr-2 h-4 w-4" />Try again</Button>
-                                <Button size="sm" variant="outline" onClick={() => edit({ op: "skipStep", stepId: failedStep.id })}><SkipForward className="mr-2 h-4 w-4" />Skip and write these by hand</Button>
+                                <Button size="sm" onClick={() => generate(draft, step.id)}><RotateCcw className="mr-2 h-4 w-4" />Try this step again</Button>
+                                <Button size="sm" variant="outline" onClick={() => edit({ op: "skipStep", stepId: step.id })}><SkipForward className="mr-2 h-4 w-4" />Skip and write these by hand</Button>
                             </div>
                         </div>
-                    ) : null}
+                    )) : null}
                 </section>
             ) : null}
 

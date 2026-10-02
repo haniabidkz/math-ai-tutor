@@ -12,6 +12,7 @@ import {
     studioErrorResponse, StudioError, toClientDraft,
 } from "@/lib/ai-studio/store";
 import type { DraftConcept, DraftQuestion, GenerationDraft, GenerationStep } from "@/lib/ai-studio/types";
+import { questionRomanUrduProblems, romanUrduProblems } from "@/lib/ai-studio/urdu-check";
 import { brevityIssues, normalizeText } from "@/lib/ai-studio/validate";
 import { requireSuperAdmin } from "@/lib/server-auth";
 
@@ -29,7 +30,11 @@ const PER_MODEL_MS = 150_000;
  */
 const REASONING_BY_DIFFICULTY = { easy: "low", medium: "medium", hard: "high" } as const;
 
-const bodySchema = z.object({ stepId: z.string().min(1) });
+const bodySchema = z.object({
+    stepId: z.string().min(1),
+    /** Take over a step still marked running, when the admin says its earlier request is dead. */
+    force: z.boolean().optional(),
+});
 
 type Outcome =
     | { ok: true; concept?: DraftConcept; questions?: DraftQuestion[] }
@@ -39,11 +44,12 @@ async function runStep(draft: GenerationDraft, step: GenerationStep) {
     const tags = draft.target.microTopics.map((topic) => topic.microTag);
 
     if (step.kind === "concept") {
-        const prompt = conceptPrompt(draft);
+        const prompt = conceptPrompt(draft, step.feedback);
         const reply = await completeJson<unknown>({ role: "generation", ...prompt, schemaName: "concept_explanation", schema: conceptSchema, temperature: 0.6, maxOutputTokens: 16_000, timeoutMs: PER_MODEL_MS });
         const { concept, problems } = normalizeConcept(reply.data);
         const foreign = concept ? findForeignContext(concept.explanation.english, concept.example.english) : [];
         if (foreign.length) problems.push(`the explanation uses a foreign setting (${foreign.join(", ")}); use Pakistani daily life, Rupees and kilometres`);
+        if (concept) problems.push(...romanUrduProblems("the explanation", concept.explanation.romanUrdu), ...romanUrduProblems("the real-life example", concept.example.romanUrdu));
         const outcome: Outcome = concept && !problems.length ? { ok: true, concept } : { ok: false, problems, error: "The explanation was incomplete" };
         return { outcome, usage: reply.usage };
     }
@@ -72,6 +78,7 @@ async function runStep(draft: GenerationDraft, step: GenerationStep) {
         for (const issue of brevityIssues(question)) {
             if (issue.severity === "error") problems.push(`${label}: ${issue.message}`);
         }
+        problems.push(...questionRomanUrduProblems(label, question));
         const text = normalizeText(question.questionText);
         if (seen.has(text)) problems.push(`${label} repeats an existing question`);
         else {
@@ -102,7 +109,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     try {
         await requireSuperAdmin(request);
         const { id } = await context.params;
-        const { stepId } = bodySchema.parse(await request.json());
+        const { stepId, force = false } = bodySchema.parse(await request.json());
         const ref = draftsCollection().doc(id);
         const lockedAt = Date.now();
 
@@ -112,8 +119,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             const step = draft.steps.find((item) => item.id === stepId);
             if (!step) throw new StudioError(404, "That step is not part of this draft.");
             if (step.status === "done") return { draft, step, skip: true };
-            if (step.status === "running" && lockedAt - (step.startedAt ?? 0) < STALE_AFTER_MS) {
-                throw new StudioError(409, "This step is already running. Wait for it to finish.");
+            // A forced request takes the step over at once; if the earlier request ever finishes,
+            // the startedAt check in the save below drops its result.
+            if (step.status === "running" && !force && lockedAt - (step.startedAt ?? 0) < STALE_AFTER_MS) {
+                throw new StudioError(409, "This step is already running. Wait for it to finish.", { code: "running", startedAt: step.startedAt ?? null });
             }
             const steps = draft.steps.map((item) => (item.id === stepId ? { ...item, status: "running" as const, startedAt: lockedAt } : item));
             transaction.update(ref, { steps: clean(steps), updatedAt: FieldValue.serverTimestamp() });

@@ -104,6 +104,8 @@ export interface GenerationStep {
     /** Why the last reply was rejected; sent back to the model on the next attempt. */
     feedback?: string[];
     startedAt?: number;
+    /** Marked done by the admin without questions; "Generate again" puts it back in the plan. */
+    skipped?: boolean;
 }
 
 export type DraftStatus = "generating" | "needs_review" | "approved" | "discarded";
