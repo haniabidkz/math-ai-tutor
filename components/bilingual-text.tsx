@@ -21,6 +21,7 @@ export function BilingualText({
     className,
     children,
     prompt = "Read this in",
+    switcher = true,
 }: {
     text: LocalizedText;
     markdown?: boolean;
@@ -28,6 +29,8 @@ export function BilingualText({
     children?: ReactNode;
     /** The question asked before the first aid is shown, e.g. "Read the hint in". */
     prompt?: string;
+    /** Off when the screen has one language switch for all its aids; the chooser is then not shown. */
+    switcher?: boolean;
 }) {
     const [language, choose] = useAidLanguage();
     const hasTranslation = text.romanUrdu.trim().length > 0 && text.romanUrdu.trim() !== text.english.trim();
@@ -42,6 +45,8 @@ export function BilingualText({
     }
 
     if (!language) {
+        // A screen with one switch for all its aids reads in English until the student switches.
+        if (!switcher) return <div className={cn("space-y-2", className)}>{children}{render(text.english)}</div>;
         return (
             <div className={cn("space-y-3", className)}>
                 {children}
@@ -61,9 +66,11 @@ export function BilingualText({
         <div className={cn("space-y-2", className)}>
             {children}
             {language === "english" ? render(text.english) : render(text.romanUrdu, "ur-Latn")}
-            <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs text-muted-foreground" onClick={() => choose(other)}>
-                <Languages className="h-3.5 w-3.5" />Read in {NAMES[other]}
-            </Button>
+            {switcher ? (
+                <Button type="button" variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs text-muted-foreground" onClick={() => choose(other)}>
+                    <Languages className="h-3.5 w-3.5" />Read in {NAMES[other]}
+                </Button>
+            ) : null}
         </div>
     );
 }

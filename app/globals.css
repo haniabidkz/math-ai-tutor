@@ -7,6 +7,9 @@
 
 @theme {
   --font-sans: "Inter", "system-ui", "sans-serif";
+  /* Student screens: rounded display type for headings, a friendly body face for everything else. */
+  --font-display: var(--font-fredoka), "Fredoka", "system-ui", "sans-serif";
+  --font-body: var(--font-nunito), "Nunito", "system-ui", "sans-serif";
 
   --color-primary-50: #f0f9ff;
   --color-primary-100: #e0f2fe;

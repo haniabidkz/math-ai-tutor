@@ -190,6 +190,26 @@ export function suggestOptionAnalysis(question: QuestionBankItem, optionId: Loca
     return getOptionAnalysis({ ...question, optionAnalysis: undefined }, optionId);
 }
 
+/** Words in a concept's microTag that make a misconception's fixed guidance fit; tags not listed fit any topic. */
+const MISCONCEPTION_TOPIC_HINTS: Partial<Record<MisconceptionTag, string[]>> = {
+    "sign-direction": ["negative", "integer", "number-line", "sign"],
+    "wrong-operation-choice": ["addition", "subtraction", "operation", "arithmetic"],
+    "incomplete-inverse-operation": ["equation", "algebra", "inverse"],
+    "coefficient-vs-constant": ["coefficient", "algebra", "expression", "polynomial"],
+    "ratio-order-reversed": ["ratio", "proportion", "rate"],
+    "stopped-before-final-step": ["multi-step", "two-step", "word-problem", "equation"],
+};
+
+/**
+ * Whether a misconception's fixed guidance is about the concept's own topic. Authored analysis
+ * may borrow a tag from another family (an algebra tag on a sets question), and then only the
+ * question's own reason should be shown, not the generic tip.
+ */
+export function misconceptionFitsTopic(misconceptionTag: MisconceptionTag, microTag: string): boolean {
+    const hints = MISCONCEPTION_TOPIC_HINTS[misconceptionTag];
+    return !hints || hints.some((hint) => microTag.includes(hint));
+}
+
 export const MISCONCEPTION_TAGS = Object.keys(MISCONCEPTIONS) as MisconceptionTag[];
 export const MISTAKE_TYPES = Object.keys(MISTAKE_TYPE_LABELS) as MistakeType[];
 

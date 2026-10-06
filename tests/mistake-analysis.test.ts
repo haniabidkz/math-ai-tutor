@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     analysisForTag,
+    misconceptionFitsTopic,
     buildOptionAnalysis,
     deriveMisconceptionTag,
     getOptionAnalysis,
@@ -148,5 +149,19 @@ describe("seeded question bank", () => {
                 expect(item.optionAnalysis?.[option.id]?.misconceptionTag).toBeTruthy();
             }
         }
+    });
+});
+
+describe("misconceptionFitsTopic", () => {
+    it("keeps the generic tip only where its family matches the concept", () => {
+        expect(misconceptionFitsTopic("incomplete-inverse-operation", "c7-linear-equations")).toBe(true);
+        expect(misconceptionFitsTopic("incomplete-inverse-operation", "c6-defination-of-sets")).toBe(false);
+        expect(misconceptionFitsTopic("sign-direction", "class6-integers")).toBe(true);
+        expect(misconceptionFitsTopic("ratio-order-reversed", "c6-defination-of-sets")).toBe(false);
+    });
+
+    it("lets topic-free slips show their tip anywhere", () => {
+        expect(misconceptionFitsTopic("arithmetic-slip", "c6-defination-of-sets")).toBe(true);
+        expect(misconceptionFitsTopic("off-by-one-count", "c8-sets-union")).toBe(true);
     });
 });

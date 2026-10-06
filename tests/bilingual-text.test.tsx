@@ -45,4 +45,11 @@ describe("BilingualText", () => {
         expect(screen.getByText("42")).toBeInTheDocument();
         expect(screen.queryByRole("button")).not.toBeInTheDocument();
     });
+
+    it("reads in English without a chooser when the screen owns the language switch", () => {
+        render(<BilingualText text={{ english: "Add both sides.", romanUrdu: "Dono taraf jama karo." }} switcher={false} />);
+        expect(screen.getByText("Add both sides.")).toBeInTheDocument();
+        expect(screen.queryByRole("group")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    });
 });
