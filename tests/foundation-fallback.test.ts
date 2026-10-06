@@ -69,6 +69,9 @@ describe("previous-class same-topic fallback", () => {
 
     it("plans rounds of four with the mastery threshold as the pass mark", () => {
         expect(planFoundationRound(questions.slice(0, 8), 70)).toMatchObject({ roundSize: 4, maxRounds: 2, passMark: 3, index: 0, round: 1 });
+        // A stricter threshold never turns a round of four into "all four right".
+        expect(planFoundationRound(questions.slice(0, 8), 80)?.passMark).toBe(3);
+        expect(planFoundationRound(questions.slice(0, 8), 100)?.passMark).toBe(3);
         expect(planFoundationRound(questions.slice(0, 5), 70)?.queue).toHaveLength(4);
         expect(planFoundationRound(questions.slice(0, 3), 70)).toMatchObject({ roundSize: 3, maxRounds: 1, passMark: 3 });
         expect(planFoundationRound(questions.slice(0, 2), 70)).toBeNull();

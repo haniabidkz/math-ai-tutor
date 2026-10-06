@@ -90,8 +90,10 @@ export function planFoundationRound(questions: QuestionBankItem[], masteryThresh
     if (questions.length < FOUNDATION_MIN_QUESTIONS) return null;
     const roundSize = Math.min(FOUNDATION_ROUND_SIZE, questions.length);
     const maxRounds = Math.min(FOUNDATION_MAX_ROUNDS, Math.max(1, Math.floor(questions.length / roundSize)));
-    // The usual mastery threshold, applied to the round: 70% of 4 questions is 3 right.
-    const passMark = Math.max(1, Math.ceil((masteryThresholdPercent / 100) * roundSize));
+    // The usual mastery threshold, applied to the round: 70% of 4 questions is 3 right. A round
+    // of four or more never demands a perfect score, so an 80% threshold also means 3 of 4.
+    const byThreshold = Math.ceil((masteryThresholdPercent / 100) * roundSize);
+    const passMark = Math.max(1, roundSize >= 4 ? Math.min(byThreshold, roundSize - 1) : byThreshold);
     return { queue: questions.slice(0, roundSize * maxRounds), index: 0, roundSize, passMark, round: 1, maxRounds, correct: 0 };
 }
 
