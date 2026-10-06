@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import {
     Award, AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, CloudOff, Flame,
-    HelpCircle, Lightbulb, RefreshCw, RotateCcw, Sparkles, Target, Trophy, XCircle,
+    HelpCircle, Layers, Lightbulb, RefreshCw, RotateCcw, Sparkles, Target, Trophy, XCircle,
 } from "lucide-react";
 import { BilingualText } from "@/components/bilingual-text";
 import { ConceptGraphic } from "@/components/concept-graphic";
@@ -23,6 +23,7 @@ import {
     syncQueue,
 } from "@/lib/offline-queue";
 import type { ClientQuestion } from "@/lib/assessment-content";
+import type { FoundationProgress } from "@/lib/foundation-fallback";
 import type { MistakePayload } from "@/types/assessment";
 import type { LocalizedText } from "@/types/curriculum";
 
@@ -30,6 +31,8 @@ interface QuizState {
     id: string;
     kind: "mastery" | "weekly";
     microTag: string;
+    /** The student's own class; a foundation round borrows questions from the class before. */
+    classLevel?: number;
     question?: ClientQuestion;
     questions?: ClientQuestion[];
     questionNumber: number;
@@ -47,6 +50,7 @@ interface RemedialState {
 
 interface MisconceptionState { microTag: string; type: string; label: string; guidance: LocalizedText; practiceTotal: number }
 interface PracticeState { number: number; total: number; isRecheck: boolean }
+interface FoundationResult { outcome: "passed" | "not_passed"; title: LocalizedText; classLevel: number }
 /** Feedback on the answer just submitted, shown above the next question. */
 interface LastAnswer { isCorrect: boolean; explanation?: LocalizedText; mistake?: MistakePayload }
 interface ResultState {
@@ -71,6 +75,8 @@ function QuizContent() {
     const [explanation, setExplanation] = useState<LocalizedText | null>(null);
     const [misconception, setMisconception] = useState<MisconceptionState | null>(null);
     const [practice, setPractice] = useState<PracticeState | null>(null);
+    const [foundation, setFoundation] = useState<FoundationProgress | null>(null);
+    const [foundationResult, setFoundationResult] = useState<FoundationResult | null>(null);
     const [result, setResult] = useState<ResultState | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
@@ -100,6 +106,8 @@ function QuizContent() {
         setRemedial(null);
         setMisconception(null);
         setPractice(null);
+        setFoundation(null);
+        setFoundationResult(null);
         setLastAnswer(null);
         resetQuestionState();
         try {
@@ -176,22 +184,27 @@ function QuizContent() {
                 setMistake(data.mistake ?? null);
                 setExplanation(data.explanation ?? null);
                 setMisconception(data.misconception ?? null);
+                // A previous-class round, when offered, is announced on the review screen.
+                setFoundation(data.foundation ?? null);
                 setQuiz({ ...quiz, score: data.score });
                 return;
             }
 
-            // Next main question or the next item in a targeted practice queue.
+            // Next main question, the next practice item, or the next question of a foundation round.
             setLastAnswer(action === "answer" && typeof data.isCorrect === "boolean"
                 ? { isCorrect: data.isCorrect, explanation: data.explanation, mistake: data.mistake }
                 : null);
             setPractice(data.status === "misconception_practice" ? data.practice ?? null : null);
+            setFoundation(data.status === "foundation_practice" ? data.foundation ?? null : null);
+            setFoundationResult(data.foundationResult ?? null);
             setQuiz({ ...quiz, question: data.question, questionNumber: data.questionNumber ?? quiz.questionNumber, score: data.score });
             setRemedial(null);
             resetQuestionState();
             if (data.status !== "misconception_practice") setMisconception(null);
         } catch (caught) {
-            // fetch only throws when the request never reached the server.
-            if (action === "answer" && caught instanceof TypeError && quiz.question) {
+            // fetch only throws when the request never reached the server. Practice and
+            // foundation questions are not in the local list, so they are not answered offline.
+            if (action === "answer" && caught instanceof TypeError && quiz.question && !practice && !foundation) {
                 answerOffline(quiz, selected);
                 return;
             }
@@ -241,6 +254,7 @@ function QuizContent() {
             return;
         }
         setOfflineFinished(false);
+        setFoundation(session.foundation ?? null);
         setQuiz((current) => current ? {
             ...current,
             question: session.question ?? current.question,
@@ -409,10 +423,19 @@ function QuizContent() {
                             </AlertDescription>
                         </Alert>
                     ) : null}
+                    {foundation ? (
+                        <Alert className="border-indigo-300 bg-indigo-50">
+                            <Layers className="h-4 w-4 text-indigo-700" />
+                            <AlertTitle className="text-indigo-900">First, a short round of Class {foundation.classLevel} {foundation.title.english}</AlertTitle>
+                            <AlertDescription className="text-indigo-900">
+                                This topic builds on what Class {foundation.classLevel} taught. Answer {foundation.total} questions from there; get {foundation.passMark} right and you come back to your Class {quiz.classLevel ?? ""} questions. Your class and your score do not change.
+                            </AlertDescription>
+                        </Alert>
+                    ) : null}
                 </CardContent>
                 <CardFooter>
                     <Button className="ml-auto" onClick={() => evaluate("remedialComplete")} disabled={loading}>
-                        {misconception ? "Start targeted practice" : "Continue quiz"}<ArrowRight className="ml-2 h-4 w-4" />
+                        {foundation ? `Start the Class ${foundation.classLevel} round` : misconception ? "Start targeted practice" : "Continue quiz"}<ArrowRight className="ml-2 h-4 w-4" />
                     </Button>
                 </CardFooter>
             </Card>
@@ -443,6 +466,30 @@ function QuizContent() {
                                     <RefreshCw className={"mr-2 h-3.5 w-3.5 " + (syncing ? "animate-spin" : "")} />Sync now
                                 </Button>
                             ) : null}
+                        </AlertDescription>
+                    </Alert>
+                ) : null}
+                {foundation ? (
+                    <Alert className="mb-5 border-indigo-300 bg-indigo-50">
+                        <Layers className="h-4 w-4 text-indigo-700" />
+                        <AlertTitle className="text-indigo-900">
+                            Class {foundation.classLevel} {foundation.title.english} · question {foundation.number} of {foundation.total}{foundation.maxRounds > 1 ? ` · round ${foundation.round} of ${foundation.maxRounds}` : ""}
+                        </AlertTitle>
+                        <AlertDescription className="text-indigo-900">
+                            Get {foundation.passMark} of {foundation.total} right to return to your Class {quiz?.classLevel ?? ""} questions. These do not count towards your score.
+                        </AlertDescription>
+                    </Alert>
+                ) : null}
+                {foundationResult ? (
+                    <Alert className={`mb-5 ${foundationResult.outcome === "passed" ? "border-emerald-200 bg-emerald-50" : "border-indigo-200 bg-indigo-50"}`}>
+                        <Layers className={`h-4 w-4 ${foundationResult.outcome === "passed" ? "text-emerald-700" : "text-indigo-700"}`} />
+                        <AlertTitle className={foundationResult.outcome === "passed" ? "text-emerald-900" : "text-indigo-900"}>
+                            {foundationResult.outcome === "passed" ? `Well done: Class ${foundationResult.classLevel} ${foundationResult.title.english} is solid.` : `The Class ${foundationResult.classLevel} round is over.`}
+                        </AlertTitle>
+                        <AlertDescription className={foundationResult.outcome === "passed" ? "text-emerald-900" : "text-indigo-900"}>
+                            {foundationResult.outcome === "passed"
+                                ? `Back to your Class ${quiz?.classLevel ?? ""} questions.`
+                                : `Keep going with your Class ${quiz?.classLevel ?? ""} questions. If ${foundationResult.title.english} still feels hard, ask your teacher for help.`}
                         </AlertDescription>
                     </Alert>
                 ) : null}

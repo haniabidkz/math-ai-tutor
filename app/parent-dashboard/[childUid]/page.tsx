@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 import { AlertCircle, AlertTriangle, ArrowLeft, BookOpen, Clock, Flame, NotebookPen, Sparkles, Target, Trophy } from "lucide-react";
 import { ActiveTopicList } from "@/components/active-topics";
+import { DiagnosticResultCard } from "@/components/diagnostic-result";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -83,6 +84,8 @@ export default function ChildProgressPage() {
                 <Stat icon={<Clock className="h-4 w-4 text-amber-600" />} label="Time spent" value={formatDuration(m.timeSpentSeconds)} detail="On quizzes and tests" />
                 <Stat icon={<Sparkles className="h-4 w-4 text-purple-600" />} label="XP and streak" value={`${m.xp} XP`} detail={`${m.streak}-day streak`} extra={<Flame className="h-4 w-4 text-amber-500" />} />
             </div>
+
+            <DiagnosticResultCard summary={child.diagnostic} studentName={child.name} />
 
             <div className="grid gap-4 lg:grid-cols-2">
                 <Card>

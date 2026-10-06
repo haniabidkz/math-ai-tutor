@@ -1,4 +1,5 @@
 import { getRuntimeConcepts } from "@/lib/assessment-content";
+import { toDiagnosticSummary, type DiagnosticSummary } from "@/lib/diagnostic-summary";
 import { learningStatus, LEARNING_STATUS_LABELS, recommendNextLesson } from "@/lib/adaptive-recommendation";
 import { getConcept } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
@@ -28,6 +29,8 @@ export interface ChildSummary {
         streak: number;
     };
     activeTopics: Array<{ microTag: string; title: LocalizedText; topicTitle: LocalizedText; mastered: boolean; locked: boolean; percentage: number }>;
+    /** The diagnostic test result, exactly as the child saw it; null until they take it. */
+    diagnostic: DiagnosticSummary | null;
 }
 
 export interface ChildDetail extends ChildSummary {
@@ -112,6 +115,7 @@ export async function buildChildReport(uid: string, detail: boolean): Promise<Ch
             locked: concept.locked,
             percentage: concept.percentage,
         })),
+        diagnostic: toDiagnosticSummary(student.diagnosticProfile),
     };
     if (!detail) return summary;
 

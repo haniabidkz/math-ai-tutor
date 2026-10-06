@@ -4,12 +4,18 @@ import { addDays, isMastered, masteryPercentage, scoreDelta } from "@/lib/adapti
 import {
     getAssessmentConfig,
     getPublishedConcept,
+    getPublishedQuestions,
     selectQuizQuestions,
     toClientQuestion,
 } from "@/lib/assessment-content";
-import { sessionXp, type StoredAnswer, type StoredQuizSession } from "@/lib/assessment-session";
+import { currentQuizQuestion as activeQuestion, sessionXp, type StoredAnswer, type StoredQuizSession } from "@/lib/assessment-session";
 import { getConcept } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
+import {
+    advanceFoundationRound, FOUNDATION_MAX_ROUNDS, FOUNDATION_ROUND_SIZE, foundationProgress, planFoundationRound, shouldOfferFoundation,
+    type FoundationProgress,
+} from "@/lib/foundation-fallback";
+import { selectQuizQuestionSet } from "@/lib/question-selection";
 import { sessionDurationSeconds } from "@/lib/learner-metrics";
 import {
     activityDateKey,
@@ -59,6 +65,10 @@ type EvaluationOutcome = {
     misconception?: { microTag: string; type: MistakeType; tag: MisconceptionTag; label: string; guidance: LocalizedText; practiceTotal: number };
     /** Progress through the targeted practice queue that follows a misconception. */
     practice?: { number: number; total: number; isRecheck: boolean };
+    /** The previous-class round: offered on the remedial screen, then its progress while it runs. */
+    foundation?: FoundationProgress;
+    /** After a round ends: whether the student passed it before the quiz resumed. */
+    foundationResult?: { outcome: "passed" | "not_passed"; title: LocalizedText; classLevel: number };
     xpEarned?: number;
     totalXp?: number;
     streak?: number;
@@ -78,16 +88,15 @@ function currentResponse(session: StoredQuizSession, duplicate = false): Evaluat
         question: question ? toClientQuestion(question, "english") : undefined,
         questionNumber: Math.min(session.currentQuestionIndex + 1, session.questions.length),
         totalQuestions: session.questions.length,
+        foundation: roundProgress(session),
     };
 }
 
-/** The question the student is answering right now, from the main list or the practice queue. */
-function activeQuestion(session: StoredQuizSession): QuestionBankItem | undefined {
-    if (session.status === "misconception_practice") {
-        return session.practiceQueue?.[session.practiceIndex ?? 0];
-    }
-    if (session.status !== "active") return undefined;
-    return session.questions[session.currentQuestionIndex];
+/** Progress through a previous-class round, while one is running. */
+function roundProgress(session: StoredQuizSession): FoundationProgress | undefined {
+    return session.status === "foundation_practice" && session.foundationSource && session.foundation
+        ? foundationProgress(session.foundationSource, session.foundation)
+        : undefined;
 }
 
 function practiceProgress(session: StoredQuizSession, index: number): EvaluationOutcome["practice"] {
@@ -109,6 +118,12 @@ async function buildPracticeQueue(microTag: string, practiceCount: number, exclu
     const wanted = Math.max(1, practiceCount) + 1;
     const questions = await selectQuizQuestions(microTag, wanted, "easy", excludeIds, excludeIds);
     return questions.slice(0, wanted);
+}
+
+/** Up to two rounds of previous-class questions, easiest first, none the student met in this quiz. */
+async function foundationPool(microTags: string[], excludeIds: string[]): Promise<QuestionBankItem[]> {
+    const pools = await Promise.all(microTags.map((microTag) => getPublishedQuestions(microTag)));
+    return selectQuizQuestionSet(pools.flat(), FOUNDATION_ROUND_SIZE * FOUNDATION_MAX_ROUNDS, "easy", excludeIds, excludeIds);
 }
 
 export async function POST(request: NextRequest) {
@@ -165,6 +180,21 @@ export async function POST(request: NextRequest) {
             )
             : [];
 
+        // Struggling on the lesson's own questions opens a round of the same topic from the class
+        // before, when the curriculum has one. Built here because transactions cannot run queries.
+        const wrongMainSoFar = (initial.answers ?? []).filter((item) => !item.practice && !item.isCorrect).length;
+        const offerFoundation = Boolean(wrongOnMain && initial.foundationSource) && shouldOfferFoundation({
+            wrongMainAnswers: wrongMainSoFar + 1,
+            struggledBefore: initial.struggledBefore === true,
+            alreadyOffered: Boolean(initial.foundation),
+        });
+        const foundationRound = offerFoundation && initial.foundationSource
+            ? planFoundationRound(
+                await foundationPool(initial.foundationSource.microTags, [...initial.questions.map((item) => item.id), ...(initial.answers ?? []).map((item) => item.questionId)]),
+                config.masteryThresholdPercent,
+            )
+            : null;
+
         // Points for one topic are awarded once per day, and never for a retry.
         const awardRef = studentRef.collection("xpAwards").doc(xpAwardId(initial.microTag, activityDateKey()));
 
@@ -191,7 +221,7 @@ export async function POST(request: NextRequest) {
             const eventIds = [...(session.eventIds ?? []), eventId];
 
             if (action === "hint") {
-                if (session.status !== "active" && session.status !== "misconception_practice") throw new Error("REMEDIATION_REQUIRED");
+                if (session.status !== "active" && session.status !== "misconception_practice" && session.status !== "foundation_practice") throw new Error("REMEDIATION_REQUIRED");
                 if (!question) throw new Error("STALE_QUESTION");
                 const alreadyUsed = session.hintedQuestionIds?.includes(question.id) ?? false;
                 const delta = session.status === "active" ? scoreDelta("hint", alreadyUsed) : 0;
@@ -214,12 +244,36 @@ export async function POST(request: NextRequest) {
                     questionNumber: session.currentQuestionIndex + 1,
                     totalQuestions: session.questions.length,
                     practice: session.status === "misconception_practice" ? practiceProgress(session, session.practiceIndex ?? 0) : undefined,
+                    foundation: roundProgress(session),
                 };
                 return;
             }
 
             if (action === "remedialComplete") {
                 if (session.status !== "remedial_required") throw new Error("NO_REMEDIATION_PENDING");
+
+                // A previous-class round comes first; the quiz resumes once it is passed or used up.
+                if (session.foundation && !session.foundation.outcome && session.foundationSource) {
+                    transaction.update(sessionRef, {
+                        eventIds,
+                        status: "foundation_practice",
+                        remedialTag: null,
+                        updatedAt: FieldValue.serverTimestamp(),
+                    });
+                    outcome = {
+                        success: true,
+                        action,
+                        score: session.score,
+                        scoreDelta: 0,
+                        status: "foundation_practice",
+                        completed: false,
+                        question: toClientQuestion(session.foundation.queue[session.foundation.index], "english"),
+                        questionNumber: session.currentQuestionIndex + 1,
+                        totalQuestions: session.questions.length,
+                        foundation: foundationProgress(session.foundationSource, session.foundation),
+                    };
+                    return;
+                }
 
                 // A detected misconception diverts into targeted practice before the quiz resumes.
                 const queue = session.practiceQueue ?? [];
@@ -276,6 +330,84 @@ export async function POST(request: NextRequest) {
             if (question.id !== body.questionId) throw new Error("STALE_QUESTION");
             const correct = body.optionId === question.correctOptionId;
             const hintUsed = session.hintedQuestionIds?.includes(question.id) ?? false;
+
+            // ---- Answer inside a previous-class foundation round --------------------------
+            if (session.status === "foundation_practice") {
+                const round = session.foundation;
+                const source = session.foundationSource;
+                if (!round || !source) throw new Error("STALE_QUESTION");
+                const analysis = correct ? null : getOptionAnalysis(question, body.optionId);
+                // Round answers never move the score: they are practice from the class before.
+                const answers = [...(session.answers ?? []), {
+                    eventId,
+                    questionId: question.id,
+                    microTag: question.microTag,
+                    difficulty: question.difficulty,
+                    optionId: body.optionId,
+                    isCorrect: correct,
+                    scoreDelta: 0,
+                    answeredAt: new Date(),
+                    hintUsed,
+                    practice: true,
+                    foundation: true,
+                    mistakeType: analysis?.mistakeType ?? null,
+                    misconceptionTag: analysis?.misconceptionTag ?? null,
+                } satisfies StoredAnswer];
+                const step = advanceFoundationRound(round, correct);
+
+                if (!step.resume) {
+                    transaction.update(sessionRef, { eventIds, answers, foundation: step.round, updatedAt: FieldValue.serverTimestamp() });
+                    outcome = {
+                        success: true,
+                        action,
+                        isCorrect: correct,
+                        explanation: question.explanation,
+                        score: session.score,
+                        scoreDelta: 0,
+                        status: "foundation_practice",
+                        completed: false,
+                        question: toClientQuestion(step.round.queue[step.round.index], "english"),
+                        questionNumber: session.currentQuestionIndex + 1,
+                        totalQuestions: session.questions.length,
+                        foundation: foundationProgress(source, step.round),
+                        mistake: analysis ? mistakePayload(analysis) : undefined,
+                    };
+                    return;
+                }
+
+                // The round is over: back to the lesson's own questions, from the one after the miss.
+                const nextIndex = session.currentQuestionIndex + 1;
+                const completed = nextIndex >= session.questions.length;
+                transaction.update(sessionRef, {
+                    eventIds,
+                    answers,
+                    foundation: step.round,
+                    currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex,
+                    status: completed ? "completed" : "active",
+                    misconception: null,
+                    practiceQueue: [],
+                    practiceIndex: 0,
+                    ...(completed ? { completedAt: FieldValue.serverTimestamp() } : {}),
+                    updatedAt: FieldValue.serverTimestamp(),
+                });
+                outcome = {
+                    ...completeOrContinue(
+                        transaction,
+                        { ...session, eventIds, answers, foundation: step.round, currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex, status: completed ? "completed" : "active", practiceQueue: [], misconception: null },
+                        user.uid,
+                        student,
+                        { awardRef, alreadyAwardedToday },
+                        config,
+                        0,
+                        action,
+                        correct,
+                        question.explanation,
+                    ),
+                    foundationResult: { outcome: step.round.outcome ?? "not_passed", title: source.title, classLevel: source.classLevel },
+                    mistake: analysis ? mistakePayload(analysis) : undefined,
+                };
+                return;
+            }
 
             // ---- Answer inside the misconception practice queue -------------------------
             if (session.status === "misconception_practice") {
@@ -410,14 +542,17 @@ export async function POST(request: NextRequest) {
                     lastSeenAt: FieldValue.serverTimestamp(),
                 }, { merge: true });
 
-                const queue = misconception ? practiceQueue : [];
+                // The previous-class round takes precedence over targeted practice this time; the
+                // misconception stays on record and gets its practice on a later miss.
+                const queue = misconception && !foundationRound ? practiceQueue : [];
                 transaction.update(sessionRef, {
                     eventIds,
                     answers,
                     score,
                     status: "remedial_required",
                     remedialTag,
-                    ...(misconception
+                    ...(foundationRound ? { foundation: foundationRound } : {}),
+                    ...(queue.length
                         ? { misconception: { microTag: question.microTag, mistakeType, misconceptionTag }, practiceQueue: queue, practiceIndex: 0 }
                         : { misconception: null, practiceQueue: [], practiceIndex: 0 }),
                     updatedAt: FieldValue.serverTimestamp(),
@@ -450,6 +585,7 @@ export async function POST(request: NextRequest) {
                         guidance: MISCONCEPTIONS[misconceptionTag].guidance,
                         practiceTotal: queue.length,
                     } : undefined,
+                    foundation: foundationRound && session.foundationSource ? foundationProgress(session.foundationSource, foundationRound) : undefined,
                 };
                 return;
             }

@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged, User, signOut } from "firebase/auth";
 import { collection, getDocs } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
+import { toDiagnosticSummary, type DiagnosticSummary } from "@/lib/diagnostic-summary";
 import { ClassLevel, UnderstandingLevel } from "@/types/user";
+import { DiagnosticResultCard } from "@/components/diagnostic-result";
 
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
@@ -29,6 +31,8 @@ interface StudentData {
     class: ClassLevel;
     parentEmail?: string;
     adaptive_level?: number;
+    /** The diagnostic test result, as the student saw it; null until they take it. */
+    diagnostic: DiagnosticSummary | null;
     topicProgress: Array<{
         topicName: string;
         teachingLevel: number;
@@ -87,6 +91,7 @@ export default function TeacherStudentsPage() {
                         class: data.class,
                         parentEmail: data.parentEmail,
                         adaptive_level: data.adaptive_level,
+                        diagnostic: toDiagnosticSummary(data.diagnosticProfile),
                         topicProgress: progSnap.docs.map(p => p.data()) as StudentData["topicProgress"],
                         quizResults: quizSnap.docs.map(q => q.data()) as StudentData["quizResults"],
                     });
@@ -221,6 +226,11 @@ export default function TeacherStudentsPage() {
                                                         <p className="text-[10px] text-muted-foreground">Progress</p>
                                                     </div>
                                                     <Badge variant="outline" className="h-5 text-[10px] px-1.5">Class {student.class}</Badge>
+                                                    {student.diagnostic && (
+                                                        <Badge variant="outline" className="h-5 text-[10px] px-1.5 hidden sm:inline-flex">
+                                                            Diagnostic {student.diagnostic.correct}/{student.diagnostic.total}
+                                                        </Badge>
+                                                    )}
                                                     {student.adaptive_level && (
                                                         <Badge className="h-5 text-[10px] px-1.5 bg-indigo-100 text-indigo-700 border-0">
                                                             Lvl {student.adaptive_level}
@@ -261,6 +271,10 @@ export default function TeacherStudentsPage() {
                                                     <div className={`text-xl font-bold ${attentionCount > 0 ? "text-red-600 dark:text-red-400" : ""}`}>{attentionCount}</div>
                                                     <div className="text-xs text-muted-foreground">Need Help</div>
                                                 </div>
+                                            </div>
+
+                                            <div className="mb-5">
+                                                <DiagnosticResultCard summary={student.diagnostic} studentName={student.name} />
                                             </div>
 
                                             {/* Topic breakdown */}

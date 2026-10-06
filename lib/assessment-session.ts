@@ -1,5 +1,6 @@
 import type { Difficulty, Locale, MicroConcept, MisconceptionTag, MistakeType, QuestionBankItem } from "@/types/curriculum";
 import { MICRO_CONCEPTS, isLearningConceptForClass } from "@/lib/curriculum";
+import type { FoundationRound, FoundationSource } from "@/lib/foundation-fallback";
 import { XP_FIRST_ATTEMPT_CORRECT, XP_QUIZ_COMPLETED } from "@/lib/gamification";
 import type { TimestampLike } from "@/lib/learner-metrics";
 import { getDiagnosticBlueprint, overallBand, topicBand, type TopicBand } from "@/lib/diagnostic-blueprint";
@@ -21,6 +22,8 @@ export interface StoredAnswer {
     hintUsed?: boolean;
     /** Answered inside a misconception practice queue; excluded from the mastery score. */
     practice?: boolean;
+    /** Answered inside a previous-class foundation round (practice is also true). */
+    foundation?: boolean;
 }
 
 export interface SessionMisconception {
@@ -36,7 +39,7 @@ export interface StoredQuizSession {
     microTag: string;
     classLevel: 6 | 7 | 8;
     locale: Locale;
-    status: "active" | "remedial_required" | "misconception_practice" | "completed";
+    status: "active" | "remedial_required" | "misconception_practice" | "foundation_practice" | "completed";
     questions: QuestionBankItem[];
     currentQuestionIndex: number;
     score: number;
@@ -56,6 +59,22 @@ export interface StoredQuizSession {
     practiceQueue?: QuestionBankItem[];
     practiceIndex?: number;
     misconception?: SessionMisconception | null;
+    /** The previous-class lessons with the same title as this one, found when the quiz started. */
+    foundationSource?: FoundationSource | null;
+    /** An earlier quiz on this lesson fell short of mastery, so one wrong answer opens the round. */
+    struggledBefore?: boolean;
+    /** The previous-class round in progress, or finished with its outcome. */
+    foundation?: FoundationRound | null;
+}
+
+/** The question the student is answering now: from the main list, the practice queue or the foundation round. */
+export function currentQuizQuestion(
+    session: Pick<StoredQuizSession, "status" | "questions" | "currentQuestionIndex" | "practiceQueue" | "practiceIndex" | "foundation">,
+): QuestionBankItem | undefined {
+    if (session.status === "misconception_practice") return session.practiceQueue?.[session.practiceIndex ?? 0];
+    if (session.status === "foundation_practice") return session.foundation?.queue[session.foundation.index];
+    if (session.status !== "active") return undefined;
+    return session.questions[session.currentQuestionIndex];
 }
 
 /** XP is derived from the stored answers so replays and retries stay idempotent. */

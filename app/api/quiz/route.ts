@@ -11,7 +11,8 @@ import {
     toClientQuestion,
 } from "@/lib/assessment-content";
 import { chooseQuizDifficulty } from "@/lib/adaptive-engine";
-import type { StoredQuizSession } from "@/lib/assessment-session";
+import { currentQuizQuestion, type StoredQuizSession } from "@/lib/assessment-session";
+import { findPreviousClassTopic, foundationProgress, type FoundationSource } from "@/lib/foundation-fallback";
 import { getClassConcepts, getConcept, isLearningConceptForClass } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
 import { buildQuestionHistory, type HistoricalQuestionSession } from "@/lib/question-history";
@@ -101,6 +102,7 @@ export async function POST(request: NextRequest) {
             microTag = byTopic?.microTag ?? microTag;
         }
         let topicTitle: string | undefined;
+        let foundationSource: FoundationSource | null = null;
         if (kind === "mastery") {
             const concept = await getPublishedConcept(microTag);
             if (!concept) return NextResponse.json({ success: false, error: "Concept not found" }, { status: 404 });
@@ -108,12 +110,16 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ success: false, error: `This concept is not available for Class ${classLevel}` }, { status: 400 });
             }
             topicTitle = concept.title.english;
+            // The same topic one class down, ready in case the student struggles with this one.
+            foundationSource = findPreviousClassTopic(concept, await getRuntimeConcepts());
         }
 
         // Students do not pick a level: it follows the diagnostic and their last result here.
         const conceptProgress = kind === "mastery"
             ? (await adminDb.collection("students").doc(user.uid).collection("conceptProgress").doc(microTag).get()).data()
             : undefined;
+        // A lesson the student already fell short on opens the previous-class round after one miss.
+        const struggledBefore = kind === "mastery" && typeof conceptProgress?.percentage === "number" && conceptProgress.percentage < config.masteryThresholdPercent;
         const preferredDifficulty: Difficulty = chooseQuizDifficulty({
             baseline: profile.diagnosticProfile?.baselineDifficulty ?? null,
             adaptiveLevel: typeof profile.adaptive_level === "number" ? profile.adaptive_level : null,
@@ -165,6 +171,9 @@ export async function POST(request: NextRequest) {
             remedialTag: null,
             homeworkId,
             ...(topicTitle ? { topicTitle } : {}),
+            foundationSource,
+            struggledBefore,
+            foundation: null,
         };
         await adminDb.collection("students").doc(user.uid).collection("assessmentSessions").doc(sessionId).set({
             ...session,
@@ -189,6 +198,7 @@ export async function POST(request: NextRequest) {
                 kind,
                 homeworkId,
                 microTag,
+                classLevel,
                 question: toClientQuestion(questions[0], locale),
                 // The whole set is sent so the student can keep answering without a network.
                 questions: questions.map((item) => toClientQuestion(item, locale)),
@@ -214,19 +224,24 @@ export async function GET(request: NextRequest) {
         const snapshot = await adminDb.collection("students").doc(user.uid).collection("assessmentSessions").doc(sessionId).get();
         if (!snapshot.exists) return NextResponse.json({ success: false, error: "Session not found" }, { status: 404 });
         const session = snapshot.data() as StoredQuizSession;
+        const current = currentQuizQuestion(session);
         return NextResponse.json({
             success: true,
             session: {
                 id: session.id,
                 kind: session.kind,
                 microTag: session.microTag,
+                classLevel: session.classLevel,
                 status: session.status,
                 score: session.score,
                 maxScore: session.maxScore,
                 questionNumber: Math.min(session.currentQuestionIndex + 1, session.questions.length),
                 totalQuestions: session.questions.length,
-                question: session.status === "active" ? toClientQuestion(session.questions[session.currentQuestionIndex], "english") : undefined,
+                question: current ? toClientQuestion(current, "english") : undefined,
                 remedialTag: session.remedialTag,
+                foundation: session.status === "foundation_practice" && session.foundationSource && session.foundation
+                    ? foundationProgress(session.foundationSource, session.foundation)
+                    : undefined,
             },
         });
     } catch (error) {

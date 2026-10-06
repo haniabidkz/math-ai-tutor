@@ -108,6 +108,11 @@ export default function ParentDashboard() {
                                                 <span className={`rounded px-2 py-0.5 text-xs font-semibold ${STATUS_STYLES[child.learningStatus.key] ?? ""}`}>
                                                     {child.learningStatus.label.english}
                                                 </span>
+                                                <span className="text-xs text-muted-foreground">
+                                                    {child.diagnostic
+                                                        ? `Diagnostic ${child.diagnostic.correct}/${child.diagnostic.total} · maths level Class ${child.diagnostic.mathLevel}`
+                                                        : "Diagnostic test not taken yet"}
+                                                </span>
                                             </CardDescription>
                                         </div>
                                     </Link>

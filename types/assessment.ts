@@ -7,6 +7,7 @@ export type AssessmentSessionStatus =
     | "active"
     | "remedial_required"
     | "misconception_practice"
+    | "foundation_practice"
     | "completed";
 
 export interface AssessmentAnswerEvent {
