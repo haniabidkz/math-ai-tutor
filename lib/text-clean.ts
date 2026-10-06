@@ -37,3 +37,12 @@ export function findTextArtifacts(...texts: string[]): string[] {
     const combined = texts.join("\n");
     return ARTIFACTS.filter(([pattern]) => pattern.test(combined)).map(([, label]) => label);
 }
+
+/**
+ * A question's text follows every rule; its options may legitimately be a pair of brackets
+ * ("Which marks go around the elements of a set?"), so only boxes and blanks count there.
+ */
+export function findQuestionArtifacts(questionText: string, options: string[]): string[] {
+    const inOptions = findTextArtifacts(...options).filter((label) => label !== "empty brackets [ ]");
+    return [...new Set([...findTextArtifacts(questionText), ...inOptions])];
+}

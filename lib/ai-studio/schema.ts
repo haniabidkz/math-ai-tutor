@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { MISCONCEPTION_TAGS } from "@/lib/mistake-analysis";
 import { OPTION_LETTERS, type DraftConcept, type DraftQuestion, type OptionLetter } from "@/lib/ai-studio/types";
 import { stripOptionLabel } from "@/lib/ai-studio/validate";
-import { cleanMathText, findTextArtifacts } from "@/lib/text-clean";
+import { cleanMathText, findQuestionArtifacts } from "@/lib/text-clean";
 import type { Difficulty, MisconceptionTag } from "@/types/curriculum";
 
 /**
@@ -164,7 +164,7 @@ export function normalizeQuestionBatch(
         const microTag = text(item.micro_tag);
 
         if (!text(item.question_text)) problems.push(`${label} has no question text`);
-        const artifacts = findTextArtifacts(text(item.question_text), ...options);
+        const artifacts = findQuestionArtifacts(text(item.question_text), options);
         if (artifacts.length) problems.push(`${label} uses ${artifacts.join(" and ")}; write the question in words instead, such as "Which number makes..." or "Which sign makes..."`);
         if (options.length !== 4 || options.some((option) => !option)) problems.push(`${label} must have exactly 4 filled options`);
         else if (new Set(options.map((option) => option.toLowerCase())).size !== 4) problems.push(`${label} has repeated options`);

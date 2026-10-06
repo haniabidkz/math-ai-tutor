@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanMathText, findTextArtifacts } from "@/lib/text-clean";
+import { cleanMathText, findQuestionArtifacts, findTextArtifacts } from "@/lib/text-clean";
 
 describe("clean question text", () => {
     it("strips markdown, LaTeX wrappers and odd spacing", () => {
@@ -20,5 +20,11 @@ describe("clean question text", () => {
         expect(findTextArtifacts("Which sign makes T □ S = {1, 4, 7, 8} correct?")).toEqual(["a placeholder box (□)"]);
         expect(findTextArtifacts("3 + ___ = 5", "[ ]")).toEqual(["a blank (___)", "empty brackets [ ]"]);
         expect(findTextArtifacts("Fill in the blank: 2 + 2")).toEqual(["a fill-in-the-blank"]);
+    });
+
+    it("lets an option be a pair of brackets, but not the question", () => {
+        expect(findQuestionArtifacts("Which pair of marks goes around the elements of a set?", ["( )", "[ ]", "{ }", "< >"])).toEqual([]);
+        expect(findQuestionArtifacts("Write the set [ ] of even numbers", ["2", "4"])).toEqual(["empty brackets [ ]"]);
+        expect(findQuestionArtifacts("A set is a ___ collection.", ["well-defined", "□"])).toEqual(["a blank (___)", "a placeholder box (□)"]);
     });
 });

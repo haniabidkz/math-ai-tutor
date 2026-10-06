@@ -32,8 +32,9 @@ describe("ConceptEditor auto-fill", { timeout: 30_000 }, () => {
         expect(payload.topicId).toBe("class6-integers");
         expect(payload.order).toBe(7);
         expect(payload.prerequisiteTag).toBe("c6-integer-subtraction");
-        expect(payload.family).toBe("algebra");
-        expect(payload.visualKind).toBe("expression");
+        expect(payload.family).toBe("integer");
+        expect(payload.visualKind).toBe("number-line");
+        expect(payload.topicOrder).toBe(0);
         expect(payload.isNew).toBe(true);
         expect(payload.status).toBe("draft");
     });

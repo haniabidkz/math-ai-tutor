@@ -6,7 +6,7 @@ import { questionInputSchema } from "@/lib/admin-schemas";
 import { writeAuditLog } from "@/lib/admin-audit";
 import { builtInCurriculumEnabled, getConcept } from "@/lib/curriculum";
 import { buildOptionAnalysis } from "@/lib/mistake-analysis";
-import { cleanMathText, findTextArtifacts } from "@/lib/text-clean";
+import { cleanMathText, findQuestionArtifacts } from "@/lib/text-clean";
 import type { LocalizedText, QuestionBankItem } from "@/types/curriculum";
 import { authErrorResponse, requireSuperAdmin } from "@/lib/server-auth";
 
@@ -32,7 +32,7 @@ function cleanQuestion(item: ParsedQuestion): ParsedQuestion {
         hint: cleanPair(item.hint),
         explanation: cleanPair(item.explanation),
     };
-    const artifacts = findTextArtifacts(cleaned.question.english, ...cleaned.options.map((option) => option.english));
+    const artifacts = findQuestionArtifacts(cleaned.question.english, cleaned.options.map((option) => option.english));
     if (artifacts.length) throw new Error(`The question uses ${artifacts.join(" and ")}. Write it in words instead, such as "Which number makes x + 3 = 5 true?"`);
     return cleaned;
 }
