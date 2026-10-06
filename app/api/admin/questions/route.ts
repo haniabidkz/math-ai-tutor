@@ -6,7 +6,8 @@ import { questionInputSchema } from "@/lib/admin-schemas";
 import { writeAuditLog } from "@/lib/admin-audit";
 import { builtInCurriculumEnabled, getConcept } from "@/lib/curriculum";
 import { buildOptionAnalysis } from "@/lib/mistake-analysis";
-import type { QuestionBankItem } from "@/types/curriculum";
+import { cleanMathText, findTextArtifacts } from "@/lib/text-clean";
+import type { LocalizedText, QuestionBankItem } from "@/types/curriculum";
 import { authErrorResponse, requireSuperAdmin } from "@/lib/server-auth";
 
 type ParsedQuestion = ReturnType<typeof questionInputSchema.parse>;
@@ -20,7 +21,24 @@ const DIAGNOSTIC_PROTECTED = "Diagnostic test questions are protected and cannot
  * Every wrong option is saved with its analysis at creation time. Authored reasons are kept
  * as written; any option left blank gets the predefined reason for its misconception tag.
  */
-function withOptionAnalysis(item: ParsedQuestion) {
+const cleanPair = (value: LocalizedText): LocalizedText => ({ english: cleanMathText(value.english), romanUrdu: cleanMathText(value.romanUrdu) });
+
+/** Saved text is cleaned of stray formatting; a placeholder box or blank is refused outright. */
+function cleanQuestion(item: ParsedQuestion): ParsedQuestion {
+    const cleaned = {
+        ...item,
+        question: cleanPair(item.question),
+        options: item.options.map((option) => ({ ...option, ...cleanPair(option) })),
+        hint: cleanPair(item.hint),
+        explanation: cleanPair(item.explanation),
+    };
+    const artifacts = findTextArtifacts(cleaned.question.english, ...cleaned.options.map((option) => option.english));
+    if (artifacts.length) throw new Error(`The question uses ${artifacts.join(" and ")}. Write it in words instead, such as "Which number makes x + 3 = 5 true?"`);
+    return cleaned;
+}
+
+function withOptionAnalysis(raw: ParsedQuestion) {
+    const item = cleanQuestion(raw);
     const optionAnalysis = buildOptionAnalysis(item as unknown as QuestionBankItem);
     return { ...item, prerequisiteTag: item.prerequisiteTag ?? null, optionAnalysis };
 }

@@ -3,6 +3,7 @@ import { DIFFICULTIES } from "@/lib/ai-studio/quotas";
 import { isNearCopy, questionSignature, wordCount } from "@/lib/ai-studio/similarity";
 import { OPTION_LETTERS, type DraftQuestion, type GenerationDraft } from "@/lib/ai-studio/types";
 import { questionRomanUrduIssues, romanUrduIssues } from "@/lib/ai-studio/urdu-check";
+import { findTextArtifacts } from "@/lib/text-clean";
 import { MISCONCEPTIONS } from "@/lib/mistake-analysis";
 
 export interface DraftIssue {
@@ -80,6 +81,8 @@ export function questionIssues(question: DraftQuestion, allowedTags: Set<string>
 
     const foreign = findForeignContext(question.questionText, ...question.options, question.hint.english, question.solution.english);
     if (foreign.length) add(`Uses a foreign setting (${foreign.join(", ")}). Rewrite it with a local example.`);
+    const artifacts = findTextArtifacts(question.questionText, ...question.options);
+    if (artifacts.length) add(`Uses ${artifacts.join(" and ")}. Write the question in words instead ("Which number makes...").`);
     for (const issue of brevityIssues(question)) add(issue.message, issue.severity);
     // Roman Urdu must stay easy; the admin's own wording is a note here, never a block.
     for (const message of questionRomanUrduIssues("The", question)) add(message, "warning");

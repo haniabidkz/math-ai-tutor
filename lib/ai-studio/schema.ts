@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { MISCONCEPTION_TAGS } from "@/lib/mistake-analysis";
 import { OPTION_LETTERS, type DraftConcept, type DraftQuestion, type OptionLetter } from "@/lib/ai-studio/types";
 import { stripOptionLabel } from "@/lib/ai-studio/validate";
+import { cleanMathText, findTextArtifacts } from "@/lib/text-clean";
 import type { Difficulty, MisconceptionTag } from "@/types/curriculum";
 
 /**
@@ -116,7 +117,7 @@ interface RawQuestion {
     wrong_option_analysis?: Array<{ option?: unknown; english?: unknown; roman_urdu?: unknown; misconception_tag?: unknown }>;
 }
 
-const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+const text = (value: unknown) => (typeof value === "string" ? cleanMathText(value) : "");
 const pair = (value: RawBilingual | undefined) => ({ english: text(value?.english), romanUrdu: text(value?.roman_urdu) });
 
 /** Unique, trimmed, short list entries; a chapter may need one covered skill per micro-topic. */
@@ -163,6 +164,8 @@ export function normalizeQuestionBatch(
         const microTag = text(item.micro_tag);
 
         if (!text(item.question_text)) problems.push(`${label} has no question text`);
+        const artifacts = findTextArtifacts(text(item.question_text), ...options);
+        if (artifacts.length) problems.push(`${label} uses ${artifacts.join(" and ")}; write the question in words instead, such as "Which number makes..." or "Which sign makes..."`);
         if (options.length !== 4 || options.some((option) => !option)) problems.push(`${label} must have exactly 4 filled options`);
         else if (new Set(options.map((option) => option.toLowerCase())).size !== 4) problems.push(`${label} has repeated options`);
         if (!OPTION_LETTERS.includes(correct)) problems.push(`${label} has no valid correct option`);

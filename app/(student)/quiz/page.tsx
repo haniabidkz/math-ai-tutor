@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { BilingualText } from "@/components/bilingual-text";
 import { ConceptGraphic } from "@/components/concept-graphic";
+import { InsightBlock } from "@/components/insight-block";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -125,8 +126,8 @@ function QuizContent() {
             });
             const data = await response.json();
             if (!response.ok) {
-                // A lesson without practice questions yet explains itself instead of failing.
-                if (data.code === "no_questions") {
+                // A lesson without practice questions yet, or one still locked, explains itself instead of failing.
+                if (data.code === "no_questions" || data.code === "locked") {
                     setError(data.error);
                     return;
                 }
@@ -394,34 +395,24 @@ function QuizContent() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                     {mistake ? (
-                        <Alert className="border-rose-200 bg-rose-50">
-                            <XCircle className="h-4 w-4 text-rose-700" />
-                            <AlertTitle className="text-rose-900">Why that answer is wrong: {mistake.label}</AlertTitle>
-                            <AlertDescription className="text-rose-800">
-                                <BilingualText text={mistake.whyWrong} />
-                            </AlertDescription>
-                        </Alert>
+                        <InsightBlock tone="wrong" icon={<XCircle className="h-4 w-4" />}
+                            title={<>Why that answer is wrong<span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold normal-case tracking-normal">{mistake.label}</span></>}>
+                            <BilingualText text={mistake.whyWrong} prompt="Read the reason in" />
+                        </InsightBlock>
                     ) : null}
                     {explanation ? (
-                        <Alert>
-                            <Lightbulb className="h-4 w-4" />
-                            <AlertTitle>Explanation</AlertTitle>
-                            <AlertDescription><BilingualText text={explanation} /></AlertDescription>
-                        </Alert>
+                        <InsightBlock tone="explain" icon={<Lightbulb className="h-4 w-4" />} title="Step-by-step solution">
+                            <BilingualText text={explanation} prompt="Read the solution in" />
+                        </InsightBlock>
                     ) : null}
-                    <div>
-                        <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Concept</p>
-                        <BilingualText text={remedial.concept} />
-                    </div>
+                    <InsightBlock tone="concept" icon={<HelpCircle className="h-4 w-4" />} title="The idea again">
+                        <BilingualText text={remedial.concept} prompt="Read the concept in" />
+                    </InsightBlock>
                     {misconception ? (
-                        <Alert className="border-amber-300 bg-amber-50">
-                            <AlertTriangle className="h-4 w-4 text-amber-700" />
-                            <AlertTitle className="text-amber-900">This mistake keeps coming back</AlertTitle>
-                            <AlertDescription className="space-y-2 text-amber-900">
-                                <p>You have made this kind of mistake a few times on this concept. Here is the idea again, then a short set of practice questions.</p>
-                                <BilingualText text={misconception.guidance} className="font-medium" />
-                            </AlertDescription>
-                        </Alert>
+                        <InsightBlock tone="repeat" icon={<AlertTriangle className="h-4 w-4" />} title="This mistake keeps coming back">
+                            <p className="mb-2">You have made this kind of mistake a few times on this concept. Here is the idea again, then a short set of practice questions.</p>
+                            <BilingualText text={misconception.guidance} className="font-medium" prompt="Read the tip in" />
+                        </InsightBlock>
                     ) : null}
                     {foundation ? (
                         <Alert className="border-indigo-300 bg-indigo-50">
@@ -504,19 +495,14 @@ function QuizContent() {
                 ) : null}
                 {lastAnswer ? (
                     lastAnswer.isCorrect ? (
-                        <Alert className="mb-5 border-emerald-200 bg-emerald-50">
-                            <CheckCircle2 className="h-4 w-4 text-emerald-700" />
-                            <AlertTitle className="text-emerald-900">Correct</AlertTitle>
-                            {lastAnswer.explanation ? (
-                                <AlertDescription className="text-emerald-900"><BilingualText text={lastAnswer.explanation} /></AlertDescription>
-                            ) : null}
-                        </Alert>
+                        <InsightBlock tone="correct" className="mb-5" icon={<CheckCircle2 className="h-4 w-4" />} title="Correct">
+                            {lastAnswer.explanation ? <BilingualText text={lastAnswer.explanation} prompt="Read the solution in" /> : null}
+                        </InsightBlock>
                     ) : lastAnswer.mistake ? (
-                        <Alert className="mb-5 border-rose-200 bg-rose-50">
-                            <XCircle className="h-4 w-4 text-rose-700" />
-                            <AlertTitle className="text-rose-900">Why that answer is wrong: {lastAnswer.mistake.label}</AlertTitle>
-                            <AlertDescription className="text-rose-800"><BilingualText text={lastAnswer.mistake.whyWrong} /></AlertDescription>
-                        </Alert>
+                        <InsightBlock tone="wrong" className="mb-5" icon={<XCircle className="h-4 w-4" />}
+                            title={<>Why that answer is wrong<span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold normal-case tracking-normal">{lastAnswer.mistake.label}</span></>}>
+                            <BilingualText text={lastAnswer.mistake.whyWrong} prompt="Read the reason in" />
+                        </InsightBlock>
                     ) : null
                 ) : null}
                 {quiz && question ? (
@@ -529,14 +515,14 @@ function QuizContent() {
                         <Card className="rounded-lg">
                             <CardHeader>
                                 <Badge variant="outline" className="w-fit capitalize">{question.difficulty}</Badge>
-                                <CardTitle className="pt-4 text-xl leading-relaxed">{question.question}</CardTitle>
+                                <CardTitle className="break-words pt-4 text-xl leading-relaxed md:text-2xl md:leading-relaxed">{question.question}</CardTitle>
                             </CardHeader>
                             <CardContent className="grid gap-3">
                                 {question.options.map((option) => (
                                     <Button
                                         key={option.id}
                                         variant={selected === option.id ? "default" : "outline"}
-                                        className="h-auto min-h-12 justify-start whitespace-normal text-left"
+                                        className="h-auto min-h-12 justify-start whitespace-normal text-left text-base"
                                         onClick={() => setSelected(option.id)}
                                         disabled={loading}
                                     >
@@ -544,11 +530,9 @@ function QuizContent() {
                                     </Button>
                                 ))}
                                 {hint ? (
-                                    <Alert className="mt-3">
-                                        <Lightbulb className="h-4 w-4" />
-                                        <AlertTitle>Hint</AlertTitle>
-                                        <AlertDescription><BilingualText text={hint} /></AlertDescription>
-                                    </Alert>
+                                    <InsightBlock tone="hint" className="mt-3" icon={<Lightbulb className="h-4 w-4" />} title="Hint">
+                                        <BilingualText text={hint} prompt="Read the hint in" />
+                                    </InsightBlock>
                                 ) : null}
                             </CardContent>
                             <CardFooter className="flex justify-between border-t pt-5">

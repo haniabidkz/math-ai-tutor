@@ -20,8 +20,8 @@ export interface BrowsableTopic {
 }
 
 const copy = {
-    english: { mastered: "mastered", ready: "Ready to learn", locked: "Complete the prerequisite first" },
-    "roman-urdu": { mastered: "mukammal", ready: "Seekhna shuru karein", locked: "Pehle pichla concept mukammal karein" },
+    english: { mastered: "mastered", ready: "Ready to learn", locked: "Unlocks after the previous topic" },
+    "roman-urdu": { mastered: "mukammal", ready: "Seekhna shuru karein", locked: "Pichla topic mukammal hone par khulega" },
 };
 
 /** Shared concept list used by the dashboard and by /learn when no concept is chosen. */

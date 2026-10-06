@@ -65,7 +65,16 @@ export interface StoredQuizSession {
     struggledBefore?: boolean;
     /** The previous-class round in progress, or finished with its outcome. */
     foundation?: FoundationRound | null;
+    /** Adaptive quizzes: candidates not served yet, unseen first; absent on weekly and older sessions. */
+    pool?: QuestionBankItem[];
+    /** How many of the lesson's own questions the quiz asks; the score is out of this. */
+    questionCount?: number;
+    /** The last answer on the lesson's own questions, which decides the next difficulty. */
+    lastMainResult?: { difficulty: Difficulty; correct: boolean } | null;
 }
+
+/** The number of questions a quiz asks: fixed for adaptive quizzes, the list length otherwise. */
+export const quizTotal = (session: Pick<StoredQuizSession, "questions" | "questionCount">) => session.questionCount ?? session.questions.length;
 
 /** The question the student is answering now: from the main list, the practice queue or the foundation round. */
 export function currentQuizQuestion(

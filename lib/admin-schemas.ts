@@ -72,6 +72,7 @@ export const conceptInputSchema = z.object({
     example: localizedInputSchema.optional(),
     subTopic: localizedInputSchema.optional(),
     order: z.number().int().min(0),
+    topicOrder: z.number().int().min(0).optional(),
     foundationOnly: z.boolean().optional(),
     status: z.enum(["draft", "published", "archived"]),
 });

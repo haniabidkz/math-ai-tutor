@@ -1,4 +1,4 @@
-import { familyForTopic, suggestMicroTag, suggestTopicId, topicsForClass, visualForFamily } from "@/lib/concept-autofill";
+import { familyForTopic, nextTopicOrder, suggestMicroTag, suggestTopicId, topicsForClass, visualForFamily } from "@/lib/concept-autofill";
 import { MISCONCEPTIONS } from "@/lib/mistake-analysis";
 import { OPTION_LETTERS, type DraftQuestion, type GenerationDraft } from "@/lib/ai-studio/types";
 import type { LocalizedText, MicroConcept, QuestionBankItem, QuestionOptionAnalysis } from "@/types/curriculum";
@@ -70,6 +70,8 @@ export function newConceptFromDraft(
         family,
         visualKind: chapter?.visualKind ?? visualForFamily(family),
         order: chapter?.nextOrder ?? 0,
+        // A new chapter comes after the class's existing ones, so it unlocks last.
+        topicOrder: chapter?.topicOrder ?? nextTopicOrder(topics),
         status: "published",
     };
 }

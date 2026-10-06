@@ -10,14 +10,15 @@ import {
     selectQuizQuestions,
     toClientQuestion,
 } from "@/lib/assessment-content";
-import { chooseQuizDifficulty } from "@/lib/adaptive-engine";
 import { currentQuizQuestion, type StoredQuizSession } from "@/lib/assessment-session";
 import { findPreviousClassTopic, foundationProgress, type FoundationSource } from "@/lib/foundation-fallback";
 import { getClassConcepts, getConcept, isLearningConceptForClass } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
+import { buildConceptItems } from "@/lib/learner-metrics";
 import { buildQuestionHistory, type HistoricalQuestionSession } from "@/lib/question-history";
+import { orderByFreshness, takeNextQuestion, targetDifficulty } from "@/lib/question-selection";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
-import type { Difficulty, Locale, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
+import type { Locale, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
 
 function parseClass(value: unknown): StudentClassLevel | null {
     const parsed = Number(value);
@@ -103,6 +104,8 @@ export async function POST(request: NextRequest) {
         }
         let topicTitle: string | undefined;
         let foundationSource: FoundationSource | null = null;
+        const progressSnapshot = kind === "mastery" ? await adminDb.collection("students").doc(user.uid).collection("conceptProgress").get() : null;
+        const conceptProgress = progressSnapshot?.docs.find((doc) => doc.id === microTag)?.data();
         if (kind === "mastery") {
             const concept = await getPublishedConcept(microTag);
             if (!concept) return NextResponse.json({ success: false, error: "Concept not found" }, { status: 404 });
@@ -110,38 +113,44 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ success: false, error: `This concept is not available for Class ${classLevel}` }, { status: 400 });
             }
             topicTitle = concept.title.english;
+            const concepts = await getRuntimeConcepts();
+            // Lessons unlock one after another; homework set by a teacher opens its lesson regardless.
+            if (!homeworkId) {
+                const items = buildConceptItems(concepts, classLevel, new Map(progressSnapshot!.docs.map((doc) => [doc.id, doc.data()])), new Set(profile.diagnosticProfile?.strongMicroTags ?? []));
+                const item = items.find((entry) => entry.microTag === microTag);
+                if (item?.locked && item.blockedBy) {
+                    return NextResponse.json({ success: false, code: "locked", error: `Finish "${item.blockedBy.title.english}" first. Lessons unlock one after another.` }, { status: 409 });
+                }
+            }
             // The same topic one class down, ready in case the student struggles with this one.
-            foundationSource = findPreviousClassTopic(concept, await getRuntimeConcepts());
+            foundationSource = findPreviousClassTopic(concept, concepts);
         }
 
-        // Students do not pick a level: it follows the diagnostic and their last result here.
-        const conceptProgress = kind === "mastery"
-            ? (await adminDb.collection("students").doc(user.uid).collection("conceptProgress").doc(microTag).get()).data()
-            : undefined;
         // A lesson the student already fell short on opens the previous-class round after one miss.
         const struggledBefore = kind === "mastery" && typeof conceptProgress?.percentage === "number" && conceptProgress.percentage < config.masteryThresholdPercent;
-        const preferredDifficulty: Difficulty = chooseQuizDifficulty({
-            baseline: profile.diagnosticProfile?.baselineDifficulty ?? null,
-            adaptiveLevel: typeof profile.adaptive_level === "number" ? profile.adaptive_level : null,
-            conceptPercentage: typeof conceptProgress?.percentage === "number" ? conceptProgress.percentage : null,
-        });
 
         const history = await questionHistory(user.uid, kind, kind === "weekly" ? "weekly-review" : microTag);
-        const questions = kind === "weekly"
-            ? await weeklyQuestions(
+        let questions: QuestionBankItem[];
+        let pool: QuestionBankItem[] | null = null;
+        let questionCount: number;
+        if (kind === "weekly") {
+            questions = await weeklyQuestions(
                 classLevel,
                 profile.diagnosticProfile?.weakMicroTags ?? [],
                 config.weeklyQuestionCount,
                 history.seenIds,
                 history.previousAttemptIds,
-            )
-            : await selectQuizQuestions(
-                microTag,
-                Number(homework?.questionCount ?? config.masteryQuestionCount),
-                preferredDifficulty,
-                history.seenIds,
-                history.previousAttemptIds,
             );
+            questionCount = questions.length;
+        } else {
+            // Adaptive: the lesson's pool travels with the session, unseen questions first. The
+            // quiz opens on an easy question and routes each next one by the answer before it.
+            const candidates = orderByFreshness(await getPublishedQuestions(microTag), history.seenIds, history.previousAttemptIds);
+            questionCount = Math.min(Number(homework?.questionCount ?? config.masteryQuestionCount), candidates.length);
+            const first = takeNextQuestion(candidates, targetDifficulty(0, null));
+            questions = first ? [first.question] : [];
+            pool = first ? first.pool : [];
+        }
         if (!questions.length) {
             return NextResponse.json({
                 success: false,
@@ -163,7 +172,10 @@ export async function POST(request: NextRequest) {
             questions,
             currentQuestionIndex: 0,
             score: 0,
-            maxScore: questions.length,
+            maxScore: questionCount,
+            questionCount,
+            ...(pool ? { pool } : {}),
+            lastMainResult: null,
             hintedQuestionIds: [],
             eventIds: [],
             answers: [],
@@ -200,10 +212,10 @@ export async function POST(request: NextRequest) {
                 microTag,
                 classLevel,
                 question: toClientQuestion(questions[0], locale),
-                // The whole set is sent so the student can keep answering without a network.
-                questions: questions.map((item) => toClientQuestion(item, locale)),
+                // The whole pool is sent so the student can keep answering without a network.
+                questions: [...questions, ...(pool ?? [])].map((item) => toClientQuestion(item, locale)),
                 questionNumber: 1,
-                totalQuestions: questions.length,
+                totalQuestions: questionCount,
                 score: 0,
             },
         }, { status: 201 });
@@ -235,8 +247,8 @@ export async function GET(request: NextRequest) {
                 status: session.status,
                 score: session.score,
                 maxScore: session.maxScore,
-                questionNumber: Math.min(session.currentQuestionIndex + 1, session.questions.length),
-                totalQuestions: session.questions.length,
+                questionNumber: Math.min(session.currentQuestionIndex + 1, session.questionCount ?? session.questions.length),
+                totalQuestions: session.questionCount ?? session.questions.length,
                 question: current ? toClientQuestion(current, "english") : undefined,
                 remedialTag: session.remedialTag,
                 foundation: session.status === "foundation_practice" && session.foundationSource && session.foundation

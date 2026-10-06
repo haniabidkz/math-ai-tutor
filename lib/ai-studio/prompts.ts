@@ -30,7 +30,8 @@ SHORT AND QUICK (strict)
 
 MATH
 - Work every calculation out carefully and double-check it before answering. The marked answer must be exactly right.
-- Each question has exactly one correct option. The other three options must be believable mistakes a student really makes.`.trim();
+- Each question has exactly one correct option. The other three options must be believable mistakes a student really makes.
+- Never put a placeholder box, blank or empty bracket in a question or option (no "x + □ = 3", "___" or "[ ]"). Ask in words: "Which number makes x + 3 = 5 true?" or "Which sign between T and S gives {1, 4, 7, 8}?". No markdown, no LaTeX: plain text and ordinary symbols (+, −, ×, ÷, =, /).`.trim();
 
 const DIFFICULTY_RULES: Record<Difficulty, string> = {
     easy: "EASY: one step. Recall the idea or apply it directly, in the style of the Sindh Textbook Board.",

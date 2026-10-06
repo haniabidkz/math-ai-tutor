@@ -32,6 +32,8 @@ export interface MicroConcept {
     /** Optional grouping between the chapter (topic) and the micro-concept. */
     subTopic?: LocalizedText;
     order: number;
+    /** The chapter's place in its class; lessons unlock chapter by chapter in this order. */
+    topicOrder?: number;
     foundationOnly?: boolean;
     status: ContentStatus;
 }

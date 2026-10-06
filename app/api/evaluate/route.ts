@@ -8,14 +8,14 @@ import {
     selectQuizQuestions,
     toClientQuestion,
 } from "@/lib/assessment-content";
-import { currentQuizQuestion as activeQuestion, sessionXp, type StoredAnswer, type StoredQuizSession } from "@/lib/assessment-session";
+import { currentQuizQuestion as activeQuestion, quizTotal, sessionXp, type StoredAnswer, type StoredQuizSession } from "@/lib/assessment-session";
 import { getConcept } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
 import {
     advanceFoundationRound, FOUNDATION_MAX_ROUNDS, FOUNDATION_ROUND_SIZE, foundationProgress, planFoundationRound, shouldOfferFoundation,
     type FoundationProgress,
 } from "@/lib/foundation-fallback";
-import { selectQuizQuestionSet } from "@/lib/question-selection";
+import { selectQuizQuestionSet, takeNextQuestion, targetDifficulty } from "@/lib/question-selection";
 import { sessionDurationSeconds } from "@/lib/learner-metrics";
 import {
     activityDateKey,
@@ -87,7 +87,7 @@ function currentResponse(session: StoredQuizSession, duplicate = false): Evaluat
         completed: session.status === "completed",
         question: question ? toClientQuestion(question, "english") : undefined,
         questionNumber: Math.min(session.currentQuestionIndex + 1, session.questions.length),
-        totalQuestions: session.questions.length,
+        totalQuestions: quizTotal(session),
         foundation: roundProgress(session),
     };
 }
@@ -120,6 +120,34 @@ async function buildPracticeQueue(microTag: string, practiceCount: number, exclu
     return questions.slice(0, wanted);
 }
 
+/**
+ * Moves the quiz on from the question just dealt with, or completes it. An adaptive session
+ * routes the next question by the last answer on the lesson's own questions (two easy to
+ * open, then up after a correct answer and down after a wrong one); an older session walks
+ * its fixed list.
+ */
+function advanceMain(session: StoredQuizSession, answers: StoredAnswer[]): { next: StoredQuizSession; update: Record<string, unknown> } {
+    const completedAt = FieldValue.serverTimestamp();
+    if (session.pool) {
+        const answered = answers.filter((answer) => !answer.practice).length;
+        const pick = answered >= quizTotal(session) ? null : takeNextQuestion(session.pool, targetDifficulty(answered, session.lastMainResult));
+        const questions = pick ? [...session.questions, pick.question] : session.questions;
+        const next: StoredQuizSession = {
+            ...session,
+            answers,
+            questions,
+            pool: pick ? pick.pool : session.pool,
+            currentQuestionIndex: pick ? questions.length - 1 : session.currentQuestionIndex,
+            status: pick ? "active" : "completed",
+        };
+        return { next, update: { answers, questions, pool: next.pool, currentQuestionIndex: next.currentQuestionIndex, status: next.status, ...(pick ? {} : { completedAt }) } };
+    }
+    const nextIndex = session.currentQuestionIndex + 1;
+    const completed = nextIndex >= session.questions.length;
+    const next: StoredQuizSession = { ...session, answers, currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex, status: completed ? "completed" : "active" };
+    return { next, update: { answers, currentQuestionIndex: next.currentQuestionIndex, status: next.status, ...(completed ? { completedAt } : {}) } };
+}
+
 /** Up to two rounds of previous-class questions, easiest first, none the student met in this quiz. */
 async function foundationPool(microTags: string[], excludeIds: string[]): Promise<QuestionBankItem[]> {
     const pools = await Promise.all(microTags.map((microTag) => getPublishedQuestions(microTag)));
@@ -146,9 +174,14 @@ export async function POST(request: NextRequest) {
         if (initial.eventIds?.includes(eventId)) return NextResponse.json(currentResponse(initial, true));
 
         const initialQuestion = activeQuestion(initial);
-        if (action !== "remedialComplete" && (!initialQuestion || body.questionId !== initialQuestion.id)) {
+        // Offline, the student answers from the local copy of the pool, so any pool question is current enough.
+        const fromPool = initial.status === "active" && body.questionId !== initialQuestion?.id
+            ? initial.pool?.find((item) => item.id === body.questionId) ?? null
+            : null;
+        if (action !== "remedialComplete" && (!initialQuestion || (body.questionId !== initialQuestion.id && !fromPool))) {
             return NextResponse.json({ success: false, error: "Question is no longer current" }, { status: 409 });
         }
+        const targetQuestion = fromPool ?? initialQuestion;
         if (action === "answer" && !["A", "B", "C", "D"].includes(body.optionId)) {
             return NextResponse.json({ success: false, error: "Select one answer option" }, { status: 400 });
         }
@@ -162,19 +195,20 @@ export async function POST(request: NextRequest) {
         // Firestore transactions cannot run queries, and this keeps the write path deterministic.
         const wrongOnMain = action === "answer"
             && initial.status === "active"
-            && initialQuestion
-            && body.optionId !== initialQuestion.correctOptionId;
-        const pendingAnalysis = wrongOnMain && initialQuestion
-            ? getOptionAnalysis(initialQuestion, body.optionId)
+            && targetQuestion
+            && body.optionId !== targetQuestion.correctOptionId;
+        const pendingAnalysis = wrongOnMain && targetQuestion
+            ? getOptionAnalysis(targetQuestion, body.optionId)
             : null;
         // Exclude the main questions and anything already answered, so a repeated
         // misconception gets fresh practice rather than the same pair again.
-        const practiceQueue = wrongOnMain && initialQuestion
+        const practiceQueue = wrongOnMain && targetQuestion
             ? await buildPracticeQueue(
-                initialQuestion.microTag,
+                targetQuestion.microTag,
                 config.misconceptionPracticeCount,
                 [
                     ...initial.questions.map((item) => item.id),
+                    ...(initial.pool ?? []).map((item) => item.id),
                     ...(initial.answers ?? []).map((item) => item.questionId),
                 ],
             )
@@ -206,8 +240,22 @@ export async function POST(request: NextRequest) {
             const snapshot = await transaction.get(sessionRef);
             const student = (await transaction.get(studentRef)).data() ?? {};
             const alreadyAwardedToday = (await transaction.get(awardRef)).exists;
-            const session = snapshot.data() as StoredQuizSession | undefined;
+            let session = snapshot.data() as StoredQuizSession | undefined;
             if (!session) throw new Error("SESSION_NOT_FOUND");
+            // An answer to a pool question other than the routed one (answered offline) takes the
+            // current slot, and the routed question goes back to the front of the pool.
+            let swapUpdate: Partial<Pick<StoredQuizSession, "questions" | "pool">> = {};
+            if (action === "answer" && session.status === "active" && session.pool?.length && body.questionId !== session.questions[session.currentQuestionIndex]?.id) {
+                const current = session;
+                const swapped = current.pool!.find((item) => item.id === body.questionId);
+                if (swapped) {
+                    const displaced = current.questions[current.currentQuestionIndex];
+                    const questions = current.questions.map((item, position) => (position === current.currentQuestionIndex ? swapped : item));
+                    const pool = [...(displaced ? [displaced] : []), ...current.pool!.filter((item) => item.id !== swapped.id)];
+                    session = { ...current, questions, pool };
+                    swapUpdate = { questions, pool };
+                }
+            }
             if (session.eventIds?.includes(eventId)) {
                 outcome = currentResponse(session, true);
                 return;
@@ -242,7 +290,7 @@ export async function POST(request: NextRequest) {
                     completed: false,
                     question: toClientQuestion(question, "english"),
                     questionNumber: session.currentQuestionIndex + 1,
-                    totalQuestions: session.questions.length,
+                    totalQuestions: quizTotal(session),
                     practice: session.status === "misconception_practice" ? practiceProgress(session, session.practiceIndex ?? 0) : undefined,
                     foundation: roundProgress(session),
                 };
@@ -269,7 +317,7 @@ export async function POST(request: NextRequest) {
                         completed: false,
                         question: toClientQuestion(session.foundation.queue[session.foundation.index], "english"),
                         questionNumber: session.currentQuestionIndex + 1,
-                        totalQuestions: session.questions.length,
+                        totalQuestions: quizTotal(session),
                         foundation: foundationProgress(session.foundationSource, session.foundation),
                     };
                     return;
@@ -294,35 +342,15 @@ export async function POST(request: NextRequest) {
                         completed: false,
                         question: toClientQuestion(queue[0], "english"),
                         questionNumber: session.currentQuestionIndex + 1,
-                        totalQuestions: session.questions.length,
+                        totalQuestions: quizTotal(session),
                         practice: practiceProgress({ ...session, practiceQueue: queue }, 0),
                     };
                     return;
                 }
 
-                const nextIndex = session.currentQuestionIndex + 1;
-                const completed = nextIndex >= session.questions.length;
-                transaction.update(sessionRef, {
-                    eventIds,
-                    currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex,
-                    status: completed ? "completed" : "active",
-                    remedialTag: null,
-                    misconception: null,
-                    practiceQueue: [],
-                    practiceIndex: 0,
-                    ...(completed ? { completedAt: FieldValue.serverTimestamp() } : {}),
-                    updatedAt: FieldValue.serverTimestamp(),
-                });
-                outcome = completeOrContinue(
-                    transaction,
-                    { ...session, eventIds, currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex, status: completed ? "completed" : "active", remedialTag: null },
-                    user.uid,
-                    student,
-                    { awardRef, alreadyAwardedToday },
-                    config,
-                    0,
-                    action,
-                );
+                const moved = advanceMain({ ...session, eventIds, remedialTag: null, misconception: null, practiceQueue: [], practiceIndex: 0 }, session.answers ?? []);
+                transaction.update(sessionRef, { eventIds, ...moved.update, remedialTag: null, misconception: null, practiceQueue: [], practiceIndex: 0, updatedAt: FieldValue.serverTimestamp() });
+                outcome = completeOrContinue(transaction, moved.next, user.uid, student, { awardRef, alreadyAwardedToday }, config, 0, action);
                 return;
             }
 
@@ -368,41 +396,18 @@ export async function POST(request: NextRequest) {
                         completed: false,
                         question: toClientQuestion(step.round.queue[step.round.index], "english"),
                         questionNumber: session.currentQuestionIndex + 1,
-                        totalQuestions: session.questions.length,
+                        totalQuestions: quizTotal(session),
                         foundation: foundationProgress(source, step.round),
                         mistake: analysis ? mistakePayload(analysis) : undefined,
                     };
                     return;
                 }
 
-                // The round is over: back to the lesson's own questions, from the one after the miss.
-                const nextIndex = session.currentQuestionIndex + 1;
-                const completed = nextIndex >= session.questions.length;
-                transaction.update(sessionRef, {
-                    eventIds,
-                    answers,
-                    foundation: step.round,
-                    currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex,
-                    status: completed ? "completed" : "active",
-                    misconception: null,
-                    practiceQueue: [],
-                    practiceIndex: 0,
-                    ...(completed ? { completedAt: FieldValue.serverTimestamp() } : {}),
-                    updatedAt: FieldValue.serverTimestamp(),
-                });
+                // The round is over: back to the lesson's own questions, routed from the miss that opened it.
+                const moved = advanceMain({ ...session, eventIds, foundation: step.round, misconception: null, practiceQueue: [], practiceIndex: 0 }, answers);
+                transaction.update(sessionRef, { eventIds, ...moved.update, foundation: step.round, misconception: null, practiceQueue: [], practiceIndex: 0, updatedAt: FieldValue.serverTimestamp() });
                 outcome = {
-                    ...completeOrContinue(
-                        transaction,
-                        { ...session, eventIds, answers, foundation: step.round, currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex, status: completed ? "completed" : "active", practiceQueue: [], misconception: null },
-                        user.uid,
-                        student,
-                        { awardRef, alreadyAwardedToday },
-                        config,
-                        0,
-                        action,
-                        correct,
-                        question.explanation,
-                    ),
+                    ...completeOrContinue(transaction, moved.next, user.uid, student, { awardRef, alreadyAwardedToday }, config, 0, action, correct, question.explanation),
                     foundationResult: { outcome: step.round.outcome ?? "not_passed", title: source.title, classLevel: source.classLevel },
                     mistake: analysis ? mistakePayload(analysis) : undefined,
                 };
@@ -450,7 +455,7 @@ export async function POST(request: NextRequest) {
                         completed: false,
                         question: toClientQuestion(queue[index + 1], "english"),
                         questionNumber: session.currentQuestionIndex + 1,
-                        totalQuestions: session.questions.length,
+                        totalQuestions: quizTotal(session),
                         practice: practiceProgress(session, index + 1),
                         mistake: analysis ? mistakePayload(analysis) : undefined,
                     };
@@ -465,31 +470,9 @@ export async function POST(request: NextRequest) {
                         { merge: true },
                     );
                 }
-                const nextIndex = session.currentQuestionIndex + 1;
-                const completed = nextIndex >= session.questions.length;
-                transaction.update(sessionRef, {
-                    eventIds,
-                    answers,
-                    currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex,
-                    status: completed ? "completed" : "active",
-                    practiceQueue: [],
-                    practiceIndex: 0,
-                    misconception: null,
-                    ...(completed ? { completedAt: FieldValue.serverTimestamp() } : {}),
-                    updatedAt: FieldValue.serverTimestamp(),
-                });
-                outcome = completeOrContinue(
-                    transaction,
-                    { ...session, eventIds, answers, currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex, status: completed ? "completed" : "active", practiceQueue: [], misconception: null },
-                    user.uid,
-                    student,
-                    { awardRef, alreadyAwardedToday },
-                    config,
-                    0,
-                    action,
-                    correct,
-                    question.explanation,
-                );
+                const moved = advanceMain({ ...session, eventIds, practiceQueue: [], practiceIndex: 0, misconception: null }, answers);
+                transaction.update(sessionRef, { eventIds, ...moved.update, practiceQueue: [], practiceIndex: 0, misconception: null, updatedAt: FieldValue.serverTimestamp() });
+                outcome = completeOrContinue(transaction, moved.next, user.uid, student, { awardRef, alreadyAwardedToday }, config, 0, action, correct, question.explanation);
                 return;
             }
 
@@ -546,11 +529,13 @@ export async function POST(request: NextRequest) {
                 // misconception stays on record and gets its practice on a later miss.
                 const queue = misconception && !foundationRound ? practiceQueue : [];
                 transaction.update(sessionRef, {
+                    ...swapUpdate,
                     eventIds,
                     answers,
                     score,
                     status: "remedial_required",
                     remedialTag,
+                    lastMainResult: { difficulty: question.difficulty, correct: false },
                     ...(foundationRound ? { foundation: foundationRound } : {}),
                     ...(queue.length
                         ? { misconception: { microTag: question.microTag, mistakeType, misconceptionTag }, practiceQueue: queue, practiceIndex: 0 }
@@ -567,7 +552,7 @@ export async function POST(request: NextRequest) {
                     scoreDelta: delta,
                     status: "remedial_required",
                     completed: false,
-                    totalQuestions: session.questions.length,
+                    totalQuestions: quizTotal(session),
                     questionNumber: session.currentQuestionIndex + 1,
                     remedial: remedialConcept ? {
                         microTag: remedialConcept.microTag,
@@ -590,28 +575,12 @@ export async function POST(request: NextRequest) {
                 return;
             }
 
-            const nextIndex = session.currentQuestionIndex + 1;
-            const completed = nextIndex >= session.questions.length;
-            const updated: StoredQuizSession = {
-                ...session,
-                eventIds,
-                answers,
-                score,
-                currentQuestionIndex: completed ? session.currentQuestionIndex : nextIndex,
-                status: completed ? "completed" : "active",
-            };
-            transaction.update(sessionRef, {
-                eventIds,
-                answers,
-                score,
-                currentQuestionIndex: updated.currentQuestionIndex,
-                status: updated.status,
-                ...(completed ? { completedAt: FieldValue.serverTimestamp() } : {}),
-                updatedAt: FieldValue.serverTimestamp(),
-            });
+            const lastMainResult = { difficulty: question.difficulty, correct: true };
+            const moved = advanceMain({ ...session, eventIds, score, lastMainResult }, answers);
+            transaction.update(sessionRef, { ...swapUpdate, eventIds, ...moved.update, score, lastMainResult, updatedAt: FieldValue.serverTimestamp() });
             outcome = completeOrContinue(
                 transaction,
-                updated,
+                moved.next,
                 user.uid,
                 student,
                 { awardRef, alreadyAwardedToday },
@@ -662,7 +631,7 @@ function completeOrContinue(
             completed: false,
             question: question ? toClientQuestion(question, "english") : undefined,
             questionNumber: session.currentQuestionIndex + 1,
-            totalQuestions: session.questions.length,
+            totalQuestions: quizTotal(session),
         };
     }
 
@@ -779,7 +748,7 @@ function completeOrContinue(
         completed: true,
         mastered,
         percentage,
-        totalQuestions: session.questions.length,
+        totalQuestions: quizTotal(session),
         xpEarned,
         totalXp,
         streak: streak.current,

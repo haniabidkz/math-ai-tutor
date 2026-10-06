@@ -3,6 +3,7 @@ import { MICRO_CONCEPTS, builtInCurriculumEnabled, getConcept } from "@/lib/curr
 import { getBuiltInDiagnosticQuestion } from "@/lib/diagnostic-questions";
 import { builtInQuestionsEnabled, QUESTION_BANK } from "@/lib/question-bank";
 import { newestFirst, selectQuizQuestionSet } from "@/lib/question-selection";
+import { cleanMathText } from "@/lib/text-clean";
 import { DEFAULT_ASSESSMENT_CONFIG } from "@/types/curriculum";
 import type {
     AssessmentConfig,
@@ -29,8 +30,9 @@ export function toClientQuestion(question: QuestionBankItem, locale: Locale): Cl
         id: question.id,
         microTag: question.microTag,
         difficulty: question.difficulty,
-        question: localized(question.question, locale),
-        options: question.options.map((option) => ({ id: option.id, text: localized(option, locale) })),
+        // Students see clean text even when an older record still carries stray formatting.
+        question: cleanMathText(localized(question.question, locale)),
+        options: question.options.map((option) => ({ id: option.id, text: cleanMathText(localized(option, locale)) })),
     };
 }
 

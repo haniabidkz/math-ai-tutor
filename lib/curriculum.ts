@@ -133,10 +133,17 @@ const topics: TopicSeed[] = [
     },
 ];
 
+// Chapters are listed in teaching order; that order is what lessons unlock by, class by class.
+const chapterPositions = new Map<string, number>();
+for (const topic of topics) {
+    chapterPositions.set(topic.topicId, [...chapterPositions.keys()].filter((id) => topics.find((item) => item.topicId === id)!.classLevel === topic.classLevel).length);
+}
+
 const syllabus = topics.flatMap((topic) =>
     topic.concepts.map(([microTag, title, romanTitle, concept, prerequisiteTag], index): MicroConcept => ({
         microTag,
         prerequisiteTag,
+        topicOrder: chapterPositions.get(topic.topicId),
         classLevel: topic.classLevel,
         topicId: topic.topicId,
         topicTitle: topic.title,

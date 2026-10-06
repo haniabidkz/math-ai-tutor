@@ -28,9 +28,10 @@ describe("ConceptEditor auto-fill", { timeout: 30_000 }, () => {
         await waitFor(() => expect(onSave).toHaveBeenCalled());
         const payload = onSave.mock.calls[0][0] as ConceptPayload;
         expect(payload.microTag).toBe("c6-absolute-value");
-        expect(payload.topicId).toBe("class6-algebra-intro");
+        // Chapters are offered in teaching order, so Class 6 starts with Integers.
+        expect(payload.topicId).toBe("class6-integers");
         expect(payload.order).toBe(7);
-        expect(payload.prerequisiteTag).toBe("c6-algebra-word-problems");
+        expect(payload.prerequisiteTag).toBe("c6-integer-subtraction");
         expect(payload.family).toBe("algebra");
         expect(payload.visualKind).toBe("expression");
         expect(payload.isNew).toBe(true);

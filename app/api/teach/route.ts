@@ -1,6 +1,7 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { NextRequest, NextResponse } from "next/server";
-import { getPublishedConcept, localized } from "@/lib/assessment-content";
+import { getPublishedConcept, getRuntimeConcepts, localized } from "@/lib/assessment-content";
+import { buildConceptItems } from "@/lib/learner-metrics";
 import { getClassConcepts, getConcept } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
 import { activityDateKey, newlyEarnedBadges, nextStreak, type StreakState } from "@/lib/gamification";
@@ -53,7 +54,7 @@ ${tip}${before}`;
 
 export async function POST(request: NextRequest) {
     try {
-        await requireUser(request, ["student"]);
+        const user = await requireUser(request, ["student"]);
         const body = await request.json();
         const requested = String(body.microTag ?? body.topicId ?? "").trim();
         // An empty tag reached Firestore as an invalid document path and surfaced as a 500.
@@ -61,6 +62,18 @@ export async function POST(request: NextRequest) {
         const microTag = resolveMicroTag(requested, Number(body.classLevel));
         const concept = await getPublishedConcept(microTag);
         if (!concept) return NextResponse.json({ success: false, error: "Published concept not found" }, { status: 404 });
+
+        // Lessons of the student's own class unlock one after another; a locked one says what to finish first.
+        const studentRef = adminDb.collection("students").doc(user.uid);
+        const [profileSnapshot, progressSnapshot, concepts] = await Promise.all([studentRef.get(), studentRef.collection("conceptProgress").get(), getRuntimeConcepts()]);
+        const profile = profileSnapshot.data() ?? {};
+        if (Number(profile.class) === concept.classLevel) {
+            const items = buildConceptItems(concepts, concept.classLevel, new Map(progressSnapshot.docs.map((doc) => [doc.id, doc.data()])), new Set(profile.diagnosticProfile?.strongMicroTags ?? []));
+            const item = items.find((entry) => entry.microTag === concept.microTag);
+            if (item?.locked && item.blockedBy) {
+                return NextResponse.json({ success: false, code: "locked", error: `Finish "${item.blockedBy.title.english}" first. Lessons unlock one after another.` }, { status: 409 });
+            }
+        }
 
         const prerequisite = concept.prerequisiteTag ? await getPublishedConcept(concept.prerequisiteTag) : null;
         const level = Math.max(1, Math.min(3, Number(body.teachingLevel ?? 1)));

@@ -71,7 +71,10 @@ function LearnContent() {
             setContent(data.content);
             setConcept(data.concept);
             setTeachingLevel(level);
-        } catch { setError("The lesson could not be loaded."); }
+        } catch (caught) {
+            // A locked lesson names the one to finish first; anything else is a plain failure.
+            setError(caught instanceof Error && caught.message ? caught.message : "The lesson could not be loaded.");
+        }
         finally { setLoading(false); }
     }
 

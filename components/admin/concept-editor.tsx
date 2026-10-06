@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
     familyForTopic,
+    nextTopicOrder,
     suggestMicroTag,
     suggestTopicId,
     topicsForClass,
@@ -45,17 +46,19 @@ interface ConceptForm {
     family: ConceptFamily;
     visualKind: MicroConcept["visualKind"];
     order: number;
+    /** The chapter's place in the class: lessons unlock chapter by chapter in this order. */
+    topicOrder: number;
     imageUrl: string;
     status: ContentStatus;
     /** Fields the admin changed by hand stop following the automatic value. */
-    manual: { prerequisite: boolean; family: boolean; visual: boolean; order: boolean };
+    manual: { prerequisite: boolean; family: boolean; visual: boolean; order: boolean; chapter: boolean };
 }
 
 const blank = (): ConceptForm => ({
     classLevel: 6, topicChoice: "", newTopicEnglish: "", newTopicRomanUrdu: "",
     titleEnglish: "", titleRomanUrdu: "", summaryEnglish: "", summaryRomanUrdu: "",
-    prerequisiteTag: "", family: "algebra", visualKind: "expression", order: 0, imageUrl: "", status: "draft",
-    manual: { prerequisite: false, family: false, visual: false, order: false },
+    prerequisiteTag: "", family: "algebra", visualKind: "expression", order: 0, topicOrder: 0, imageUrl: "", status: "draft",
+    manual: { prerequisite: false, family: false, visual: false, order: false, chapter: false },
 });
 
 function fromConcept(concept: MicroConcept): ConceptForm {
@@ -71,10 +74,11 @@ function fromConcept(concept: MicroConcept): ConceptForm {
         family: concept.family,
         visualKind: concept.visualKind,
         order: concept.order,
+        topicOrder: concept.topicOrder ?? 0,
         imageUrl: concept.imageUrl ?? "",
         status: concept.status,
         // An existing concept keeps everything as it was saved.
-        manual: { prerequisite: true, family: true, visual: true, order: true },
+        manual: { prerequisite: true, family: true, visual: true, order: true, chapter: true },
     };
 }
 
@@ -126,6 +130,7 @@ export function ConceptEditor({
                 family: current.manual.family ? current.family : family,
                 visualKind: current.manual.visual ? current.visualKind : chosenTopic?.visualKind ?? visualForFamily(family),
                 order: current.manual.order ? current.order : chosenTopic?.nextOrder ?? 0,
+                topicOrder: current.manual.chapter ? current.topicOrder : chosenTopic?.topicOrder ?? (chosenTopic ? topics.indexOf(chosenTopic) : nextTopicOrder(topics)),
                 prerequisiteTag: current.manual.prerequisite ? current.prerequisiteTag : chosenTopic?.lastMicroTag ?? "",
             };
         });
@@ -143,8 +148,9 @@ export function ConceptEditor({
                 family,
                 visualKind: chosenTopic?.visualKind ?? visualForFamily(family),
                 order: chosenTopic?.nextOrder ?? 0,
+                topicOrder: chosenTopic?.topicOrder ?? (chosenTopic ? topics.indexOf(chosenTopic) : nextTopicOrder(topics)),
                 prerequisiteTag: chosenTopic?.lastMicroTag ?? "",
-                manual: { prerequisite: false, family: false, visual: false, order: false },
+                manual: { prerequisite: false, family: false, visual: false, order: false, chapter: false },
             };
         });
     }
@@ -175,6 +181,7 @@ export function ConceptEditor({
                 visualKind: form.visualKind,
                 imageUrl: form.imageUrl,
                 order: Number(form.order),
+                topicOrder: Math.max(0, Number(form.topicOrder) || 0),
                 // Class 5 concepts are foundations: used for diagnosis and repair, not taught as lessons.
                 // An existing foundation of a later class keeps that role when edited.
                 foundationOnly: form.classLevel === 5 || editing?.foundationOnly === true,
@@ -201,7 +208,7 @@ export function ConceptEditor({
             <section className="grid gap-3 md:grid-cols-4">
                 <SelectField label="Class" value={String(form.classLevel)} disabled={!isNew}
                     options={[["5", "Class 5 (foundation)"], ["6", "Class 6"], ["7", "Class 7"], ["8", "Class 8"]]}
-                    onChange={(value) => update({ classLevel: Number(value), manual: { prerequisite: false, family: false, visual: false, order: false } })} />
+                    onChange={(value) => update({ classLevel: Number(value), manual: { prerequisite: false, family: false, visual: false, order: false, chapter: false } })} />
                 <div className="md:col-span-3">
                     <SelectField label="Topic" value={form.topicChoice}
                         options={[...topics.map((topic) => [topic.topicId, `${topic.title.english} (${topic.count} concepts)`]), [NEW_TOPIC, "+ New topic"]]}
@@ -232,6 +239,8 @@ export function ConceptEditor({
                         onChange={(value) => override("prerequisite", { prerequisiteTag: value === "none" ? "" : value })} />
                     <Field label="Order in topic" badge={auto(form.manual.order)} type="number" value={String(form.order)}
                         onChange={(value) => override("order", { order: Math.max(0, Number(value) || 0) })} />
+                    <Field label="Chapter order in class" badge={auto(form.manual.chapter)} type="number" value={String(form.topicOrder)}
+                        onChange={(value) => override("chapter", { topicOrder: Math.max(0, Number(value) || 0) })} />
                     <SelectField label="Family" badge={auto(form.manual.family)} value={form.family} options={FAMILIES}
                         onChange={(value) => override("family", { family: value as ConceptFamily })} />
                     <SelectField label="Visual" badge={auto(form.manual.visual)} value={form.visualKind} options={VISUALS}

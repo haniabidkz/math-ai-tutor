@@ -42,6 +42,16 @@ export async function POST(request: NextRequest) {
             updatedBy: admin.uid,
             updatedAt: FieldValue.serverTimestamp(),
         }, { merge: true });
+
+        // The chapter order belongs to the chapter: every lesson in it takes the same value.
+        if (typeof parsed.topicOrder === "number") {
+            const siblings = await adminDb.collection("microConcepts").where("topicId", "==", parsed.topicId).where("classLevel", "==", parsed.classLevel).get();
+            const batch = adminDb.batch();
+            for (const doc of siblings.docs) {
+                if (doc.id !== parsed.microTag && doc.data().topicOrder !== parsed.topicOrder) batch.update(doc.ref, { topicOrder: parsed.topicOrder, updatedAt: FieldValue.serverTimestamp() });
+            }
+            await batch.commit();
+        }
         await writeAuditLog({ actorUid: admin.uid, actorEmail: admin.email, action: body.isNew === true ? "concept.create" : "concept.update", targetType: "microConcept", targetId: parsed.microTag, summary: `Saved ${parsed.title.english}` });
         return NextResponse.json({ success: true, microTag: parsed.microTag });
     } catch (error: any) {

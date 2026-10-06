@@ -1,4 +1,5 @@
-import type { MicroConcept } from "@/types/curriculum";
+import { compareChapters } from "@/lib/concept-autofill";
+import type { LocalizedText, MicroConcept } from "@/types/curriculum";
 
 /**
  * Pure summaries of a learner's work, shared by the student dashboard and the parent portal.
@@ -125,11 +126,22 @@ export interface ConceptProgressItem extends MicroConcept {
     mastered: boolean;
     percentage: number;
     locked: boolean;
+    /** The lesson that must be mastered before this one opens, while it is locked. */
+    blockedBy: { microTag: string; title: LocalizedText } | null;
+}
+
+/** A class's lessons in the order they are taught: chapter by chapter, and within a chapter in order. */
+export function orderClassConcepts(concepts: MicroConcept[], classLevel: number): MicroConcept[] {
+    const inClass = concepts.filter((concept) => concept.classLevel === classLevel && !concept.foundationOnly);
+    const compare = compareChapters(inClass);
+    // Equal orders keep the curriculum's own sequence (the sort is stable).
+    return [...inClass].sort((left, right) => compare(left.topicId, right.topicId) || left.order - right.order);
 }
 
 /**
- * A class's concepts in path order with mastery and lock state. A concept is locked until
- * its in-class prerequisite is mastered or was already strong in the diagnostic.
+ * A class's concepts in path order with mastery and lock state. Lessons unlock one after
+ * another: a lesson is locked until the one before it in the path is mastered (or was strong
+ * in the diagnostic), and until its in-class prerequisite is, when it names one elsewhere.
  */
 export function buildConceptItems(
     concepts: MicroConcept[],
@@ -137,21 +149,19 @@ export function buildConceptItems(
     progress: Map<string, { mastered?: boolean; percentage?: number }>,
     strongTags: Set<string>,
 ): ConceptProgressItem[] {
-    const classConcepts = concepts
-        .filter((concept) => concept.classLevel === classLevel && !concept.foundationOnly)
-        .sort((left, right) => left.topicId.localeCompare(right.topicId) || left.order - right.order);
-    return classConcepts.map((concept) => {
+    const classConcepts = orderClassConcepts(concepts, classLevel);
+    const done = (microTag: string) => progress.get(microTag)?.mastered === true || strongTags.has(microTag);
+    return classConcepts.map((concept, index) => {
         const item = progress.get(concept.microTag);
-        const prerequisiteInClass = classConcepts.some((candidate) => candidate.microTag === concept.prerequisiteTag);
-        const prerequisiteMastered = !prerequisiteInClass
-            || !concept.prerequisiteTag
-            || progress.get(concept.prerequisiteTag)?.mastered === true
-            || strongTags.has(concept.prerequisiteTag);
+        const previous = index > 0 ? classConcepts[index - 1] : null;
+        const prerequisite = concept.prerequisiteTag ? classConcepts.find((candidate) => candidate.microTag === concept.prerequisiteTag) ?? null : null;
+        const blockedBy = previous && !done(previous.microTag) ? previous : prerequisite && !done(prerequisite.microTag) ? prerequisite : null;
         return {
             ...concept,
             mastered: item?.mastered === true,
             percentage: Number(item?.percentage ?? 0),
-            locked: !prerequisiteMastered,
+            locked: blockedBy !== null,
+            blockedBy: blockedBy ? { microTag: blockedBy.microTag, title: blockedBy.title } : null,
         };
     });
 }

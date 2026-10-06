@@ -64,6 +64,8 @@ export interface TopicOption {
     title: LocalizedText;
     family: ConceptFamily;
     visualKind: MicroConcept["visualKind"];
+    /** The chapter's place in the class, when one was set. */
+    topicOrder: number | null;
     /** The next free position in this topic. */
     nextOrder: number;
     /** The last concept in the topic, the natural prerequisite for a new one. */
@@ -71,26 +73,57 @@ export interface TopicOption {
     count: number;
 }
 
-/** The topics already used by a class, with what a new concept in each would inherit. */
+const createdMillis = (concept: MicroConcept) => {
+    const createdAt = (concept as { createdAt?: { toMillis?: () => number } | number }).createdAt;
+    if (typeof createdAt === "number") return createdAt;
+    return typeof createdAt?.toMillis === "function" ? createdAt.toMillis() : Infinity;
+};
+
+/**
+ * Chapters in teaching order: the chapter order the admin set, else the order the chapters were
+ * created in, else the id. Within a chapter, lessons follow their own order.
+ */
+export function compareChapters(concepts: MicroConcept[]): (left: string, right: string) => number {
+    const rank = new Map<string, [number, number]>();
+    for (const concept of concepts) {
+        const current = rank.get(concept.topicId) ?? [Infinity, Infinity];
+        const explicit = typeof concept.topicOrder === "number" ? concept.topicOrder : Infinity;
+        rank.set(concept.topicId, [Math.min(current[0], explicit), Math.min(current[1], createdMillis(concept))]);
+    }
+    const value = (topicId: string, index: 0 | 1) => rank.get(topicId)?.[index] ?? Infinity;
+    const diff = (left: number, right: number) => (left === right ? 0 : left < right ? -1 : 1);
+    return (left, right) => diff(value(left, 0), value(right, 0)) || diff(value(left, 1), value(right, 1)) || left.localeCompare(right);
+}
+
+/** The topics already used by a class, in teaching order, with what a new concept in each would inherit. */
 export function topicsForClass(concepts: MicroConcept[], classLevel: number): TopicOption[] {
     const byTopic = new Map<string, MicroConcept[]>();
     for (const concept of concepts) {
         if (concept.classLevel !== classLevel) continue;
         byTopic.set(concept.topicId, [...(byTopic.get(concept.topicId) ?? []), concept]);
     }
+    const compare = compareChapters(concepts.filter((concept) => concept.classLevel === classLevel));
     return [...byTopic.entries()].map(([topicId, items]) => {
         const ordered = [...items].sort((left, right) => left.order - right.order);
         const last = ordered[ordered.length - 1];
+        const orders = ordered.map((item) => item.topicOrder).filter((value): value is number => typeof value === "number");
         return {
             topicId,
             title: last.topicTitle,
             family: last.family,
             visualKind: last.visualKind,
+            topicOrder: orders.length ? Math.min(...orders) : null,
             nextOrder: Math.max(...ordered.map((item) => item.order)) + 1,
             lastMicroTag: last.microTag,
             count: ordered.length,
         };
-    }).sort((left, right) => left.topicId.localeCompare(right.topicId));
+    }).sort((left, right) => compare(left.topicId, right.topicId));
+}
+
+/** The place a brand-new chapter takes: after every chapter the class already has. */
+export function nextTopicOrder(topics: TopicOption[]): number {
+    const used = topics.map((topic) => topic.topicOrder).filter((value): value is number => typeof value === "number");
+    return Math.max(topics.length, ...used.map((value) => value + 1));
 }
 
 /** Roman Urdu is optional for admins; an empty translation falls back to the English. */
