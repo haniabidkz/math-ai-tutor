@@ -388,7 +388,7 @@ function QuizContent() {
     if (remedial && quiz) return (
         <main className="min-h-screen bg-slate-50 p-4 md:p-8">
             <Card className="mx-auto max-w-2xl overflow-hidden rounded-lg">
-                <ConceptGraphic kind={remedial.visualKind} />
+                <ConceptGraphic imageUrl={remedial.imageUrl} alt={remedial.title.english} />
                 <CardHeader>
                     <Badge variant="outline" className="w-fit"><HelpCircle className="mr-1 h-3 w-3" />Review this foundation</Badge>
                     <CardTitle>{remedial.title.english}</CardTitle>

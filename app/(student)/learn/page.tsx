@@ -122,7 +122,7 @@ function LearnContent() {
                     <p className="py-20 text-center text-muted-foreground">Loading lesson...</p>
                 ) : concept && content ? (
                     <Card className="overflow-hidden rounded-lg">
-                        <ConceptGraphic kind={concept.visualKind} />
+                        <ConceptGraphic imageUrl={concept.imageUrl} alt={concept.title} />
                         <CardHeader className="border-b">
                             <div className="flex items-center justify-between">
                                 <Badge variant="outline"><BookOpen className="mr-1 h-3 w-3" />Concept lesson</Badge>
