@@ -1,9 +1,10 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { NextRequest, NextResponse } from "next/server";
-import { getPublishedConcept, getRuntimeConcepts, localized } from "@/lib/assessment-content";
+import { getPublishedConcept, getPublishedQuestions, getRuntimeConcepts, localized } from "@/lib/assessment-content";
 import { buildConceptItems } from "@/lib/learner-metrics";
 import { getClassConcepts, getConcept } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
+import { pickPractice } from "@/lib/lesson-steps";
 import { activityDateKey, newlyEarnedBadges, nextStreak, type StreakState } from "@/lib/gamification";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { Locale, MicroConcept, StudentClassLevel } from "@/types/curriculum";
@@ -75,7 +76,11 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        const prerequisite = concept.prerequisiteTag ? await getPublishedConcept(concept.prerequisiteTag) : null;
+        const [prerequisite, questions] = await Promise.all([
+            concept.prerequisiteTag ? getPublishedConcept(concept.prerequisiteTag) : null,
+            // Two of the lesson's own questions for the try-it and quick-check steps; answered on the device, never scored.
+            getPublishedQuestions(microTag),
+        ]);
         const level = Math.max(1, Math.min(3, Number(body.teachingLevel ?? 1)));
 
         // The lesson is English; the same lesson in Roman Urdu is sent for the optional toggle.
@@ -94,7 +99,12 @@ export async function POST(request: NextRequest) {
                 concept: concept.concept,
                 visualKind: concept.visualKind,
                 imageUrl: concept.imageUrl,
+                example: concept.example ?? null,
+                subTopic: concept.subTopic ?? null,
+                family: concept.family,
+                prerequisiteTitle: prerequisite?.title.english ?? null,
             },
+            practice: pickPractice(questions),
         });
     } catch (error) {
         const auth = authErrorResponse(error);
