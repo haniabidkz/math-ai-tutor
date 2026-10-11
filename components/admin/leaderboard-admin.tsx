@@ -112,7 +112,7 @@ export function LeaderboardAdmin() {
                         </span>
                     ) : null}
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">Weeks run Monday to Sunday (Pakistan time) and close on Monday. Points, badges, streaks and lifetime XP are never reset. Rewards go to the top 3 paid members; flagged accounts are held until reviewed.</p>
+                <p className="mt-2 text-xs text-muted-foreground">Weeks run Monday to Sunday (Pakistan time) and close on Monday. Points, badges, streaks and lifetime XP are never reset. Rewards go to the top 3 paid members; every student counts as paid until you untick them. Flagged accounts are held until reviewed.</p>
             </section>
 
             {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}

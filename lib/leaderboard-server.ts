@@ -140,7 +140,8 @@ export async function studentsMeta(uids: string[]): Promise<Map<string, StudentM
         return [doc.id, {
             name: String(data.name ?? "Student"),
             email: String(data.email ?? ""),
-            paid: data.membership?.paid === true,
+            // No membership system exists yet, so every student is a paid member until the admin unticks them.
+            paid: data.membership?.paid !== false,
             banned: data.leaderboardFlags?.banned === true,
             suspicious: data.leaderboardFlags?.suspicious === true,
             note: String(data.leaderboardFlags?.note ?? ""),
