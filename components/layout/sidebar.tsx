@@ -19,6 +19,8 @@ import {
 import { useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { LanguageSwitch } from "@/components/student/quiz-hud";
+import { useAidLanguage } from "@/lib/aid-language";
 
 interface SidebarProps {
     user: {
@@ -33,6 +35,7 @@ interface SidebarProps {
 export function Sidebar({ user, onSignOut }: SidebarProps) {
     const pathname = usePathname();
     const [isOpen, setIsOpen] = useState(false);
+    const [language, chooseLanguage] = useAidLanguage();
 
     const navItems = {
         student: [
@@ -134,6 +137,12 @@ export function Sidebar({ user, onSignOut }: SidebarProps) {
                                     </div>
                                 </div>
                             </div>
+                            {user.role === "student" ? (
+                                <div className="mt-3 flex items-center justify-between gap-2 border-t pt-3">
+                                    <span className="text-xs font-semibold text-muted-foreground">Language · Zuban</span>
+                                    <LanguageSwitch value={language} onChange={chooseLanguage} />
+                                </div>
+                            ) : null}
                         </div>
 
                         <Button

@@ -10,8 +10,8 @@ import { ConceptBrowser, type BrowsableTopic } from "@/components/concept-browse
 import { ConceptGraphic } from "@/components/concept-graphic";
 import { InsightBlock } from "@/components/insight-block";
 import { LessonPractice } from "@/components/student/lesson-practice";
+import { LanguagePrompt } from "@/components/student/language-prompt";
 import { PiSays, type PiMood } from "@/components/student/pi-mascot";
-import { LanguageSwitch } from "@/components/student/quiz-hud";
 import { TextToSpeech } from "@/components/tts-button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -52,7 +52,7 @@ function LearnContent() {
     const params = useSearchParams();
     const microTag = params.get("microTag") ?? params.get("topicId") ?? "";
     const classLevel = Number(params.get("class") ?? 6);
-    const [language, chooseLanguage] = useAidLanguage();
+    const [language, chooseLanguage, languageLoaded] = useAidLanguage();
     const [user, setUser] = useState<User | null>(null);
     const [content, setContent] = useState<LocalizedText | null>(null);
     const [concept, setConcept] = useState<LessonConcept | null>(null);
@@ -131,6 +131,9 @@ function LearnContent() {
     }
 
     const retry = () => user && (microTag ? loadLesson(user, teachingLevel) : loadTopics(user));
+
+    // Asked once, before the first lesson; the menu can change it later.
+    if (microTag && languageLoaded && !language) return <LanguagePrompt onChoose={chooseLanguage} />;
     const stepName = (index: number) => say(language, LESSON_STEPS[index].english, LESSON_STEPS[index].romanUrdu);
 
     return (
@@ -141,7 +144,7 @@ function LearnContent() {
                         <Link href="/dashboard" aria-label="Dashboard"><ArrowLeft className="h-4 w-4 sm:mr-2" /><span className="hidden sm:inline">Dashboard</span></Link>
                     </Button>
                     {concept ? <p className="min-w-0 flex-1 truncate text-center text-sm font-extrabold text-slate-600">{concept.topicTitle} · {concept.title}</p> : null}
-                    <LanguageSwitch value={language} onChange={chooseLanguage} />
+                    <span className="w-9" aria-hidden="true" />
                 </div>
             </header>
             <main className="mx-auto max-w-6xl px-4 py-6">

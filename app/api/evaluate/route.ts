@@ -23,6 +23,7 @@ import {
 import { applyPointsGrant, entryRef, toEntry } from "@/lib/leaderboard-server";
 import { selectQuizQuestionSet, takeNextQuestion, targetDifficulty } from "@/lib/question-selection";
 import { sessionDurationSeconds } from "@/lib/learner-metrics";
+import { cleanMathText } from "@/lib/text-clean";
 import {
     activityDateKey,
     BADGE_BY_ID,
@@ -67,6 +68,8 @@ type EvaluationOutcome = {
     };
     /** Mistake analysis for the option the student just chose. */
     mistake?: MistakePayload;
+    /** The option the student chose and the correct one, so a wrong answer can be shown side by side. */
+    answer?: { selected: { id: string; text: string }; correct: { id: string; text: string } };
     /** Present once the same mistake pattern repeats often enough on one concept. */
     misconception?: { microTag: string; type: MistakeType; tag: MisconceptionTag; label: string; guidance: LocalizedText; practiceTotal: number };
     /** Progress through the targeted practice queue that follows a misconception. */
@@ -123,6 +126,15 @@ function roundProgress(session: StoredQuizSession): FoundationProgress | undefin
 function practiceProgress(session: StoredQuizSession, index: number): EvaluationOutcome["practice"] {
     const total = session.practiceQueue?.length ?? 0;
     return { number: index + 1, total, isRecheck: index === total - 1 };
+}
+
+/** The chosen and the correct option, as the student reads them. */
+function answerPayload(question: QuestionBankItem, optionId: string): EvaluationOutcome["answer"] {
+    const option = (id: string) => {
+        const found = question.options.find((item) => item.id === id);
+        return { id, text: cleanMathText(found?.english ?? "") };
+    };
+    return { selected: option(optionId), correct: option(question.correctOptionId) };
 }
 
 function mistakePayload(analysis: OptionAnalysis): MistakePayload {
@@ -445,6 +457,7 @@ export async function POST(request: NextRequest) {
                         totalQuestions: quizTotal(session),
                         foundation: foundationProgress(source, step.round),
                         mistake: analysis ? mistakePayload(analysis) : undefined,
+                        answer: answerPayload(question, body.optionId),
                     };
                     return;
                 }
@@ -456,6 +469,7 @@ export async function POST(request: NextRequest) {
                     ...completeOrContinue(transaction, moved.next, user.uid, student, award, config, 0, action, correct, question.explanation),
                     foundationResult: { outcome: step.round.outcome ?? "not_passed", title: source.title, classLevel: source.classLevel },
                     mistake: analysis ? mistakePayload(analysis) : undefined,
+                    answer: answerPayload(question, body.optionId),
                 };
                 return;
             }
@@ -504,6 +518,7 @@ export async function POST(request: NextRequest) {
                         totalQuestions: quizTotal(session),
                         practice: practiceProgress(session, index + 1),
                         mistake: analysis ? mistakePayload(analysis) : undefined,
+                        answer: answerPayload(question, body.optionId),
                     };
                     return;
                 }
@@ -608,6 +623,7 @@ export async function POST(request: NextRequest) {
                         imageUrl: remedialConcept.imageUrl,
                     } : undefined,
                     mistake: resolved ? mistakePayload(resolved) : undefined,
+                    answer: answerPayload(question, body.optionId),
                     misconception: misconception && queue.length ? {
                         microTag: question.microTag,
                         type: mistakeType,

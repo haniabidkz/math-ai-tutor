@@ -5,18 +5,20 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import {
-    AlertTriangle, ArrowLeft, ArrowRight, Award, CheckCircle2, CloudOff, Flame, HelpCircle, Layers, Lightbulb,
+    ArrowLeft, ArrowRight, Award, CheckCircle2, CloudOff, Flame, HelpCircle, Layers, Lightbulb,
     LockOpen, RefreshCw, RotateCcw, Sparkles, Star, Target, XCircle,
 } from "lucide-react";
 import { BilingualText } from "@/components/bilingual-text";
 import { ConceptGraphic } from "@/components/concept-graphic";
 import { InsightBlock } from "@/components/insight-block";
 import { PiMascot, PiSays, type PiMood } from "@/components/student/pi-mascot";
-import { ComboChip, DifficultyLadder, LanguageSwitch, OptionTile, QuestionPath, QuizStats, ScoreChip, type PathResult } from "@/components/student/quiz-hud";
+import { LanguagePrompt } from "@/components/student/language-prompt";
+import { MistakeBox, type AnswerInfo } from "@/components/student/mistake-box";
+import { ComboChip, DifficultyLadder, OptionTile, QuestionPath, QuizStats, ScoreChip, type PathResult } from "@/components/student/quiz-hud";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useAidLanguage } from "@/lib/aid-language";
-import { MISTAKE_TYPE_LABELS, misconceptionFitsTopic } from "@/lib/mistake-analysis";
+import { MISTAKE_TYPE_LABELS } from "@/lib/mistake-analysis";
 import { auth } from "@/lib/firebase";
 import {
     clearSessionQueue,
@@ -54,7 +56,7 @@ interface MisconceptionState { microTag: string; type: MistakeType; tag: Misconc
 interface PracticeState { number: number; total: number; isRecheck: boolean }
 interface FoundationResult { outcome: "passed" | "not_passed"; title: LocalizedText; classLevel: number }
 /** Feedback on the answer just submitted, shown above the next question. */
-interface LastAnswer { isCorrect: boolean; explanation?: LocalizedText; mistake?: MistakePayload }
+interface LastAnswer { isCorrect: boolean; explanation?: LocalizedText; mistake?: MistakePayload; answer?: AnswerInfo; /** Earned a point: right, unaided, on the lesson's own list. */ xp?: boolean }
 interface ResultState {
     percentage: number;
     mastered: boolean;
@@ -91,7 +93,7 @@ const say = (lang: Lang, english: string, romanUrdu: string) => (lang === "roman
 function QuizContent() {
     const router = useRouter();
     const params = useSearchParams();
-    const [language, chooseLanguage] = useAidLanguage();
+    const [language, chooseLanguage, languageLoaded] = useAidLanguage();
     const [user, setUser] = useState<User | null>(null);
     const [quiz, setQuiz] = useState<QuizState | null>(null);
     const [selected, setSelected] = useState("");
@@ -99,6 +101,8 @@ function QuizContent() {
     const [lastAnswer, setLastAnswer] = useState<LastAnswer | null>(null);
     const [remedial, setRemedial] = useState<RemedialState | null>(null);
     const [mistake, setMistake] = useState<MistakePayload | null>(null);
+    const [answerInfo, setAnswerInfo] = useState<AnswerInfo | null>(null);
+    const [showSolution, setShowSolution] = useState(false);
     const [explanation, setExplanation] = useState<LocalizedText | null>(null);
     const [misconception, setMisconception] = useState<MisconceptionState | null>(null);
     const [practice, setPractice] = useState<PracticeState | null>(null);
@@ -150,7 +154,9 @@ function QuizContent() {
         setSelected("");
         setHint(null);
         setMistake(null);
+        setAnswerInfo(null);
         setExplanation(null);
+        setShowSolution(false);
     }
 
     /** Records how a question on the lesson's own list went, for the path and the combo. */
@@ -261,6 +267,7 @@ function QuizContent() {
             if (data.status === "remedial_required") {
                 setRemedial(data.remedial ?? null);
                 setMistake(data.mistake ?? null);
+                setAnswerInfo(data.answer ?? null);
                 setExplanation(data.explanation ?? null);
                 setMisconception(data.misconception ?? null);
                 // A previous-class round, when offered, is announced on the review screen.
@@ -271,7 +278,7 @@ function QuizContent() {
 
             // Next main question, the next practice item, or the next question of a foundation round.
             setLastAnswer(action === "answer" && typeof data.isCorrect === "boolean"
-                ? { isCorrect: data.isCorrect, explanation: data.explanation, mistake: data.mistake }
+                ? { isCorrect: data.isCorrect, explanation: data.explanation, mistake: data.mistake, answer: data.answer, xp: data.isCorrect && !hint && onMainQuestion }
                 : null);
             setPractice(data.status === "misconception_practice" ? data.practice ?? null : null);
             setFoundation(data.status === "foundation_practice" ? data.foundation ?? null : null);
@@ -392,6 +399,9 @@ function QuizContent() {
         };
     }, [user, quiz?.id]);
 
+    // Asked once, before the first question; afterwards every hint and explanation follows it.
+    if (languageLoaded && !language) return <LanguagePrompt onChoose={chooseLanguage} />;
+
     if (offlineFinished && quiz) return (
         <main className="flex min-h-screen items-center justify-center bg-[#F4F6FB] p-4 font-body text-slate-900">
             <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 text-center">
@@ -503,7 +513,6 @@ function QuizContent() {
             <div className="mx-auto max-w-5xl">
                 <div className="mb-4 flex items-center justify-between gap-3">
                     <span className="text-sm font-extrabold text-slate-500">Question {quiz.questionNumber} of {quiz.totalQuestions}</span>
-                    <LanguageSwitch value={language} onChange={chooseLanguage} />
                 </div>
                 <PiSays mood="oops">
                     {say(language, "No problem. See where it slipped, then the next one.", "Koi baat nahi. Dekho kahan phisle, phir agla sawal.")}
@@ -512,38 +521,11 @@ function QuizContent() {
                     <ConceptGraphic imageUrl={remedial.imageUrl} alt={remedial.title.english} />
                     <div className="space-y-4 p-4 md:p-6">
                         <div>
-                            <span className="inline-flex items-center gap-1 rounded-xl bg-indigo-50 px-2.5 py-1 text-xs font-extrabold text-indigo-800"><HelpCircle className="h-3 w-3" />Review this foundation</span>
+                            <span className="inline-flex items-center gap-1 rounded-xl bg-indigo-50 px-2.5 py-1 text-xs font-extrabold text-indigo-800"><HelpCircle className="h-3 w-3" />{say(language, "Learn from this one", "Is se seekho")}</span>
                             <h1 className="mt-2 font-display text-2xl font-semibold">{remedial.title.english}</h1>
                         </div>
-                        <div className="grid gap-4 lg:grid-cols-3">
-                            {mistake ? (
-                                <InsightBlock tone="wrong" icon={<XCircle className="h-4 w-4" />}
-                                    title={<>Why that answer is wrong<span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold normal-case tracking-normal">{MISTAKE_TYPE_LABELS[mistake.type].english}</span></>}>
-                                    <BilingualText text={mistake.whyWrong} prompt="Read the reason in" switcher={false} />
-                                </InsightBlock>
-                            ) : null}
-                            {explanation ? (
-                                <InsightBlock tone="explain" icon={<Lightbulb className="h-4 w-4" />} title="Step-by-step solution">
-                                    <BilingualText text={explanation} prompt="Read the solution in" switcher={false} />
-                                </InsightBlock>
-                            ) : null}
-                            <InsightBlock tone="concept" icon={<HelpCircle className="h-4 w-4" />} title="The idea again">
-                                <BilingualText text={remedial.concept} prompt="Read the concept in" switcher={false} />
-                            </InsightBlock>
-                        </div>
-                        {misconception ? (
-                            <InsightBlock tone="repeat" icon={<AlertTriangle className="h-4 w-4" />} title="This mistake keeps coming back">
-                                <p className="mb-2">You have made this kind of mistake a few times on this concept. Here is the idea again, then a short set of practice questions.</p>
-                                {misconceptionFitsTopic(misconception.tag, misconception.microTag)
-                                    ? <BilingualText text={misconception.guidance} className="font-medium" prompt="Read the tip in" switcher={false} />
-                                    : null}
-                            </InsightBlock>
-                        ) : null}
-                        {foundation ? (
-                            <InsightBlock tone="concept" icon={<Layers className="h-4 w-4" />} title={`First, a short round of Class ${foundation.classLevel} ${foundation.title.english}`}>
-                                This topic builds on what Class {foundation.classLevel} taught. Answer {foundation.total} questions from there; get {foundation.passMark} right and you come back to your Class {quiz.classLevel ?? ""} questions. Your class and your score do not change.
-                            </InsightBlock>
-                        ) : null}
+                        <MistakeBox language={language} mistake={mistake} answer={answerInfo} explanation={explanation} concept={remedial.concept}
+                            misconception={misconception} foundation={foundation} classLevel={quiz.classLevel} />
                         <div className="flex justify-end">
                             <Button size="lg" className="h-13 w-full rounded-2xl text-base font-extrabold sm:w-auto sm:px-8" onClick={() => evaluate("remedialComplete")} disabled={loading}>
                                 {foundation ? `Start the Class ${foundation.classLevel} round` : misconception ? "Start targeted practice" : say(language, "Got it, next", "Samajh gaya, agay")}<ArrowRight className="ml-2 h-5 w-5" />
@@ -586,7 +568,6 @@ function QuizContent() {
                         <div className="flex items-center gap-2">
                             <ComboChip combo={game.combo} />
                             <ScoreChip score={quiz.score} />
-                            <LanguageSwitch value={language} onChange={chooseLanguage} />
                         </div>
                     ) : null}
                 </div>
@@ -635,14 +616,18 @@ function QuizContent() {
                         ) : null}
                         {lastAnswer ? (
                             lastAnswer.isCorrect ? (
-                                <InsightBlock tone="correct" className="mb-4" icon={<CheckCircle2 className="h-4 w-4" />} title={<>Correct{!hint && !practice && !foundation ? <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold normal-case tracking-normal"><Star className="mr-1 inline h-3 w-3" />+1 XP</span> : null}</>}>
-                                    {lastAnswer.explanation ? <BilingualText text={lastAnswer.explanation} prompt="Read the solution in" switcher={false} /> : null}
+                                <InsightBlock tone="correct" className="mb-4" icon={<CheckCircle2 className="h-4 w-4" />} title={<>{say(language, "Correct!", "Sahi!")}{lastAnswer.xp ? <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold normal-case tracking-normal"><Star className="mr-1 inline h-3 w-3" />+1 XP</span> : null}</>}>
+                                    {lastAnswer.explanation ? (
+                                        <>
+                                            <button type="button" className="text-xs font-bold text-emerald-800 underline-offset-2 hover:underline" onClick={() => setShowSolution((open) => !open)} aria-expanded={showSolution}>
+                                                {showSolution ? say(language, "Hide solution", "Solution chhupao") : say(language, "Show solution", "Solution dekho")}
+                                            </button>
+                                            {showSolution ? <BilingualText text={lastAnswer.explanation} switcher={false} className="mt-2" /> : null}
+                                        </>
+                                    ) : null}
                                 </InsightBlock>
-                            ) : lastAnswer.mistake ? (
-                                <InsightBlock tone="wrong" className="mb-4" icon={<XCircle className="h-4 w-4" />}
-                                    title={<>Why that answer is wrong<span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold normal-case tracking-normal">{MISTAKE_TYPE_LABELS[lastAnswer.mistake.type].english}</span></>}>
-                                    <BilingualText text={lastAnswer.mistake.whyWrong} prompt="Read the reason in" switcher={false} />
-                                </InsightBlock>
+                            ) : lastAnswer.mistake || lastAnswer.answer ? (
+                                <MistakeBox language={language} mistake={lastAnswer.mistake} answer={lastAnswer.answer} explanation={lastAnswer.explanation} className="mb-4" />
                             ) : null
                         ) : null}
 

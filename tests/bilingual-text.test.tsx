@@ -6,7 +6,7 @@ describe("BilingualText", () => {
     const text = { english: "Move 5 steps right.", romanUrdu: "5 qadam daen jayein." };
     const next = { english: "Next hint.", romanUrdu: "Agla ishara." };
 
-    beforeEach(() => { window.sessionStorage.clear(); });
+    beforeEach(() => { window.sessionStorage.clear(); window.localStorage.clear(); });
 
     it("asks which language to read in before the first aid is shown", () => {
         render(<BilingualText text={text} prompt="Read the hint in" />);
