@@ -23,8 +23,8 @@ export const MAX_SCORING_ATTEMPTS_PER_WEEK = 6;
 /** Karachi has no daylight saving, so the week boundary is a fixed offset from UTC. */
 const KARACHI_OFFSET_MINUTES = 5 * 60;
 const DAY_MS = 86_400_000;
-/** The time component of a rank key: minutes into the week, counted down so earlier wins. */
-const TIME_SLOTS = 100_000;
+/** The time component of a rank key: seconds into the week, counted down so earlier wins. */
+const TIME_SLOTS = 1_000_000;
 /** More eligible correct answers than this in one week cannot happen; keeps points the top term. */
 const CORRECT_CAP = 9_999;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -93,20 +93,20 @@ export function weekLabel(weekKey: string): string {
         : `${start.getUTCDate()} ${month(start)} – ${end.getUTCDate()} ${month(end)} ${end.getUTCFullYear()}`;
 }
 
-export function minutesIntoWeek(date: Date, weekKey: string): number {
-    const minutes = Math.floor((date.getTime() - weekStartMillis(weekKey)) / 60_000);
-    return Math.max(0, Math.min(TIME_SLOTS - 1, minutes));
+export function secondsIntoWeek(date: Date, weekKey: string): number {
+    const seconds = Math.floor((date.getTime() - weekStartMillis(weekKey)) / 1000);
+    return Math.max(0, Math.min(TIME_SLOTS - 1, seconds));
 }
 
 /**
  * One number that orders a board: more points first, then more correct answers, then
  * whoever reached that score earlier. A single field keeps the query on an automatic index.
  */
-export function rankKey(points: number, correctAnswers: number, minutes: number): number {
+export function rankKey(points: number, correctAnswers: number, seconds: number): number {
     const safePoints = Math.max(0, Math.floor(points));
     const safeCorrect = Math.max(0, Math.min(CORRECT_CAP, Math.floor(correctAnswers)));
-    const safeMinutes = Math.max(0, Math.min(TIME_SLOTS - 1, Math.floor(minutes)));
-    return safePoints * 1_000_000_000 + safeCorrect * TIME_SLOTS + (TIME_SLOTS - 1 - safeMinutes);
+    const safeSeconds = Math.max(0, Math.min(TIME_SLOTS - 1, Math.floor(seconds)));
+    return safePoints * (CORRECT_CAP + 1) * TIME_SLOTS + safeCorrect * TIME_SLOTS + (TIME_SLOTS - 1 - safeSeconds);
 }
 
 export interface LeaderboardEntry {

@@ -7,7 +7,7 @@ import {
     isTopicComplete,
     isValidWeekKey,
     leaderboardWeekKey,
-    minutesIntoWeek,
+    secondsIntoWeek,
     nextWeekKey,
     previousWeekKey,
     rankEntries,
@@ -51,8 +51,8 @@ describe("leaderboard weeks", () => {
 describe("ranking", () => {
     it("orders by points, then correct answers, then who got there first", () => {
         const week = "2026-10-05";
-        const early = minutesIntoWeek(new Date("2026-10-05T05:00:00Z"), week);
-        const late = minutesIntoWeek(new Date("2026-10-09T05:00:00Z"), week);
+        const early = secondsIntoWeek(new Date("2026-10-05T05:00:00Z"), week);
+        const late = secondsIntoWeek(new Date("2026-10-05T05:00:01Z"), week);
         expect(early).toBeLessThan(late);
         const entries = [
             { uid: "b", rankKey: rankKey(30, 12, late) },
@@ -64,11 +64,12 @@ describe("ranking", () => {
     });
 
     it("keeps a rank key exact for large scores", () => {
-        const key = rankKey(250_000, 90_000, 10_079);
+        const key = rankKey(250_000, 90_000, 604_799);
         expect(Number.isSafeInteger(key)).toBe(true);
         expect(rankKey(1, 0, 0)).toBeGreaterThan(rankKey(0, 9_999, 0));
         expect(rankKey(0, 9_999, 0)).toBeGreaterThan(rankKey(0, 9_998, 0));
-        expect(minutesIntoWeek(new Date("2020-01-01T00:00:00Z"), "2026-10-05")).toBe(0);
+        expect(secondsIntoWeek(new Date("2020-01-01T00:00:00Z"), "2026-10-05")).toBe(0);
+        expect(rankKey(5, 2, 10)).toBeGreaterThan(rankKey(5, 2, 11));
     });
 });
 

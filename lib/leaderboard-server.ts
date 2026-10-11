@@ -2,7 +2,7 @@ import { FieldValue, type DocumentSnapshot, type Transaction } from "firebase-ad
 import { adminDb } from "@/lib/firebase-admin";
 import { writeAuditLog } from "@/lib/admin-audit";
 import {
-    LEADERBOARD_CLASSES, LEADERBOARD_SIZE, REWARD_PLACES, isLeaderboardClass, leaderboardWeekKey, minutesIntoWeek, previousWeekKey, rankKey,
+    LEADERBOARD_CLASSES, LEADERBOARD_SIZE, REWARD_PLACES, isLeaderboardClass, leaderboardWeekKey, previousWeekKey, rankKey, secondsIntoWeek,
     type LeaderboardClass, type LeaderboardEntry, type PointEvent, type PointsGrant, type RankedEntry, type RewardCandidate, type RewardStatus, type RewardWinner,
 } from "@/lib/leaderboard";
 import { resultsNotification, rewardNotification } from "@/lib/notifications";
@@ -61,7 +61,7 @@ export function applyPointsGrant(transaction: Transaction, input: {
     const correctAnswers = (existing?.correctAnswers ?? 0) + grant.correctAnswers;
     const entry: LeaderboardEntry = {
         uid, name, classLevel, weekKey, points, correctAnswers,
-        rankKey: rankKey(points, correctAnswers, minutesIntoWeek(now, weekKey)),
+        rankKey: rankKey(points, correctAnswers, secondsIntoWeek(now, weekKey)),
         lastScoredAt: now.getTime(),
     };
     transaction.set(entryRef(weekKey, classLevel, uid), { ...entry, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
