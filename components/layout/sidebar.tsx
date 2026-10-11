@@ -13,7 +13,8 @@ import {
     AlertTriangle,
     Menu,
     X,
-    GraduationCap
+    GraduationCap,
+    Trophy
 } from "lucide-react";
 import { useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -37,6 +38,7 @@ export function Sidebar({ user, onSignOut }: SidebarProps) {
         student: [
             { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
             { href: "/learn", label: "Learn Topics", icon: BookOpen },
+            { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
             { href: "/quiz-history", label: "Quiz History", icon: History },
         ],
         parent: [

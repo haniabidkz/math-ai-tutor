@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
     BookOpen, Download, FileUp, Gauge, LayoutDashboard, LogOut,
-    Pencil, RefreshCw, Save, Settings, ShieldCheck, Sparkles, Trash2, Users,
+    Pencil, RefreshCw, Save, Settings, ShieldCheck, Sparkles, Trash2, Trophy, Users,
 } from "lucide-react";
 import { AiStudio } from "@/components/admin/ai-studio";
 import { ConceptEditor, type ConceptPayload } from "@/components/admin/concept-editor";
+import { LeaderboardAdmin } from "@/components/admin/leaderboard-admin";
 import { QuestionEditor, type QuestionPayload } from "@/components/admin/question-editor";
 import { QuestionList } from "@/components/admin/question-list";
 import { RegenerateQuestionDialog } from "@/components/admin/regenerate-question";
@@ -253,6 +254,7 @@ export default function SuperAdminPage() {
                         <TabsTrigger value="questions"><BookOpen className="mr-2 h-4 w-4" />Questions</TabsTrigger>
                         <TabsTrigger value="curriculum"><Gauge className="mr-2 h-4 w-4" />Curriculum</TabsTrigger>
                         <TabsTrigger value="ai-studio"><Sparkles className="mr-2 h-4 w-4" />AI Studio</TabsTrigger>
+                        <TabsTrigger value="leaderboard"><Trophy className="mr-2 h-4 w-4" />Leaderboard</TabsTrigger>
                         <TabsTrigger value="users"><Users className="mr-2 h-4 w-4" />Users</TabsTrigger>
                         <TabsTrigger value="config"><Settings className="mr-2 h-4 w-4" />Configuration</TabsTrigger>
                     </TabsList>
@@ -358,6 +360,10 @@ export default function SuperAdminPage() {
                                 </Card>
                             ))}
                         </section>
+                    </TabsContent>
+
+                    <TabsContent value="leaderboard">
+                        <LeaderboardAdmin />
                     </TabsContent>
 
                     <TabsContent value="users">

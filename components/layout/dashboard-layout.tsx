@@ -1,6 +1,7 @@
 "use client";
 
 import { Sidebar } from "./sidebar";
+import { NotificationBell } from "@/components/notification-bell";
 import { cn } from "@/lib/utils";
 
 interface DashboardLayoutProps {
@@ -25,6 +26,7 @@ export function DashboardLayout({
         <div className="min-h-screen bg-slate-50/50 dark:bg-slate-900/50">
             {/* Sidebar */}
             <Sidebar user={user} onSignOut={onSignOut} />
+            {user.role === "student" ? <NotificationBell className="fixed right-4 top-4 z-50" /> : null}
 
             {/* Main Content Area */}
             <main

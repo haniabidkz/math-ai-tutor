@@ -4,6 +4,9 @@ import { adminDb } from "@/lib/firebase-admin";
 import { conceptInputSchema } from "@/lib/admin-schemas";
 import { writeAuditLog } from "@/lib/admin-audit";
 import { builtInCurriculumEnabled, getConcept } from "@/lib/curriculum";
+import { activityDateKey } from "@/lib/gamification";
+import { contentNotification } from "@/lib/notifications";
+import { notifyClass } from "@/lib/notifications-server";
 import { authErrorResponse, requireSuperAdmin } from "@/lib/server-auth";
 import type { MicroConcept } from "@/types/curriculum";
 
@@ -29,10 +32,12 @@ export async function POST(request: NextRequest) {
         if (parsed.prerequisiteTag === parsed.microTag) return NextResponse.json({ success: false, error: "A concept cannot require itself" }, { status: 400 });
 
         const ref = adminDb.collection("microConcepts").doc(parsed.microTag);
+        const before = await ref.get();
         // A new concept must not silently replace one that already uses this tag.
-        if (body.isNew === true && ((await ref.get()).exists || (builtInCurriculumEnabled() && getConcept(parsed.microTag)))) {
+        if (body.isNew === true && (before.exists || (builtInCurriculumEnabled() && getConcept(parsed.microTag)))) {
             return NextResponse.json({ success: false, error: `A concept with the tag ${parsed.microTag} already exists. Change the title slightly.` }, { status: 409 });
         }
+        const wasPublished = before.data()?.status === "published";
 
         await ref.set({
             ...parsed,
@@ -53,6 +58,16 @@ export async function POST(request: NextRequest) {
             await batch.commit();
         }
         await writeAuditLog({ actorUid: admin.uid, actorEmail: admin.email, action: body.isNew === true ? "concept.create" : "concept.update", targetType: "microConcept", targetId: parsed.microTag, summary: `Saved ${parsed.title.english}` });
+
+        // A lesson that just went live for a class with a board tells its students; never a foundation-only repair topic.
+        const nowPublished = parsed.status === "published" && !wasPublished;
+        if (nowPublished && !(parsed.classLevel === 5 || parsed.foundationOnly === true) && [6, 7, 8].includes(parsed.classLevel)) {
+            try {
+                await notifyClass(parsed.classLevel, contentNotification({ microTag: parsed.microTag, title: parsed.title, classLevel: parsed.classLevel }, activityDateKey()));
+            } catch (error) {
+                console.error("Could not notify the class about the published lesson", error);
+            }
+        }
         return NextResponse.json({ success: true, microTag: parsed.microTag });
     } catch (error: any) {
         const auth = authErrorResponse(error);

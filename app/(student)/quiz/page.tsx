@@ -59,6 +59,7 @@ interface ResultState {
     percentage: number;
     mastered: boolean;
     xpEarned?: number;
+    bonuses?: { combo: number; topic: number; homework: number };
     totalXp?: number;
     streak?: number;
     newBadges?: Array<{ id: string; title: string; description: string; icon: string }>;
@@ -250,6 +251,7 @@ function QuizContent() {
                     percentage: data.percentage,
                     mastered: data.mastered,
                     xpEarned: data.xpEarned,
+                    bonuses: data.bonuses,
                     totalXp: data.totalXp,
                     streak: data.streak,
                     newBadges: data.newBadges ?? [],
@@ -442,6 +444,14 @@ function QuizContent() {
                         </div>
                     </div>
                     {result.xpEarned === 0 ? <p className="mt-2 text-xs font-bold text-slate-500">{say(language, "A retry or a repeat today earns no XP, but mastery still counts.", "Dobara koshish ya aaj ka repeat XP nahi deta, lekin mastery ginti hai.")}</p> : null}
+                    {result.bonuses && (result.bonuses.combo || result.bonuses.topic || result.bonuses.homework) ? (
+                        <p className="mt-2 text-xs font-bold text-indigo-700">
+                            {say(language, "Bonus inside:", "Bonus shamil:")}
+                            {result.bonuses.topic ? ` +${result.bonuses.topic} ${say(language, "chapter complete", "chapter mukammal")}` : ""}
+                            {result.bonuses.combo ? ` +${result.bonuses.combo} ${say(language, "combo", "combo")}` : ""}
+                            {result.bonuses.homework ? ` +${result.bonuses.homework} ${say(language, "homework", "homework")}` : ""}
+                        </p>
+                    ) : null}
 
                     {result.newBadges?.length ? (
                         <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-left">

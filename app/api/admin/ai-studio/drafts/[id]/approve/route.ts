@@ -11,6 +11,9 @@ import {
 } from "@/lib/ai-studio/store";
 import { NEW_MICRO_TAG } from "@/lib/ai-studio/types";
 import { blockingIssues, normalizeText, validateDraft } from "@/lib/ai-studio/validate";
+import { activityDateKey } from "@/lib/gamification";
+import { contentNotification } from "@/lib/notifications";
+import { notifyClass } from "@/lib/notifications-server";
 import { requireSuperAdmin } from "@/lib/server-auth";
 import type { MicroConcept } from "@/types/curriculum";
 
@@ -96,8 +99,21 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
                 publishedQuestionIds: ids,
                 updatedAt: FieldValue.serverTimestamp(),
             });
-            return { ids, microTag: newConcept?.microTag ?? null, name: target.microTopic?.title ?? target.subTopic ?? target.chapter.title, level: draft.level };
+            return {
+                ids, microTag: newConcept?.microTag ?? null, name: target.microTopic?.title ?? target.subTopic ?? target.chapter.title, level: draft.level,
+                announce: newConcept ? { microTag: newConcept.microTag, title: newConcept.title, classLevel: newConcept.classLevel } : null,
+            };
         });
+
+        // A brand-new lesson with its quiz: every student of the class gets a bell notice. A failure
+        // here must not undo a publish that already happened.
+        if (result.announce) {
+            try {
+                await notifyClass(result.announce.classLevel, contentNotification(result.announce, activityDateKey()));
+            } catch (error) {
+                console.error("Could not notify the class about the new lesson", error);
+            }
+        }
 
         // The new pool is live; now the questions these micro-topics had before go, so students
         // see only the new content. Diagnostic test questions were never in this list.

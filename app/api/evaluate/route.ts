@@ -5,6 +5,7 @@ import {
     getAssessmentConfig,
     getPublishedConcept,
     getPublishedQuestions,
+    getRuntimeConcepts,
     selectQuizQuestions,
     toClientQuestion,
 } from "@/lib/assessment-content";
@@ -15,6 +16,11 @@ import {
     advanceFoundationRound, FOUNDATION_MAX_ROUNDS, FOUNDATION_ROUND_SIZE, foundationProgress, planFoundationRound, shouldOfferFoundation,
     type FoundationProgress,
 } from "@/lib/foundation-fallback";
+import {
+    comboBonus, grantFromEvents, homeworkPoints, isLeaderboardClass, isTopicComplete, leaderboardWeekKey, pointEventId, scoringAttemptsExhausted,
+    TOPIC_COMPLETION_POINTS, weekDateKeys, type LeaderboardEntry, type PointEvent,
+} from "@/lib/leaderboard";
+import { applyPointsGrant, entryRef, toEntry } from "@/lib/leaderboard-server";
 import { selectQuizQuestionSet, takeNextQuestion, targetDifficulty } from "@/lib/question-selection";
 import { sessionDurationSeconds } from "@/lib/learner-metrics";
 import {
@@ -34,7 +40,7 @@ import {
 } from "@/lib/mistake-analysis";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { MistakePayload } from "@/types/assessment";
-import type { LocalizedText, MisconceptionTag, MistakeType, OptionAnalysis, QuestionBankItem } from "@/types/curriculum";
+import type { LocalizedText, MicroConcept, MisconceptionTag, MistakeType, OptionAnalysis, QuestionBankItem } from "@/types/curriculum";
 
 type EvaluationOutcome = {
     success: true;
@@ -70,10 +76,25 @@ type EvaluationOutcome = {
     /** After a round ends: whether the student passed it before the quiz resumed. */
     foundationResult?: { outcome: "passed" | "not_passed"; title: LocalizedText; classLevel: number };
     xpEarned?: number;
+    /** Extra points inside xpEarned: combo runs, finishing a whole chapter, homework accuracy. */
+    bonuses?: { combo: number; topic: number; homework: number };
     totalXp?: number;
     streak?: number;
     newBadges?: Array<{ id: string; title: string; description: string; icon: string }>;
 };
+
+/** Everything the completion step needs to award points, read before the transaction writes. */
+interface CompletionAward {
+    awardRef: FirebaseFirestore.DocumentReference;
+    alreadyAwardedToday: boolean;
+    /** Days this week on which the topic already earned points, today excluded. */
+    scoringDays: number;
+    /** This week's leaderboard entry for the student, when their class has a board. */
+    board: { weekKey: string; now: Date; entry: LeaderboardEntry | null; name: string } | null;
+    /** The chapter the lesson belongs to, with every lesson's mastery, for the completion bonus. */
+    topic: { topicId: string; title: string; awarded: boolean; lessons: Array<{ microTag: string; mastered: boolean }> } | null;
+    homework: { awarded: boolean } | null;
+}
 
 function currentResponse(session: StoredQuizSession, duplicate = false): EvaluationOutcome {
     const question = activeQuestion(session);
@@ -232,6 +253,20 @@ export async function POST(request: NextRequest) {
         // Points for one topic are awarded once per day, and never for a retry.
         const awardRef = studentRef.collection("xpAwards").doc(xpAwardId(initial.microTag, activityDateKey()));
 
+        // Leaderboard points: this week's entry, the once-only chapter and homework bonuses, and the
+        // weekly cap on scoring days. The heavier lookups run only when this answer can end the quiz.
+        const now = new Date();
+        const weekKey = leaderboardWeekKey(now);
+        const boardEntryRef = isLeaderboardClass(initial.classLevel) ? entryRef(weekKey, initial.classLevel, user.uid) : null;
+        const lessonConcept = initial.kind === "weekly" ? undefined : await getPublishedConcept(initial.microTag);
+        const topicAwardRef = lessonConcept ? studentRef.collection("pointEvents").doc(pointEventId("topic", lessonConcept.topicId)) : null;
+        const homeworkAwardRef = initial.homeworkId ? studentRef.collection("pointEvents").doc(pointEventId("homework", initial.homeworkId)) : null;
+        const mayComplete = initial.status !== "active" || initial.currentQuestionIndex + 1 >= quizTotal(initial);
+        const chapterLessons = mayComplete && lessonConcept ? await chapterMastery(studentRef, lessonConcept, initial.microTag) : [];
+        const todayKey = activityDateKey(now);
+        const otherDayRefs = weekDateKeys(weekKey).filter((key) => key !== todayKey).map((key) => studentRef.collection("xpAwards").doc(xpAwardId(initial.microTag, key)));
+        const scoringDays = mayComplete ? (await adminDb.getAll(...otherDayRefs)).filter((doc) => doc.exists).length : 0;
+
         let outcome: EvaluationOutcome = currentResponse(initial);
 
         await adminDb.runTransaction(async (transaction) => {
@@ -240,6 +275,17 @@ export async function POST(request: NextRequest) {
             const snapshot = await transaction.get(sessionRef);
             const student = (await transaction.get(studentRef)).data() ?? {};
             const alreadyAwardedToday = (await transaction.get(awardRef)).exists;
+            const boardEntry = boardEntryRef ? toEntry(await transaction.get(boardEntryRef)) : null;
+            const topicAwarded = topicAwardRef ? (await transaction.get(topicAwardRef)).exists : true;
+            const homeworkAwarded = homeworkAwardRef ? (await transaction.get(homeworkAwardRef)).exists : true;
+            const award: CompletionAward = {
+                awardRef,
+                alreadyAwardedToday,
+                scoringDays,
+                board: boardEntryRef ? { weekKey, now, entry: boardEntry, name: String(student.name ?? "Student") } : null,
+                topic: lessonConcept ? { topicId: lessonConcept.topicId, title: lessonConcept.topicTitle.english, awarded: topicAwarded, lessons: chapterLessons } : null,
+                homework: homeworkAwardRef ? { awarded: homeworkAwarded } : null,
+            };
             let session = snapshot.data() as StoredQuizSession | undefined;
             if (!session) throw new Error("SESSION_NOT_FOUND");
             // An answer to a pool question other than the routed one (answered offline) takes the
@@ -350,7 +396,7 @@ export async function POST(request: NextRequest) {
 
                 const moved = advanceMain({ ...session, eventIds, remedialTag: null, misconception: null, practiceQueue: [], practiceIndex: 0 }, session.answers ?? []);
                 transaction.update(sessionRef, { eventIds, ...moved.update, remedialTag: null, misconception: null, practiceQueue: [], practiceIndex: 0, updatedAt: FieldValue.serverTimestamp() });
-                outcome = completeOrContinue(transaction, moved.next, user.uid, student, { awardRef, alreadyAwardedToday }, config, 0, action);
+                outcome = completeOrContinue(transaction, moved.next, user.uid, student, award, config, 0, action);
                 return;
             }
 
@@ -407,7 +453,7 @@ export async function POST(request: NextRequest) {
                 const moved = advanceMain({ ...session, eventIds, foundation: step.round, misconception: null, practiceQueue: [], practiceIndex: 0 }, answers);
                 transaction.update(sessionRef, { eventIds, ...moved.update, foundation: step.round, misconception: null, practiceQueue: [], practiceIndex: 0, updatedAt: FieldValue.serverTimestamp() });
                 outcome = {
-                    ...completeOrContinue(transaction, moved.next, user.uid, student, { awardRef, alreadyAwardedToday }, config, 0, action, correct, question.explanation),
+                    ...completeOrContinue(transaction, moved.next, user.uid, student, award, config, 0, action, correct, question.explanation),
                     foundationResult: { outcome: step.round.outcome ?? "not_passed", title: source.title, classLevel: source.classLevel },
                     mistake: analysis ? mistakePayload(analysis) : undefined,
                 };
@@ -472,7 +518,7 @@ export async function POST(request: NextRequest) {
                 }
                 const moved = advanceMain({ ...session, eventIds, practiceQueue: [], practiceIndex: 0, misconception: null }, answers);
                 transaction.update(sessionRef, { eventIds, ...moved.update, practiceQueue: [], practiceIndex: 0, misconception: null, updatedAt: FieldValue.serverTimestamp() });
-                outcome = completeOrContinue(transaction, moved.next, user.uid, student, { awardRef, alreadyAwardedToday }, config, 0, action, correct, question.explanation);
+                outcome = completeOrContinue(transaction, moved.next, user.uid, student, award, config, 0, action, correct, question.explanation);
                 return;
             }
 
@@ -583,7 +629,7 @@ export async function POST(request: NextRequest) {
                 moved.next,
                 user.uid,
                 student,
-                { awardRef, alreadyAwardedToday },
+                award,
                 config,
                 delta,
                 action,
@@ -604,12 +650,23 @@ export async function POST(request: NextRequest) {
     }
 }
 
+/** Every lesson of the chapter with whether the student has mastered it, for the completion bonus. */
+async function chapterMastery(studentRef: FirebaseFirestore.DocumentReference, concept: MicroConcept, current: string) {
+    const lessons = (await getRuntimeConcepts()).filter((item) =>
+        item.topicId === concept.topicId && item.classLevel === concept.classLevel && item.status === "published" && !item.foundationOnly);
+    if (!lessons.some((item) => item.microTag === current)) lessons.push(concept);
+    const others = lessons.filter((item) => item.microTag !== current);
+    const progress = others.length ? await adminDb.getAll(...others.map((item) => studentRef.collection("conceptProgress").doc(item.microTag))) : [];
+    const mastered = new Set(progress.filter((doc) => doc.data()?.mastered === true).map((doc) => doc.id));
+    return lessons.map((item) => ({ microTag: item.microTag, mastered: mastered.has(item.microTag) }));
+}
+
 function completeOrContinue(
     transaction: FirebaseFirestore.Transaction,
     session: StoredQuizSession,
     uid: string,
     student: FirebaseFirestore.DocumentData,
-    award: { awardRef: FirebaseFirestore.DocumentReference; alreadyAwardedToday: boolean },
+    award: CompletionAward,
     config: Awaited<ReturnType<typeof getAssessmentConfig>>,
     delta: number,
     action: "answer" | "remedialComplete",
@@ -644,8 +701,12 @@ function completeOrContinue(
     const xpBlocked = isXpBlocked({
         isRetry: Boolean(session.retryOf),
         alreadyAwardedToday: award.alreadyAwardedToday,
-    });
-    const xpEarned = xpBlocked ? 0 : sessionXp(session);
+    }) || scoringAttemptsExhausted(award.scoringDays);
+    const baseXp = xpBlocked ? 0 : sessionXp(session);
+    const combo = xpBlocked ? 0 : comboBonus(session.answers ?? []);
+    const topicBonus = award.topic && !award.topic.awarded && mastered && isTopicComplete(award.topic.lessons, session.microTag) ? TOPIC_COMPLETION_POINTS : 0;
+    const homeworkBonus = session.homeworkId && award.homework && !award.homework.awarded ? homeworkPoints(percentage) : 0;
+    const xpEarned = baseXp + combo + topicBonus + homeworkBonus;
     const totalXp = Number(student.xp ?? 0) + xpEarned;
     const streak = nextStreak(student.streak as Partial<StreakState> | undefined, activityDateKey());
     const quizzesCompleted = Number(student.quizzesCompleted ?? 0) + 1;
@@ -679,13 +740,27 @@ function completeOrContinue(
         }, { merge: true });
     }
 
-    if (xpEarned > 0) {
+    if (baseXp > 0) {
         transaction.set(award.awardRef, {
             microTag: session.microTag,
             sessionId: session.id,
             xp: xpEarned,
             awardedAt: FieldValue.serverTimestamp(),
         }, { merge: true });
+    }
+
+    // Every point also counts on this week's class leaderboard, with a history line per award.
+    const unaidedCorrect = (session.answers ?? []).filter((answer) => answer.isCorrect && !answer.hintUsed && !answer.practice).length;
+    const events: PointEvent[] = [];
+    if (baseXp > 0) events.push({ id: pointEventId("quiz", session.id), kind: "quiz", points: baseXp, correctAnswers: unaidedCorrect, label: topicName, sessionId: session.id, microTag: session.microTag });
+    if (combo > 0) events.push({ id: pointEventId("combo", session.id), kind: "combo", points: combo, correctAnswers: 0, label: topicName, sessionId: session.id, microTag: session.microTag });
+    if (topicBonus > 0 && award.topic) events.push({ id: pointEventId("topic", award.topic.topicId), kind: "topic", points: topicBonus, correctAnswers: 0, label: award.topic.title, topicId: award.topic.topicId, microTag: session.microTag });
+    if (homeworkBonus > 0 && session.homeworkId) events.push({ id: pointEventId("homework", session.homeworkId), kind: "homework", points: homeworkBonus, correctAnswers: 0, label: topicName, homeworkId: session.homeworkId, sessionId: session.id, microTag: session.microTag });
+    if (award.board && events.length) {
+        applyPointsGrant(transaction, {
+            uid, name: award.board.name, classLevel: session.classLevel, weekKey: award.board.weekKey, now: award.board.now,
+            existing: award.board.entry, grant: grantFromEvents(events),
+        });
     }
 
     transaction.set(studentRef, {
@@ -750,6 +825,7 @@ function completeOrContinue(
         percentage,
         totalQuestions: quizTotal(session),
         xpEarned,
+        bonuses: { combo, topic: topicBonus, homework: homeworkBonus },
         totalXp,
         streak: streak.current,
         newBadges: freshBadges.map((id) => {

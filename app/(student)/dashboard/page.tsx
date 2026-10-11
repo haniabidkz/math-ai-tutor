@@ -13,6 +13,7 @@ import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/stat-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { WeeklyRankCard } from "@/components/student/weekly-rank-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -148,6 +149,8 @@ export default function StudentDashboard() {
                 <StatCard title="Mastered" value={data.metrics.mastered} icon={Trophy} color="success" description={`${data.metrics.mastered} of ${data.metrics.total} topics`} />
                 <StatCard title="Available now" value={data.metrics.available} icon={CheckCircle2} color="default" description="Ready to learn" />
             </div>
+
+            <WeeklyRankCard />
 
             <div className="grid gap-4 lg:grid-cols-3">
                 <Card className={`border-l-4 ${STATUS_STYLES[data.learningStatus.key] ?? "border-l-slate-400"}`}>
