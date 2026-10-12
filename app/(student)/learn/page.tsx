@@ -16,6 +16,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useAidLanguage, type AidLanguage } from "@/lib/aid-language";
 import { auth } from "@/lib/firebase";
+import { XP_FIRST_ATTEMPT_CORRECT } from "@/lib/gamification";
 import { commonMistake, keyIdea, LESSON_STEPS, splitLesson, type LessonPracticeItem } from "@/lib/lesson-steps";
 import { cn } from "@/lib/utils";
 import type { LocalizedText } from "@/types/curriculum";
@@ -345,7 +346,7 @@ function LearnContent() {
                                         <p className="text-[11px] font-extrabold uppercase text-slate-500">{say(language, "Today's lesson", "Aaj ka lesson")}</p>
                                         <p className="mt-1 font-display text-2xl font-bold text-indigo-700">{step}/{LESSON_STEPS.length}</p>
                                         <p className="text-sm font-bold text-slate-600">{stepsLeft > 0 ? say(language, `${stepsLeft} ${stepsLeft === 1 ? "step" : "steps"} left, then the quiz`, `${stepsLeft} qadam baqi, phir quiz`) : say(language, "Then the quiz", "Phir quiz")}</p>
-                                        <p className="mt-1 text-xs font-bold text-slate-500">{say(language, "In the quiz: +1 XP per right answer", "Quiz mein: har sahi jawab par +1 XP")}</p>
+                                        <p className="mt-1 text-xs font-bold text-slate-500">{say(language, `In the quiz: +${XP_FIRST_ATTEMPT_CORRECT} XP per right answer`, `Quiz mein: har sahi jawab par +${XP_FIRST_ATTEMPT_CORRECT} XP`)}</p>
                                         {step < LESSON_STEPS.length ? (
                                             <Button variant="ghost" className="mt-2 w-full font-bold text-slate-600" onClick={startQuiz} disabled={starting}>{say(language, "Skip to the quiz", "Seedha quiz")}<ArrowRight className="ml-1 h-4 w-4" /></Button>
                                         ) : null}

@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { useAidLanguage } from "@/lib/aid-language";
 import { MISTAKE_TYPE_LABELS } from "@/lib/mistake-analysis";
 import { auth } from "@/lib/firebase";
+import { XP_FIRST_ATTEMPT_CORRECT } from "@/lib/gamification";
 import {
     clearSessionQueue,
     enqueueAnswer,
@@ -612,7 +613,7 @@ function QuizContent() {
                         ) : null}
                         {lastAnswer ? (
                             lastAnswer.isCorrect ? (
-                                <InsightBlock tone="correct" className="mb-4" icon={<CheckCircle2 className="h-4 w-4" />} title={<>{say(language, "Correct!", "Sahi!")}{lastAnswer.xp ? <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold normal-case tracking-normal"><Star className="mr-1 inline h-3 w-3" />+1 XP</span> : null}</>}>
+                                <InsightBlock tone="correct" className="mb-4" icon={<CheckCircle2 className="h-4 w-4" />} title={<>{say(language, "Correct!", "Sahi!")}{lastAnswer.xp ? <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold normal-case tracking-normal"><Star className="mr-1 inline h-3 w-3" />+{XP_FIRST_ATTEMPT_CORRECT} XP</span> : null}</>}>
                                     {lastAnswer.explanation ? (
                                         <>
                                             <button type="button" className="text-xs font-bold text-emerald-800 underline-offset-2 hover:underline" onClick={() => setShowSolution((open) => !open)} aria-expanded={showSolution}>

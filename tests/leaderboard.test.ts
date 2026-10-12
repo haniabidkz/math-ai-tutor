@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     comboBonus,
+    COMBO_POINTS,
     eligibleCandidates,
     grantFromEvents,
     homeworkPoints,
@@ -77,11 +78,12 @@ describe("bonus points", () => {
     const answer = (isCorrect: boolean, extra: { practice?: boolean; foundation?: boolean } = {}) => ({ isCorrect, ...extra });
 
     it("pays one point for every three correct answers in a row on the lesson's own questions", () => {
-        expect(comboBonus([answer(true), answer(true), answer(true)])).toBe(1);
-        expect(comboBonus([answer(true), answer(true), answer(false), answer(true), answer(true), answer(true)])).toBe(1);
-        expect(comboBonus(Array.from({ length: 7 }, () => answer(true)))).toBe(2);
-        expect(comboBonus([answer(true), answer(true), answer(true, { practice: true }), answer(true)])).toBe(1);
-        expect(comboBonus([answer(true), answer(false, { foundation: true }), answer(true), answer(true)])).toBe(1);
+        expect(COMBO_POINTS).toBe(5);
+        expect(comboBonus([answer(true), answer(true), answer(true)])).toBe(COMBO_POINTS);
+        expect(comboBonus([answer(true), answer(true), answer(false), answer(true), answer(true), answer(true)])).toBe(COMBO_POINTS);
+        expect(comboBonus(Array.from({ length: 7 }, () => answer(true)))).toBe(2 * COMBO_POINTS);
+        expect(comboBonus([answer(true), answer(true), answer(true, { practice: true }), answer(true)])).toBe(COMBO_POINTS);
+        expect(comboBonus([answer(true), answer(false, { foundation: true }), answer(true), answer(true)])).toBe(COMBO_POINTS);
         expect(comboBonus([])).toBe(0);
     });
 

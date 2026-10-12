@@ -2,8 +2,9 @@ import type { LocalizedText } from "@/types/curriculum";
 
 const text = (english: string, romanUrdu: string): LocalizedText => ({ english, romanUrdu });
 
+/** Leaderboard Points Rules (owner, 2026-10-13): +10 per first-attempt correct answer, +10 per completed quiz. */
 export const XP_QUIZ_COMPLETED = 10;
-export const XP_FIRST_ATTEMPT_CORRECT = 1;
+export const XP_FIRST_ATTEMPT_CORRECT = 10;
 
 /**
  * A correct answer earns a point only when the student solved it unaided.

@@ -1,4 +1,4 @@
-import { activityDateKey } from "@/lib/gamification";
+import { activityDateKey, XP_FIRST_ATTEMPT_CORRECT, XP_QUIZ_COMPLETED } from "@/lib/gamification";
 import type { LocalizedText } from "@/types/curriculum";
 
 /** Classes that have a leaderboard; each class competes on its own. */
@@ -10,9 +10,9 @@ export const LEADERBOARD_SIZE = 100;
 /** The places that qualify for weekly rewards. */
 export const REWARD_PLACES = 3;
 
-/** One point for every three correct answers in a row inside a quiz. */
+/** Accuracy streak bonus: every three correct answers in a row inside a quiz; a wrong answer resets the run. */
 export const COMBO_RUN_LENGTH = 3;
-export const COMBO_POINTS = 1;
+export const COMBO_POINTS = 5;
 /** Once per chapter, when every lesson in it is mastered. */
 export const TOPIC_COMPLETION_POINTS = 50;
 /** Homework earns up to this many points, by accuracy. */
@@ -242,12 +242,14 @@ export const text = (english: string, romanUrdu: string): LocalizedText => ({ en
 
 /** The rules shown to students, kept in one place so the screen and the server agree. */
 export const POINT_RULES: LocalizedText[] = [
-    text("+1 for every correct answer on your first try, +10 for finishing a quiz. Retries and a second quiz on the same topic the same day do not count.",
-        "Pehli koshish mein har sahi jawab par +1, quiz khatam karne par +10. Dobara koshish aur usi din usi topic ka doosra quiz nahi ginta."),
-    text(`+${COMBO_POINTS} for every ${COMBO_RUN_LENGTH} correct answers in a row.`, `Lagatar ${COMBO_RUN_LENGTH} sahi jawab par +${COMBO_POINTS}.`),
+    text(`+${XP_FIRST_ATTEMPT_CORRECT} for every correct answer on your first try, +${XP_QUIZ_COMPLETED} for finishing a quiz. Retries and a second quiz on the same topic the same day do not count.`,
+        `Pehli koshish mein har sahi jawab par +${XP_FIRST_ATTEMPT_CORRECT}, quiz khatam karne par +${XP_QUIZ_COMPLETED}. Dobara koshish aur usi din usi topic ka doosra quiz nahi ginta.`),
+    text(`+${COMBO_POINTS} for every ${COMBO_RUN_LENGTH} correct answers in a row; a wrong answer restarts the count.`, `Lagatar ${COMBO_RUN_LENGTH} sahi jawab par +${COMBO_POINTS}; ghalat jawab par ginti dobara shuru.`),
     text(`+${TOPIC_COMPLETION_POINTS} when you master every lesson of a chapter, once per chapter.`, `Ek chapter ke sab lessons master karne par +${TOPIC_COMPLETION_POINTS}, har chapter par ek baar.`),
     text(`Homework earns up to ${HOMEWORK_MAX_POINTS} points by accuracy.`, `Homework par accuracy ke hisab se ${HOMEWORK_MAX_POINTS} tak points.`),
     text(`A topic can earn points on at most ${MAX_SCORING_ATTEMPTS_PER_WEEK} days a week.`, `Ek topic hafte mein zyada se zyada ${MAX_SCORING_ATTEMPTS_PER_WEEK} din points de sakta hai.`),
     text("Ties: more correct answers wins; then whoever got there first. The board resets every Monday; lifetime XP, badges and streaks stay.",
         "Barabar points: zyada sahi jawab wala aage; phir jo pehle pohncha. Board har Monday reset hota hai; lifetime XP, badges aur streak waise hi rehte hain."),
+    text("The same rules apply to free and paid members. The board rewards steady, accurate practice, not only the top scorers.",
+        "Free aur paid dono members ke liye same rules. Board lagatar aur sahi practice ka inaam deta hai, sirf top scorers ka nahi."),
 ];
