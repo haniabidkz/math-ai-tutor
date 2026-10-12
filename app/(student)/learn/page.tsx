@@ -12,12 +12,11 @@ import { InsightBlock } from "@/components/insight-block";
 import { LessonPractice } from "@/components/student/lesson-practice";
 import { LanguagePrompt } from "@/components/student/language-prompt";
 import { PiSays, type PiMood } from "@/components/student/pi-mascot";
-import { TextToSpeech } from "@/components/tts-button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useAidLanguage, type AidLanguage } from "@/lib/aid-language";
 import { auth } from "@/lib/firebase";
-import { commonMistake, keyIdea, LESSON_STEPS, withoutHeading, type LessonPracticeItem } from "@/lib/lesson-steps";
+import { commonMistake, keyIdea, LESSON_STEPS, splitLesson, type LessonPracticeItem } from "@/lib/lesson-steps";
 import { cn } from "@/lib/utils";
 import type { LocalizedText } from "@/types/curriculum";
 
@@ -55,6 +54,7 @@ function LearnContent() {
     const [language, chooseLanguage, languageLoaded] = useAidLanguage();
     const [user, setUser] = useState<User | null>(null);
     const [content, setContent] = useState<LocalizedText | null>(null);
+    const [tip, setTip] = useState<LocalizedText | null>(null);
     const [concept, setConcept] = useState<LessonConcept | null>(null);
     const [practice, setPractice] = useState<LessonPracticeItem[]>([]);
     const [teachingLevel, setTeachingLevel] = useState(1);
@@ -97,6 +97,7 @@ function LearnContent() {
             const data = await response.json();
             if (!response.ok) throw new Error(data.error);
             setContent(data.content);
+            setTip(data.tip ?? null);
             setConcept(data.concept);
             // The practice questions stay put while the explanation is told another way.
             setPractice((current) => (current.length ? current : (data.practice ?? [])));
@@ -137,7 +138,7 @@ function LearnContent() {
     const stepName = (index: number) => say(language, LESSON_STEPS[index].english, LESSON_STEPS[index].romanUrdu);
 
     return (
-        <div className="min-h-screen bg-[#F4F6FB] font-body text-slate-900">
+        <div className="min-h-screen bg-white font-body text-slate-900">
             <header className="border-b bg-white">
                 <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
                     <Button variant="ghost" className="px-2 font-bold sm:px-4" asChild>
@@ -218,39 +219,53 @@ function LearnContent() {
                                     <PiSays mood={PI_MOODS[step]} className="mb-4 lg:hidden">{piLine}</PiSays>
 
                                     {step === 1 ? (
-                                        <section className="rounded-3xl border border-slate-200 bg-white p-6 md:p-8">
-                                            <div className="flex items-center justify-between gap-2">
-                                                <span className="rounded-xl bg-teal-50 px-2.5 py-1 text-xs font-extrabold uppercase text-teal-800">{stepName(0)}</span>
-                                                <TextToSpeech text={idea.english} />
-                                            </div>
+                                        <section className="pb-2">
+                                            <span className="rounded-xl bg-teal-50 px-2.5 py-1 text-xs font-extrabold uppercase text-teal-800">{stepName(0)}</span>
                                             <h1 className="mt-3 font-display text-xl font-semibold text-slate-500">{concept.title}</h1>
                                             <p className="mt-2 font-display text-3xl font-bold leading-snug md:text-4xl md:leading-snug" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{read(language, idea)}</p>
-                                            <ConceptGraphic imageUrl={concept.imageUrl} alt={concept.title} className="mt-5 rounded-2xl" />
+                                            <ConceptGraphic imageUrl={concept.imageUrl} alt={concept.title} className="mt-5 rounded-2xl border border-gray-200" />
                                             <div className="mt-5 flex flex-wrap gap-2">
-                                                <span className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-extrabold text-slate-700"><BookOpen className="h-3.5 w-3.5" />{concept.topicTitle}</span>
-                                                {concept.subTopic ? <span className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-extrabold text-slate-700"><Layers className="h-3.5 w-3.5" />{read(language, concept.subTopic)}</span> : null}
+                                                <span className="inline-flex items-center gap-1 rounded-xl bg-gray-100 px-3 py-1.5 text-xs font-extrabold text-slate-700"><BookOpen className="h-3.5 w-3.5" />{concept.topicTitle}</span>
+                                                {concept.subTopic ? <span className="inline-flex items-center gap-1 rounded-xl bg-gray-100 px-3 py-1.5 text-xs font-extrabold text-slate-700"><Layers className="h-3.5 w-3.5" />{read(language, concept.subTopic)}</span> : null}
                                                 {concept.prerequisiteTitle ? <span className="inline-flex items-center gap-1 rounded-xl bg-amber-50 px-3 py-1.5 text-xs font-extrabold text-amber-800">{say(language, `First: ${concept.prerequisiteTitle}`, `Pehle: ${concept.prerequisiteTitle}`)}</span> : null}
                                             </div>
                                         </section>
                                     ) : null}
 
-                                    {step === 2 ? (
-                                        <section className="rounded-3xl border border-slate-200 bg-white p-6 md:p-8">
-                                            <div className="flex items-center justify-between gap-2">
+                                    {step === 2 ? (() => {
+                                        // The definition on its own, then every example in its own card, then the tip.
+                                        const parts = splitLesson(read(language, concept.concept));
+                                        const examples = [...parts.examples, ...(concept.example ? [read(language, concept.example)] : [])];
+                                        return (
+                                            <section className="pb-2">
                                                 <span className="rounded-xl bg-teal-50 px-2.5 py-1 text-xs font-extrabold uppercase text-teal-800">{stepName(1)}</span>
-                                                <TextToSpeech text={withoutHeading(content.english)} />
-                                            </div>
-                                            <h2 className="mt-3 font-display text-2xl font-semibold">{concept.title}</h2>
-                                            <div className="mt-3">
-                                                <BilingualText text={{ english: withoutHeading(content.english), romanUrdu: withoutHeading(content.romanUrdu) }} markdown switcher={false} />
-                                            </div>
-                                            <div className="mt-5">
-                                                <Button variant="outline" className="font-bold" onClick={() => user && loadLesson(user, Math.min(3, teachingLevel + 1))} disabled={loading}>
-                                                    <RotateCcw className="mr-2 h-4 w-4" />{say(language, "Explain another way", "Doosre tareeqe se samjhao")}
-                                                </Button>
-                                            </div>
-                                        </section>
-                                    ) : null}
+                                                <h2 className="mt-3 font-display text-3xl font-semibold">{concept.title}</h2>
+                                                <p className="mt-4 text-lg leading-8 text-slate-800" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{parts.definition}</p>
+                                                {concept.prerequisiteTitle ? <p className="mt-2 text-sm text-slate-500">{say(language, `It helps to understand "${concept.prerequisiteTitle}" first.`, `Pehle "${concept.prerequisiteTitle}" samajhna madadgar hai.`)}</p> : null}
+                                                {examples.length ? (
+                                                    <div className="mt-5 space-y-3">
+                                                        {examples.map((example, index) => (
+                                                            <div key={index} className="rounded-2xl border border-gray-200 bg-gray-50 p-4 md:p-5">
+                                                                <p className="text-xs font-extrabold uppercase tracking-wide text-slate-500">{say(language, "Example", "Misaal")}{examples.length > 1 ? ` ${index + 1}` : ""}</p>
+                                                                <p className="mt-1 text-base leading-7 text-slate-800" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{example}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : null}
+                                                <div className="mt-5">
+                                                    <Button variant="outline" className="font-bold" onClick={() => user && loadLesson(user, Math.min(3, teachingLevel + 1))} disabled={loading}>
+                                                        <RotateCcw className="mr-2 h-4 w-4" />{say(language, "Explain another way", "Doosre tareeqe se samjhao")}
+                                                    </Button>
+                                                </div>
+                                                {tip ? (
+                                                    <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 md:p-5">
+                                                        <p className="flex items-center gap-1 text-xs font-extrabold uppercase tracking-wide text-amber-800"><Lightbulb className="h-3.5 w-3.5" />{say(language, "Remember", "Yaad rakho")}</p>
+                                                        <p className="mt-1 text-base leading-7 text-amber-950" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{read(language, tip)}</p>
+                                                    </div>
+                                                ) : null}
+                                            </section>
+                                        );
+                                    })() : null}
 
                                     {step === 3 ? (
                                         practice[0] ? (
@@ -322,11 +337,11 @@ function LearnContent() {
 
                                 <aside className="hidden space-y-4 lg:block">
                                     <PiSays mood={PI_MOODS[step]}>{piLine}</PiSays>
-                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                    <div className="rounded-2xl border border-gray-200 bg-white p-4">
                                         <p className="text-[11px] font-extrabold uppercase text-slate-500">{say(language, "Remember", "Yaad rakho")}</p>
                                         <p className="mt-1 font-bold leading-7" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{read(language, idea)}</p>
                                     </div>
-                                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                    <div className="rounded-2xl border border-gray-200 bg-white p-4">
                                         <p className="text-[11px] font-extrabold uppercase text-slate-500">{say(language, "Today's lesson", "Aaj ka lesson")}</p>
                                         <p className="mt-1 font-display text-2xl font-bold text-indigo-700">{step}/{LESSON_STEPS.length}</p>
                                         <p className="text-sm font-bold text-slate-600">{stepsLeft > 0 ? say(language, `${stepsLeft} ${stepsLeft === 1 ? "step" : "steps"} left, then the quiz`, `${stepsLeft} qadam baqi, phir quiz`) : say(language, "Then the quiz", "Phir quiz")}</p>

@@ -88,10 +88,14 @@ export async function POST(request: NextRequest) {
             english: lessonMarkdown(concept, prerequisite ?? null, level, "english"),
             romanUrdu: lessonMarkdown(concept, prerequisite ?? null, level, "roman-urdu"),
         };
+        // The same tip as plain text, for the screen that lays the lesson out in cards.
+        const plainTip = (locale: Locale) => EXTRA_TIPS[locale][level as 1 | 2 | 3].replace(/^\*\*[^*]+\*\*\s*/, "");
+        const tip = { english: plainTip("english"), romanUrdu: plainTip("roman-urdu") };
 
         return NextResponse.json({
             success: true,
             content,
+            tip,
             concept: {
                 microTag: concept.microTag,
                 title: concept.title.english,

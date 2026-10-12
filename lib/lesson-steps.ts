@@ -44,6 +44,45 @@ export function keyIdea(text: LocalizedText): LocalizedText {
     return { english: firstSentence(text.english), romanUrdu: firstSentence(text.romanUrdu || text.english) };
 }
 
+/** Where an example starts inside an explanation, in either language. */
+const EXAMPLE_MARKER = /(?:^|\s)(?:Example|Examples|For example|Misal|Misaal|Misal ke taur par|Misaal ke taur par|Maslan)\s*[:,]\s*/gi;
+
+export interface LessonParts {
+    definition: string;
+    examples: string[];
+}
+
+/**
+ * Splits an explanation into the definition and the examples written inside it ("Example: ...",
+ * "For example, ..."), so each example can sit in its own card instead of one long paragraph.
+ */
+export function splitLesson(text: string): LessonParts {
+    const clean = text.replace(/\s+/g, " ").trim();
+    const matches = [...clean.matchAll(EXAMPLE_MARKER)];
+    if (!matches.length) return { definition: clean, examples: [] };
+    const definition = clean.slice(0, matches[0].index).trim();
+    const examples = matches.map((match, index) => {
+        const start = (match.index ?? 0) + match[0].length;
+        const end = index + 1 < matches.length ? matches[index + 1].index : clean.length;
+        const example = clean.slice(start, end).trim();
+        return example.charAt(0).toUpperCase() + example.slice(1);
+    }).filter(Boolean);
+    return { definition: definition || clean, examples };
+}
+
+/**
+ * An explanation written as "1. ... 2. ... 3. ..." (or on separate lines) becomes a list of
+ * steps; anything else stays one paragraph.
+ */
+export function splitSteps(text: string): string[] {
+    const clean = text.trim();
+    if (!clean) return [];
+    const numbered = clean.split(/\s*(?:^|\s)(?=\d{1,2}[.)]\s)/).map((part) => part.replace(/^\d{1,2}[.)]\s*/, "").trim()).filter(Boolean);
+    if (numbered.length > 1) return numbered;
+    const lines = clean.split(/\n+/).map((line) => line.replace(/^[-•*]\s*/, "").trim()).filter(Boolean);
+    return lines.length > 1 ? lines : [clean];
+}
+
 /** The lesson markdown without its leading heading, which the screen already shows as the title. */
 export function withoutHeading(markdown: string): string {
     return markdown.replace(/^\s*#{1,6}\s[^\n]*\n+/, "").trim();

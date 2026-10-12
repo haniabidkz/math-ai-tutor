@@ -509,29 +509,25 @@ function QuizContent() {
     if (loading && !quiz) return <div className="flex min-h-screen items-center justify-center bg-[#F4F6FB] font-body"><p className="font-bold text-slate-600">Preparing quiz...</p></div>;
 
     if (remedial && quiz) return (
-        <main className="min-h-screen bg-[#F4F6FB] p-4 font-body text-slate-900 md:p-8">
-            <div className="mx-auto max-w-5xl">
+        <main className="min-h-screen bg-white p-4 font-body text-slate-900 md:p-8">
+            <div className="mx-auto max-w-3xl">
                 <div className="mb-4 flex items-center justify-between gap-3">
                     <span className="text-sm font-extrabold text-slate-500">Question {quiz.questionNumber} of {quiz.totalQuestions}</span>
                 </div>
                 <PiSays mood="oops">
                     {say(language, "No problem. See where it slipped, then the next one.", "Koi baat nahi. Dekho kahan phisle, phir agla sawal.")}
                 </PiSays>
-                <div className="mt-4 overflow-hidden rounded-3xl border border-slate-200 bg-white">
-                    <ConceptGraphic imageUrl={remedial.imageUrl} alt={remedial.title.english} />
-                    <div className="space-y-4 p-4 md:p-6">
-                        <div>
-                            <span className="inline-flex items-center gap-1 rounded-xl bg-indigo-50 px-2.5 py-1 text-xs font-extrabold text-indigo-800"><HelpCircle className="h-3 w-3" />{say(language, "Learn from this one", "Is se seekho")}</span>
-                            <h1 className="mt-2 font-display text-2xl font-semibold">{remedial.title.english}</h1>
-                        </div>
-                        <MistakeBox language={language} mistake={mistake} answer={answerInfo} explanation={explanation} concept={remedial.concept}
-                            misconception={misconception} foundation={foundation} classLevel={quiz.classLevel} />
-                        <div className="flex justify-end">
-                            <Button size="lg" className="h-13 w-full rounded-2xl text-base font-extrabold sm:w-auto sm:px-8" onClick={() => evaluate("remedialComplete")} disabled={loading}>
-                                {foundation ? `Start the Class ${foundation.classLevel} round` : misconception ? "Start targeted practice" : say(language, "Got it, next", "Samajh gaya, agay")}<ArrowRight className="ml-2 h-5 w-5" />
-                            </Button>
-                        </div>
-                    </div>
+                <ConceptGraphic imageUrl={remedial.imageUrl} alt={remedial.title.english} className="mt-4 rounded-2xl border border-gray-200" />
+                <div className="mt-5">
+                    <span className="inline-flex items-center gap-1 rounded-xl bg-indigo-50 px-2.5 py-1 text-xs font-extrabold text-indigo-800"><HelpCircle className="h-3 w-3" />{say(language, "Learn from this one", "Is se seekho")}</span>
+                    <h1 className="mt-2 font-display text-2xl font-semibold">{remedial.title.english}</h1>
+                </div>
+                <MistakeBox className="mt-4" language={language} mistake={mistake} answer={answerInfo} explanation={explanation} concept={remedial.concept}
+                    misconception={misconception} foundation={foundation} classLevel={quiz.classLevel} />
+                <div className="mt-6 flex justify-end">
+                    <Button size="lg" className="h-13 w-full rounded-2xl text-base font-extrabold sm:w-auto sm:px-8" onClick={() => evaluate("remedialComplete")} disabled={loading}>
+                        {foundation ? `Start the Class ${foundation.classLevel} round` : misconception ? "Start targeted practice" : say(language, "Got it, next", "Samajh gaya, agay")}<ArrowRight className="ml-2 h-5 w-5" />
+                    </Button>
                 </div>
             </div>
         </main>
