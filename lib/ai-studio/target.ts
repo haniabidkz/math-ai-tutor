@@ -1,4 +1,5 @@
 import { NEW_MICRO_TAG, type DraftTarget, type GenerationLevel } from "@/lib/ai-studio/types";
+import { findSimilarChapter, normalizeTitle, topicsForClass } from "@/lib/concept-autofill";
 import type { MicroConcept, StudentClassLevel } from "@/types/curriculum";
 
 export interface TargetInput {
@@ -58,8 +59,15 @@ export function buildTarget(input: TargetInput, concepts: MicroConcept[]): { tar
     } else {
         if (input.level !== "micro") return { error: "Choose an existing main topic. Sub-topic and main-topic pools use micro-topics that already exist." };
         if (!chapterTitle) return { error: "Type the name of the new main topic." };
-        const existing = classConcepts.find((concept) => same(concept.topicTitle.english, chapterTitle));
-        if (existing) topicId = existing.topicId;
+        // The same name (any spelling of case or spacing) means the existing chapter; a near miss
+        // such as "Operations of Sets" beside "Operations on Sets" is refused so no chapter is doubled.
+        const similar = findSimilarChapter(chapterTitle, topicsForClass(classConcepts, input.classLevel));
+        if (similar && normalizeTitle(similar.title.english) === normalizeTitle(chapterTitle)) {
+            topicId = similar.topicId;
+            title = similar.title.english;
+        } else if (similar) {
+            return { error: `"${chapterTitle}" looks like the existing main topic "${similar.title.english}". Choose it from the list instead of making a second one.` };
+        }
     }
 
     const inChapter = topicId ? chapterConcepts(concepts, input.classLevel, topicId) : [];

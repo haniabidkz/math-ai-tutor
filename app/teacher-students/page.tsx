@@ -3,8 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, User, signOut } from "firebase/auth";
-import { collection, getDocs } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { auth } from "@/lib/firebase";
+import { fetchTeacherStudents } from "@/lib/teacher-data";
 import { toDiagnosticSummary, type DiagnosticSummary } from "@/lib/diagnostic-summary";
 import { ClassLevel, UnderstandingLevel } from "@/types/user";
 import { DiagnosticResultCard } from "@/components/diagnostic-result";
@@ -65,6 +65,7 @@ export default function TeacherStudentsPage() {
     const [user, setUser] = useState<User | null>(null);
     const [students, setStudents] = useState<StudentData[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
     const [search, setSearch] = useState("");
     const [classFilter, setClassFilter] = useState("all");
     const [levelFilter, setLevelFilter] = useState("all");
@@ -75,33 +76,23 @@ export default function TeacherStudentsPage() {
         const unsub = onAuthStateChanged(auth, async (currentUser) => {
             if (!currentUser) { router.push("/login?role=teacher"); return; }
             setUser(currentUser);
-            try {
-                const snap = await getDocs(collection(db, "students"));
-                const list: StudentData[] = [];
-                for (const d of snap.docs) {
-                    const data = d.data();
-                    const [progSnap, quizSnap] = await Promise.all([
-                        getDocs(collection(db, "students", d.id, "topicProgress")),
-                        getDocs(collection(db, "students", d.id, "quizResults")),
-                    ]);
-                    list.push({
-                        uid: d.id,
-                        name: data.name,
-                        email: data.email,
-                        class: data.class,
-                        parentEmail: data.parentEmail,
-                        adaptive_level: data.adaptive_level,
-                        diagnostic: toDiagnosticSummary(data.diagnosticProfile),
-                        topicProgress: progSnap.docs.map(p => p.data()) as StudentData["topicProgress"],
-                        quizResults: quizSnap.docs.map(q => q.data()) as StudentData["quizResults"],
-                    });
-                }
-                setStudents(list.sort((a, b) => a.class - b.class));
-            } catch (e) { console.error(e); }
-            finally { setLoading(false); }
+            await loadStudents(currentUser);
         });
         return () => unsub();
     }, [router]);
+
+    async function loadStudents(currentUser: User) {
+        setLoading(true);
+        setLoadError("");
+        try {
+            setStudents((await fetchTeacherStudents<StudentData>(currentUser)).sort((a, b) => a.class - b.class));
+        } catch (e) {
+            console.error(e);
+            setLoadError(e instanceof Error ? e.message : "Please try again.");
+        } finally {
+            setLoading(false);
+        }
+    }
 
     const getOverallLevel = (student: StudentData): string => {
         const levels = student.topicProgress.map(t => t.understandingLevel).filter(Boolean) as UnderstandingLevel[];
@@ -113,9 +104,9 @@ export default function TeacherStudentsPage() {
     };
 
     const filteredStudents = students.filter(s => {
-        const matchSearch = s.name.toLowerCase().includes(search.toLowerCase()) ||
-            s.email.toLowerCase().includes(search.toLowerCase());
-        const matchClass = classFilter === "all" || s.class.toString() === classFilter;
+        const matchSearch = (s.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
+            (s.email ?? "").toLowerCase().includes(search.toLowerCase());
+        const matchClass = classFilter === "all" || String(s.class) === classFilter;
         const matchLevel = levelFilter === "all" || getOverallLevel(s) === levelFilter;
         return matchSearch && matchClass && matchLevel;
     });
@@ -126,8 +117,18 @@ export default function TeacherStudentsPage() {
     };
 
     if (loading) return (
-        <div className="min-h-screen flex items-center justify-center">
+        <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-muted-foreground">
             <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm">Loading your students...</p>
+        </div>
+    );
+    if (loadError) return (
+        <div className="min-h-screen flex items-center justify-center p-6">
+            <div className="max-w-md rounded-xl border bg-white p-6 text-center shadow-sm">
+                <p className="font-semibold">Could not load your students</p>
+                <p className="mt-1 text-sm text-muted-foreground">{loadError}</p>
+                <button type="button" className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white" onClick={() => user && loadStudents(user)}>Try again</button>
+            </div>
         </div>
     );
 

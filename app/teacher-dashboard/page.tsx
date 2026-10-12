@@ -3,8 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
-import { collection, getDocs } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { auth } from "@/lib/firebase";
+import { fetchTeacherStudents } from "@/lib/teacher-data";
 import { calculateClassStats } from "@/lib/understanding";
 import { ClassLevel, UnderstandingLevel } from "@/types/user";
 
@@ -78,6 +78,7 @@ export default function TeacherDashboard() {
     const [user, setUser] = useState<User | null>(null);
     const [students, setStudents] = useState<StudentData[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
     const [selectedClass, setSelectedClass] = useState<string>("all");
     const [searchQuery, setSearchQuery] = useState("");
 
@@ -88,51 +89,26 @@ export default function TeacherDashboard() {
                 return;
             }
             setUser(currentUser);
-
-            try {
-                const studentsSnapshot = await getDocs(collection(db, "students"));
-                const studentList: StudentData[] = [];
-
-                for (const studentDoc of studentsSnapshot.docs) {
-                    const data = studentDoc.data();
-                    const uid = studentDoc.id;
-
-                    // Fetch topic progress
-                    const progressSnapshot = await getDocs(collection(db, "students", uid, "topicProgress"));
-                    const topicProgress = progressSnapshot.docs.map((d) => d.data()) as StudentData["topicProgress"];
-
-                    // Fetch quiz results
-                    const quizSnapshot = await getDocs(collection(db, "students", uid, "quizResults"));
-                    const quizResults = quizSnapshot.docs.map((d) => {
-                        const qData = d.data();
-                        return {
-                            ...qData,
-                            completedAt: qData.completedAt?.toDate?.()?.toISOString?.() || "",
-                        };
-                    }) as StudentData["quizResults"];
-
-                    studentList.push({
-                        uid,
-                        name: data.name,
-                        email: data.email,
-                        class: data.class,
-                        parentEmail: data.parentEmail,
-                        adaptive_level: data.adaptive_level,
-                        topicProgress,
-                        quizResults,
-                    });
-                }
-
-                setStudents(studentList);
-            } catch (err) {
-                console.error("Fetch error:", err);
-            } finally {
-                setLoading(false);
-            }
+            await loadStudents(currentUser);
         });
 
         return () => unsubscribe();
     }, [router]);
+
+    // One server call brings every student with their progress; the old page read each
+    // student's records one by one from the browser and stayed on its spinner for minutes.
+    async function loadStudents(currentUser: User) {
+        setLoading(true);
+        setLoadError("");
+        try {
+            setStudents(await fetchTeacherStudents<StudentData>(currentUser));
+        } catch (err) {
+            console.error("Fetch error:", err);
+            setLoadError(err instanceof Error ? err.message : "Please try again.");
+        } finally {
+            setLoading(false);
+        }
+    }
 
     const handleSignOut = async () => {
         await signOut(auth);
@@ -141,9 +117,9 @@ export default function TeacherDashboard() {
 
     // Filter Logic
     const filteredStudents = students.filter((s) => {
-        const matchesClass = selectedClass === "all" || s.class.toString() === selectedClass;
-        const matchesSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            s.email.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesClass = selectedClass === "all" || String(s.class) === selectedClass;
+        const matchesSearch = (s.name ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (s.email ?? "").toLowerCase().includes(searchQuery.toLowerCase());
         return matchesClass && matchesSearch;
     });
 
@@ -175,9 +151,21 @@ export default function TeacherDashboard() {
     }, [students, selectedClass]);
 
 
-    if (loading) {
-        return <div className="min-h-screen flex items-center justify-center"><div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" /></div>;
-    }
+    if (loading) return (
+        <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-muted-foreground">
+            <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm">Loading your students...</p>
+        </div>
+    );
+    if (loadError) return (
+        <div className="min-h-screen flex items-center justify-center p-6">
+            <div className="max-w-md rounded-xl border bg-white p-6 text-center shadow-sm">
+                <p className="font-semibold">Could not load your students</p>
+                <p className="mt-1 text-sm text-muted-foreground">{loadError}</p>
+                <button type="button" className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white" onClick={() => user && loadStudents(user)}>Try again</button>
+            </div>
+        </div>
+    );
 
     return (
         <DashboardLayout

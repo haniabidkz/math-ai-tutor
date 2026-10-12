@@ -4,6 +4,8 @@ import { adminDb } from "@/lib/firebase-admin";
 import { conceptInputSchema } from "@/lib/admin-schemas";
 import { writeAuditLog } from "@/lib/admin-audit";
 import { builtInCurriculumEnabled, getConcept } from "@/lib/curriculum";
+import { findSimilarChapter, normalizeTitle, topicsForClass } from "@/lib/concept-autofill";
+import { getRuntimeConcepts } from "@/lib/assessment-content";
 import { activityDateKey } from "@/lib/gamification";
 import { contentNotification } from "@/lib/notifications";
 import { notifyClass } from "@/lib/notifications-server";
@@ -38,6 +40,18 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ success: false, error: `A concept with the tag ${parsed.microTag} already exists. Change the title slightly.` }, { status: 409 });
         }
         const wasPublished = before.data()?.status === "published";
+
+        // A new chapter must not be a second spelling of one the class already has.
+        const chapters = topicsForClass((await getRuntimeConcepts()).filter((concept) => concept.microTag !== parsed.microTag), parsed.classLevel);
+        if (!chapters.some((chapter) => chapter.topicId === parsed.topicId)) {
+            const similar = findSimilarChapter(parsed.topicTitle.english, chapters);
+            if (similar && normalizeTitle(similar.title.english) !== normalizeTitle(parsed.topicTitle.english)) {
+                return NextResponse.json({ success: false, error: `The main topic "${parsed.topicTitle.english}" looks like "${similar.title.english}", which Class ${parsed.classLevel} already has. Use that exact name so the lesson joins it.` }, { status: 409 });
+            }
+            if (similar) {
+                return NextResponse.json({ success: false, error: `Class ${parsed.classLevel} already has the main topic "${similar.title.english}" (${similar.topicId}). Pick it instead of creating "${parsed.topicId}".` }, { status: 409 });
+            }
+        }
 
         await ref.set({
             ...parsed,

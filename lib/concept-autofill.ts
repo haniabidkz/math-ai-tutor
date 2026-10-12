@@ -30,6 +30,54 @@ export function suggestMicroTag(classLevel: number, titleEnglish: string, existi
     return unique(`c${classLevel}-${slug}`, new Set(existingTags));
 }
 
+/** Lower case, letters and digits only, so "Operations of Sets" and "operations on sets" compare fairly. */
+export function normalizeTitle(title: string): string {
+    return title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function bigrams(value: string): Map<string, number> {
+    const counts = new Map<string, number>();
+    const text = value.replace(/\s+/g, " ");
+    for (let index = 0; index < text.length - 1; index++) {
+        const pair = text.slice(index, index + 2);
+        counts.set(pair, (counts.get(pair) ?? 0) + 1);
+    }
+    return counts;
+}
+
+/** Dice similarity of two titles (0 to 1) on letter pairs; a one-word slip still scores high. */
+export function titleSimilarity(left: string, right: string): number {
+    const a = normalizeTitle(left);
+    const b = normalizeTitle(right);
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    const pairsA = bigrams(a);
+    const pairsB = bigrams(b);
+    let shared = 0;
+    for (const [pair, count] of pairsA) shared += Math.min(count, pairsB.get(pair) ?? 0);
+    const total = [...pairsA.values()].reduce((sum, count) => sum + count, 0) + [...pairsB.values()].reduce((sum, count) => sum + count, 0);
+    return total ? (2 * shared) / total : 0;
+}
+
+export const SIMILAR_CHAPTER_THRESHOLD = 0.8;
+
+/**
+ * An existing chapter whose name is the same as, or a slip away from, the typed one. Stops a
+ * second "Operations of Sets" appearing next to "Operations on Sets".
+ */
+export function findSimilarChapter<T extends { topicId: string; title: { english: string } }>(title: string, chapters: T[]): T | null {
+    const wanted = normalizeTitle(title);
+    if (!wanted) return null;
+    const exact = chapters.find((chapter) => normalizeTitle(chapter.title.english) === wanted);
+    if (exact) return exact;
+    let best: { chapter: T; score: number } | null = null;
+    for (const chapter of chapters) {
+        const score = titleSimilarity(chapter.title.english, title);
+        if (score >= SIMILAR_CHAPTER_THRESHOLD && (!best || score > best.score)) best = { chapter, score };
+    }
+    return best?.chapter ?? null;
+}
+
 /** e.g. Class 7 + "Data Handling" -> "class7-data-handling", made unique. */
 export function suggestTopicId(classLevel: number, topicEnglish: string, existingTopicIds: Iterable<string>): string {
     const slug = slugify(topicEnglish);

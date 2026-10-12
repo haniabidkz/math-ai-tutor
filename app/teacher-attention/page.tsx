@@ -4,8 +4,8 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { onAuthStateChanged, User } from "firebase/auth";
-import { collection, getDocs } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { auth } from "@/lib/firebase";
+import { fetchTeacherStudents } from "@/lib/teacher-data";
 import { ClassLevel, UnderstandingLevel } from "@/types/user";
 
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
@@ -50,6 +50,7 @@ export default function TeacherAttentionPage() {
     const [user, setUser] = useState<User | null>(null);
     const [students, setStudents] = useState<StudentData[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
     const [search, setSearch] = useState("");
 
     const handleSignOut = async () => {
@@ -61,28 +62,23 @@ export default function TeacherAttentionPage() {
         const unsub = onAuthStateChanged(auth, async (currentUser) => {
             if (!currentUser) { router.push("/login?role=teacher"); return; }
             setUser(currentUser);
-            try {
-                const snap = await getDocs(collection(db, "students"));
-                const list: StudentData[] = [];
-                for (const d of snap.docs) {
-                    const data = d.data();
-                    const progSnap = await getDocs(collection(db, "students", d.id, "topicProgress"));
-                    list.push({
-                        uid: d.id,
-                        name: data.name,
-                        email: data.email,
-                        class: data.class,
-                        parentEmail: data.parentEmail,
-                        adaptive_level: data.adaptive_level,
-                        topicProgress: progSnap.docs.map(p => p.data()) as StudentData["topicProgress"],
-                    });
-                }
-                setStudents(list);
-            } catch (e) { console.error(e); }
-            finally { setLoading(false); }
+            await loadStudents(currentUser);
         });
         return () => unsub();
     }, [router]);
+
+    async function loadStudents(currentUser: User) {
+        setLoading(true);
+        setLoadError("");
+        try {
+            setStudents(await fetchTeacherStudents<StudentData>(currentUser));
+        } catch (e) {
+            console.error(e);
+            setLoadError(e instanceof Error ? e.message : "Please try again.");
+        } finally {
+            setLoading(false);
+        }
+    }
 
     const studentsNeedingAttention = students
         .map(s => ({
@@ -90,12 +86,22 @@ export default function TeacherAttentionPage() {
             attentionTopics: s.topicProgress.filter(t => t.needsHumanAttention),
         }))
         .filter(s => s.attentionTopics.length > 0)
-        .filter(s => s.name.toLowerCase().includes(search.toLowerCase()) ||
-            s.email.toLowerCase().includes(search.toLowerCase()));
+        .filter(s => (s.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
+            (s.email ?? "").toLowerCase().includes(search.toLowerCase()));
 
     if (loading) return (
-        <div className="min-h-screen flex items-center justify-center">
+        <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-muted-foreground">
             <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm">Loading your students...</p>
+        </div>
+    );
+    if (loadError) return (
+        <div className="min-h-screen flex items-center justify-center p-6">
+            <div className="max-w-md rounded-xl border bg-white p-6 text-center shadow-sm">
+                <p className="font-semibold">Could not load your students</p>
+                <p className="mt-1 text-sm text-muted-foreground">{loadError}</p>
+                <button type="button" className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white" onClick={() => user && loadStudents(user)}>Try again</button>
+            </div>
         </div>
     );
 
