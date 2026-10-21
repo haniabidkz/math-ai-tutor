@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Bell, Trophy, BookOpen, Award, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useAidLanguage } from "@/lib/aid-language";
 import { auth } from "@/lib/firebase";
 import type { StudentNotification } from "@/lib/notifications";
 import { cn } from "@/lib/utils";
@@ -12,19 +11,17 @@ import { cn } from "@/lib/utils";
 const ICONS = { content: BookOpen, leaderboard: Trophy, reward: Award };
 const REFRESH_MS = 90_000;
 
-function timeAgo(millis: number, ru: boolean): string {
+function timeAgo(millis: number): string {
     const minutes = Math.max(0, Math.round((Date.now() - millis) / 60_000));
-    if (minutes < 60) return ru ? `${minutes} min pehle` : `${minutes} min ago`;
+    if (minutes < 60) return `${minutes} min ago`;
     const hours = Math.round(minutes / 60);
-    if (hours < 24) return ru ? `${hours} ghante pehle` : `${hours}h ago`;
+    if (hours < 24) return `${hours}h ago`;
     const days = Math.round(hours / 24);
-    return ru ? `${days} din pehle` : `${days}d ago`;
+    return `${days}d ago`;
 }
 
 /** The in-app bell: unread count, a list of notices, read on open. Shown to signed-in students. */
 export function NotificationBell({ className }: { className?: string }) {
-    const [language] = useAidLanguage();
-    const ru = language === "roman-urdu";
     const [items, setItems] = useState<StudentNotification[]>([]);
     const [unread, setUnread] = useState(0);
     const [open, setOpen] = useState(false);
@@ -85,21 +82,21 @@ export function NotificationBell({ className }: { className?: string }) {
             {open ? (
                 <div className="absolute right-0 z-50 mt-2 w-[min(92vw,22rem)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl" role="dialog" aria-label="Notifications">
                     <div className="flex items-center justify-between border-b px-4 py-3">
-                        <p className="font-bold">{ru ? "Notifications" : "Notifications"}</p>
+                        <p className="font-bold">{"Notifications"}</p>
                         <button type="button" className="rounded-full p-1 text-slate-500 hover:bg-slate-100" onClick={() => setOpen(false)} aria-label="Close"><X className="h-4 w-4" /></button>
                     </div>
                     <ul className="max-h-96 divide-y overflow-y-auto">
-                        {!loaded ? <li className="px-4 py-6 text-center text-sm text-muted-foreground">{ru ? "Load ho raha hai..." : "Loading..."}</li> : null}
-                        {loaded && items.length === 0 ? <li className="px-4 py-8 text-center text-sm text-muted-foreground">{ru ? "Abhi koi notification nahi." : "Nothing here yet."}</li> : null}
+                        {!loaded ? <li className="px-4 py-6 text-center text-sm text-muted-foreground">{"Loading..."}</li> : null}
+                        {loaded && items.length === 0 ? <li className="px-4 py-8 text-center text-sm text-muted-foreground">{"Nothing here yet."}</li> : null}
                         {items.map((item) => {
                             const Icon = ICONS[item.type] ?? Bell;
                             const content = (
                                 <div className="flex gap-3">
                                     <span className={cn("mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full", item.type === "reward" ? "bg-emerald-100 text-emerald-700" : item.type === "leaderboard" ? "bg-amber-100 text-amber-700" : "bg-indigo-100 text-indigo-700")}><Icon className="h-4 w-4" /></span>
                                     <div className="min-w-0">
-                                        <p className={cn("text-sm", item.read ? "font-semibold" : "font-extrabold")}>{ru ? item.title.romanUrdu : item.title.english}</p>
-                                        <p className="text-sm leading-6 text-slate-600">{ru ? item.body.romanUrdu : item.body.english}</p>
-                                        <p className="mt-0.5 text-[11px] text-muted-foreground">{timeAgo(item.createdAt, ru)}</p>
+                                        <p className={cn("text-sm", item.read ? "font-semibold" : "font-extrabold")}>{item.title.english}</p>
+                                        <p className="text-sm leading-6 text-slate-600">{item.body.english}</p>
+                                        <p className="mt-0.5 text-[11px] text-muted-foreground">{timeAgo(item.createdAt)}</p>
                                     </div>
                                 </div>
                             );

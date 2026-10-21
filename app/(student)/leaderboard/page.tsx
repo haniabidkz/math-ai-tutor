@@ -10,7 +10,6 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useAidLanguage } from "@/lib/aid-language";
 import { auth } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 import type { LocalizedText } from "@/types/curriculum";
@@ -34,17 +33,15 @@ const PLACE_STYLES: Record<number, { ring: string; badge: string; label: string 
     3: { ring: "border-orange-300 bg-orange-50", badge: "bg-orange-300 text-orange-950", label: "3rd" },
 };
 
-function resetsIn(resetsAt: number, ru: boolean): string {
+function resetsIn(resetsAt: number): string {
     const hours = Math.max(0, Math.round((resetsAt - Date.now()) / 3_600_000));
-    if (hours < 24) return ru ? `${hours} ghante mein reset` : `Resets in ${hours}h`;
+    if (hours < 24) return `Resets in ${hours}h`;
     const days = Math.round(hours / 24);
-    return ru ? `${days} din mein reset (Monday)` : `Resets in ${days} day${days === 1 ? "" : "s"} (Monday)`;
+    return `Resets in ${days} day${days === 1 ? "" : "s"} (Monday)`;
 }
 
 export default function LeaderboardPage() {
     const router = useRouter();
-    const [language] = useAidLanguage();
-    const ru = language === "roman-urdu";
     const [user, setUser] = useState<User | null>(null);
     const [profile, setProfile] = useState<{ name: string; classLevel?: number }>({ name: "" });
     const [data, setData] = useState<LeaderboardData | null>(null);
@@ -69,19 +66,18 @@ export default function LeaderboardPage() {
         }
     }), [router]);
 
-    const say = (english: string, romanUrdu: string) => (ru ? romanUrdu : english);
     const top = data?.entries.filter((entry) => entry.rank <= 3) ?? [];
     const rest = data?.entries.filter((entry) => entry.rank > 3) ?? [];
 
     return (
         <DashboardLayout user={{ name: profile.name || user?.displayName || "Student", email: user?.email ?? "", role: "student", classLevel: profile.classLevel }} onSignOut={async () => { await signOut(auth); router.push("/"); }}>
             <PageHeader
-                title={data ? say(`Class ${data.classLevel} Leaderboard`, `Class ${data.classLevel} Leaderboard`) : "Leaderboard"}
-                description={data ? `${say("Week of", "Hafta")} ${data.label} · ${resetsIn(data.resetsAt, ru)}` : undefined}
+                title={data ? `Class ${data.classLevel} Leaderboard` : "Leaderboard"}
+                description={data ? `${"Week of"} ${data.label} · ${resetsIn(data.resetsAt)}` : undefined}
                 icon={<Trophy className="h-6 w-6" />}
             />
             {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
-            {loading ? <p className="py-16 text-center text-muted-foreground">{say("Loading the board...", "Board load ho raha hai...")}</p> : null}
+            {loading ? <p className="py-16 text-center text-muted-foreground">{"Loading the board..."}</p> : null}
 
             {data ? (
                 <div className="space-y-6">
@@ -89,29 +85,29 @@ export default function LeaderboardPage() {
                         <CardContent className="flex flex-wrap items-center justify-between gap-4 p-5">
                             <div className="flex items-center gap-4">
                                 <div className="flex h-16 w-16 flex-col items-center justify-center rounded-2xl bg-indigo-600 text-white">
-                                    <span className="text-[10px] font-extrabold uppercase opacity-90">{say("Rank", "Rank")}</span>
+                                    <span className="text-[10px] font-extrabold uppercase opacity-90">{"Rank"}</span>
                                     <span className="font-display text-2xl font-bold">{data.me ? `#${data.me.rank}` : "—"}</span>
                                 </div>
                                 <div>
                                     <p className="font-display text-xl font-semibold">
                                         {data.me
-                                            ? say(`You have ${data.me.points} points this week`, `Is hafte tumhare ${data.me.points} points hain`)
-                                            : say("No points yet this week", "Is hafte abhi points nahi")}
+                                            ? `You have ${data.me.points} points this week`
+                                            : "No points yet this week"}
                                     </p>
                                     <p className="text-sm text-muted-foreground">
                                         {data.me
-                                            ? say(`${data.me.correctAnswers} correct answers · ${data.participants} ${data.participants === 1 ? "student" : "students"} on the board`, `${data.me.correctAnswers} sahi jawab · board par ${data.participants} students`)
-                                            : say("Finish a quiz to appear on the board. Every student competes only with their own class.", "Quiz khatam karo to board par aa jao ge. Har student sirf apni class se muqabla karta hai.")}
+                                            ? `${data.me.correctAnswers} correct answers · ${data.participants} ${data.participants === 1 ? "student" : "students"} on the board`
+                                            : "Finish a quiz to appear on the board. Every student competes only with their own class."}
                                     </p>
                                 </div>
                             </div>
-                            <Button asChild><Link href="/learn"><BookOpen className="mr-2 h-4 w-4" />{say("Earn points", "Points kamao")}</Link></Button>
+                            <Button asChild><Link href="/learn"><BookOpen className="mr-2 h-4 w-4" />{"Earn points"}</Link></Button>
                         </CardContent>
                     </Card>
 
                     {top.length ? (
                         <section>
-                            <h2 className="mb-3 flex items-center gap-2 text-lg font-bold"><Crown className="h-5 w-5 text-amber-500" />{say("Top 3 this week", "Is hafte ke top 3")}</h2>
+                            <h2 className="mb-3 flex items-center gap-2 text-lg font-bold"><Crown className="h-5 w-5 text-amber-500" />{"Top 3 this week"}</h2>
                             <div className="grid gap-3 sm:grid-cols-3">
                                 {top.map((entry) => {
                                     const style = PLACE_STYLES[entry.rank];
@@ -119,8 +115,8 @@ export default function LeaderboardPage() {
                                         <div key={entry.uid} className={cn("flex items-center gap-3 rounded-2xl border-2 p-4", style.ring)}>
                                             <span className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-full font-display text-lg font-bold", style.badge)}>{style.label}</span>
                                             <div className="min-w-0">
-                                                <p className="truncate font-bold">{entry.name}{entry.me ? ` · ${say("you", "tum")}` : ""}</p>
-                                                <p className="text-sm text-muted-foreground">{entry.points} {say("points", "points")} · {entry.correctAnswers} {say("correct", "sahi")}</p>
+                                                <p className="truncate font-bold">{entry.name}{entry.me ? ` · ${"you"}` : ""}</p>
+                                                <p className="text-sm text-muted-foreground">{entry.points} {"points"} · {entry.correctAnswers} {"correct"}</p>
                                             </div>
                                         </div>
                                     );
@@ -132,30 +128,30 @@ export default function LeaderboardPage() {
                     <Card>
                         <CardHeader className="pb-2">
                             <CardTitle className="flex items-center justify-between text-base">
-                                <span>{say("Class standings", "Class ki standing")}</span>
-                                <span className="text-xs font-normal text-muted-foreground">{say("Up to 100 shown", "Zyada se zyada 100 dikhte hain")}</span>
+                                <span>{"Class standings"}</span>
+                                <span className="text-xs font-normal text-muted-foreground">{"Up to 100 shown"}</span>
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
                             {rest.length === 0 ? (
                                 <p className="py-6 text-center text-sm text-muted-foreground">
                                     {data.entries.length === 0
-                                        ? say("Nobody has scored yet this week. Be the first!", "Is hafte abhi kisi ne score nahi kiya. Pehle tum bano!")
-                                        : say("Only the top 3 have scored so far.", "Abhi sirf top 3 ne score kiya hai.")}
+                                        ? "Nobody has scored yet this week. Be the first!"
+                                        : "Only the top 3 have scored so far."}
                                 </p>
                             ) : (
                                 <ol className="divide-y">
                                     {rest.map((entry) => (
                                         <li key={entry.uid} className="flex items-center gap-3 py-2.5 text-sm">
                                             <span className="w-10 shrink-0 font-mono text-muted-foreground">#{entry.rank}</span>
-                                            <span className="min-w-0 flex-1 truncate">{entry.name}{entry.me ? ` · ${say("you", "tum")}` : ""}</span>
+                                            <span className="min-w-0 flex-1 truncate">{entry.name}{entry.me ? ` · ${"you"}` : ""}</span>
                                             <span className="font-semibold">{entry.points}</span>
                                         </li>
                                     ))}
                                 </ol>
                             )}
                             {data.me && data.me.rank > data.entries.length ? (
-                                <p className="mt-3 border-t pt-3 text-sm text-muted-foreground">{say(`You are #${data.me.rank} of ${data.participants}.`, `Tum ${data.participants} mein se #${data.me.rank} ho.`)}</p>
+                                <p className="mt-3 border-t pt-3 text-sm text-muted-foreground">{`You are #${data.me.rank} of ${data.participants}.`}</p>
                             ) : null}
                         </CardContent>
                     </Card>
@@ -163,7 +159,7 @@ export default function LeaderboardPage() {
                     {data.previous ? (
                         <Card>
                             <CardHeader className="pb-2">
-                                <CardTitle className="flex items-center gap-2 text-base"><Medal className="h-5 w-5 text-indigo-600" />{say("Last week", "Pichla hafta")} · {data.previous.label}</CardTitle>
+                                <CardTitle className="flex items-center gap-2 text-base"><Medal className="h-5 w-5 text-indigo-600" />{"Last week"} · {data.previous.label}</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-3">
                                 {data.previous.top.length ? (
@@ -176,25 +172,25 @@ export default function LeaderboardPage() {
                                             </li>
                                         ))}
                                     </ol>
-                                ) : <p className="text-sm text-muted-foreground">{say("Nobody scored last week.", "Pichle hafte kisi ne score nahi kiya.")}</p>}
+                                ) : <p className="text-sm text-muted-foreground">{"Nobody scored last week."}</p>}
                                 {data.previous.winners.length ? (
                                     <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm">
-                                        <p className="flex items-center gap-2 font-bold text-emerald-800"><Award className="h-4 w-4" />{say("Weekly reward winners", "Hafte ke inaam ke winners")}</p>
-                                        <p className="mt-1 text-emerald-900">{data.previous.winners.map((winner) => `${PLACE_STYLES[winner.place]?.label ?? winner.place} ${winner.name}${winner.me ? ` (${say("you!", "tum!")})` : ""}`).join(" · ")}</p>
+                                        <p className="flex items-center gap-2 font-bold text-emerald-800"><Award className="h-4 w-4" />{"Weekly reward winners"}</p>
+                                        <p className="mt-1 text-emerald-900">{data.previous.winners.map((winner) => `${PLACE_STYLES[winner.place]?.label ?? winner.place} ${winner.name}${winner.me ? ` (${"you!"})` : ""}`).join(" · ")}</p>
                                     </div>
                                 ) : (
-                                    <p className="text-xs text-muted-foreground">{say("Rewards for the top 3 paid members are approved by the admin.", "Top 3 paid members ke inaam admin approve karta hai.")}</p>
+                                    <p className="text-xs text-muted-foreground">{"Rewards for the top 3 paid members are approved by the admin."}</p>
                                 )}
-                                {data.previous.me ? <p className="text-xs text-muted-foreground">{say(`You finished #${data.previous.me.rank} with ${data.previous.me.points} points.`, `Tum #${data.previous.me.rank} rahe, ${data.previous.me.points} points.`)}</p> : null}
+                                {data.previous.me ? <p className="text-xs text-muted-foreground">{`You finished #${data.previous.me.rank} with ${data.previous.me.points} points.`}</p> : null}
                             </CardContent>
                         </Card>
                     ) : null}
 
                     <Card>
-                        <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base"><Sparkles className="h-5 w-5 text-indigo-600" />{say("How points work", "Points kaise milte hain")}</CardTitle></CardHeader>
+                        <CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-base"><Sparkles className="h-5 w-5 text-indigo-600" />{"How points work"}</CardTitle></CardHeader>
                         <CardContent>
                             <ul className="list-disc space-y-1.5 pl-5 text-sm text-slate-700">
-                                {data.rules.map((rule, index) => <li key={index}>{ru ? rule.romanUrdu : rule.english}</li>)}
+                                {data.rules.map((rule, index) => <li key={index}>{rule.english}</li>)}
                             </ul>
                         </CardContent>
                     </Card>

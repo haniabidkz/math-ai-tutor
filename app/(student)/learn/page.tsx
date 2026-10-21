@@ -33,10 +33,7 @@ interface LessonConcept {
     prerequisiteTitle?: string | null;
 }
 
-type Lang = AidLanguage | null;
-/** Labels follow the language the student chose for their aids; English until they choose. */
-const say = (lang: Lang, english: string, romanUrdu: string) => (lang === "roman-urdu" ? romanUrdu : english);
-const read = (lang: Lang, text: { english: string; romanUrdu: string }) => (lang === "roman-urdu" && text.romanUrdu ? text.romanUrdu : text.english);
+const read = (lang: AidLanguage | null, text: { english: string; romanUrdu: string }) => (lang === "roman-urdu" && text.romanUrdu ? text.romanUrdu : text.english);
 
 const PI_LINES: Record<number, [string, string]> = {
     1: ["Today's big idea is one line. Read it, then we try it ourselves.", "Aaj ka big idea sirf ek line hai. Parho, phir hum khud karenge."],
@@ -136,7 +133,7 @@ function LearnContent() {
 
     // Asked once, before the first lesson; the menu can change it later.
     if (microTag && languageLoaded && !language) return <LanguagePrompt onChoose={chooseLanguage} />;
-    const stepName = (index: number) => say(language, LESSON_STEPS[index].english, LESSON_STEPS[index].romanUrdu);
+    const stepName = (index: number) => LESSON_STEPS[index].english;
 
     return (
         <div className="min-h-screen bg-white font-body text-slate-900">
@@ -176,10 +173,10 @@ function LearnContent() {
                     const mistake = commonMistake(practice[0]);
                     const quickCheck = practice[1] ?? null;
                     const stepsLeft = LESSON_STEPS.length - step;
-                    const piLine = say(language, ...PI_LINES[step]);
+                    const piLine = PI_LINES[step][0];
                     const startButton = (className: string) => (
                         <Button size="lg" className={cn("h-13 rounded-2xl text-base font-extrabold", className)} onClick={startQuiz} disabled={starting}>
-                            <Play className="mr-2 h-5 w-5" />{say(language, "Start the quiz", "Quiz shuru karo")}
+                            <Play className="mr-2 h-5 w-5" />{"Start the quiz"}
                         </Button>
                     );
                     return (
@@ -187,7 +184,7 @@ function LearnContent() {
                             <div className="mb-4">
                                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-extrabold text-slate-500">
                                     <span>{step} / {LESSON_STEPS.length} · {stepName(step - 1)}</span>
-                                    <span>{stepsLeft > 0 ? say(language, `${stepsLeft} ${stepsLeft === 1 ? "step" : "steps"} left, then the quiz`, `${stepsLeft} qadam baqi, phir quiz`) : say(language, "Last step, then the quiz", "Aakhri qadam, phir quiz")}</span>
+                                    <span>{stepsLeft > 0 ? `${stepsLeft} ${stepsLeft === 1 ? "step" : "steps"} left, then the quiz` : "Last step, then the quiz"}</span>
                                 </div>
                                 <div className="mt-2 flex gap-1.5" role="progressbar" aria-label="Lesson progress" aria-valuemin={1} aria-valuemax={LESSON_STEPS.length} aria-valuenow={step}>
                                     {LESSON_STEPS.map((item, index) => <span key={item.key} className={cn("h-2 flex-1 rounded-full", index < step ? "bg-indigo-600" : "bg-slate-200")} />)}
@@ -228,7 +225,7 @@ function LearnContent() {
                                             <div className="mt-5 flex flex-wrap gap-2">
                                                 <span className="inline-flex items-center gap-1 rounded-xl bg-gray-100 px-3 py-1.5 text-xs font-extrabold text-slate-700"><BookOpen className="h-3.5 w-3.5" />{concept.topicTitle}</span>
                                                 {concept.subTopic ? <span className="inline-flex items-center gap-1 rounded-xl bg-gray-100 px-3 py-1.5 text-xs font-extrabold text-slate-700"><Layers className="h-3.5 w-3.5" />{read(language, concept.subTopic)}</span> : null}
-                                                {concept.prerequisiteTitle ? <span className="inline-flex items-center gap-1 rounded-xl bg-amber-50 px-3 py-1.5 text-xs font-extrabold text-amber-800">{say(language, `First: ${concept.prerequisiteTitle}`, `Pehle: ${concept.prerequisiteTitle}`)}</span> : null}
+                                                {concept.prerequisiteTitle ? <span className="inline-flex items-center gap-1 rounded-xl bg-amber-50 px-3 py-1.5 text-xs font-extrabold text-amber-800">{`First: ${concept.prerequisiteTitle}`}</span> : null}
                                             </div>
                                         </section>
                                     ) : null}
@@ -242,12 +239,12 @@ function LearnContent() {
                                                 <span className="rounded-xl bg-teal-50 px-2.5 py-1 text-xs font-extrabold uppercase text-teal-800">{stepName(1)}</span>
                                                 <h2 className="mt-3 font-display text-3xl font-semibold">{concept.title}</h2>
                                                 <p className="mt-4 text-lg leading-8 text-slate-800" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{parts.definition}</p>
-                                                {concept.prerequisiteTitle ? <p className="mt-2 text-sm text-slate-500">{say(language, `It helps to understand "${concept.prerequisiteTitle}" first.`, `Pehle "${concept.prerequisiteTitle}" samajhna madadgar hai.`)}</p> : null}
+                                                {concept.prerequisiteTitle ? <p className="mt-2 text-sm text-slate-500">{`It helps to understand "${concept.prerequisiteTitle}" first.`}</p> : null}
                                                 {examples.length ? (
                                                     <div className="mt-5 space-y-3">
                                                         {examples.map((example, index) => (
                                                             <div key={index} className="rounded-2xl border border-gray-200 bg-gray-50 p-4 md:p-5">
-                                                                <p className="text-xs font-extrabold uppercase tracking-wide text-slate-500">{say(language, "Example", "Misaal")}{examples.length > 1 ? ` ${index + 1}` : ""}</p>
+                                                                <p className="text-xs font-extrabold uppercase tracking-wide text-slate-500">{"Example"}{examples.length > 1 ? ` ${index + 1}` : ""}</p>
                                                                 <p className="mt-1 text-base leading-7 text-slate-800" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{example}</p>
                                                             </div>
                                                         ))}
@@ -255,12 +252,12 @@ function LearnContent() {
                                                 ) : null}
                                                 <div className="mt-5">
                                                     <Button variant="outline" className="font-bold" onClick={() => user && loadLesson(user, Math.min(3, teachingLevel + 1))} disabled={loading}>
-                                                        <RotateCcw className="mr-2 h-4 w-4" />{say(language, "Explain another way", "Doosre tareeqe se samjhao")}
+                                                        <RotateCcw className="mr-2 h-4 w-4" />{"Explain another way"}
                                                     </Button>
                                                 </div>
                                                 {tip ? (
                                                     <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 md:p-5">
-                                                        <p className="flex items-center gap-1 text-xs font-extrabold uppercase tracking-wide text-amber-800"><Lightbulb className="h-3.5 w-3.5" />{say(language, "Remember", "Yaad rakho")}</p>
+                                                        <p className="flex items-center gap-1 text-xs font-extrabold uppercase tracking-wide text-amber-800"><Lightbulb className="h-3.5 w-3.5" />{"Remember"}</p>
                                                         <p className="mt-1 text-base leading-7 text-amber-950" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{read(language, tip)}</p>
                                                     </div>
                                                 ) : null}
@@ -270,11 +267,11 @@ function LearnContent() {
 
                                     {step === 3 ? (
                                         practice[0] ? (
-                                            <LessonPractice key={practice[0].id} item={practice[0]} language={language} eyebrow={stepName(2)} note={say(language, "Not scored", "Score nahi")} />
+                                            <LessonPractice key={practice[0].id} item={practice[0]} language={language} eyebrow={stepName(2)} note={"Not scored"} />
                                         ) : (
                                             <section className="rounded-3xl border border-slate-200 bg-white p-6 md:p-8">
                                                 <span className="rounded-xl bg-teal-50 px-2.5 py-1 text-xs font-extrabold uppercase text-teal-800">{stepName(2)}</span>
-                                                <p className="mt-3 font-bold text-slate-600">{say(language, "This lesson has no practice questions yet. Read the idea again, then go on.", "Is lesson ke practice sawal abhi nahi hain. Idea dobara parho, phir aagay chalo.")}</p>
+                                                <p className="mt-3 font-bold text-slate-600">{"This lesson has no practice questions yet. Read the idea again, then go on."}</p>
                                             </section>
                                         )
                                     ) : null}
@@ -287,21 +284,21 @@ function LearnContent() {
                                                     <h2 className="mt-3 font-display text-2xl font-semibold leading-snug" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{read(language, practice[0].question)}</h2>
                                                     <div className="mt-5 grid gap-4 md:grid-cols-2">
                                                         <div className="rounded-2xl border-2 border-emerald-300 bg-emerald-50 p-4">
-                                                            <p className="text-xs font-extrabold uppercase text-emerald-800">{say(language, "Right", "Sahi")}</p>
+                                                            <p className="text-xs font-extrabold uppercase text-emerald-800">{"Right"}</p>
                                                             <p className="mt-1 font-display text-xl font-semibold text-emerald-900">{mistake.right.id}. {read(language, mistake.right)}</p>
                                                             <p className="mt-2 text-base leading-7 text-emerald-900">{read(language, practice[0].explanation)}</p>
                                                         </div>
                                                         <div className="rounded-2xl border-2 border-rose-300 bg-rose-50 p-4">
-                                                            <p className="text-xs font-extrabold uppercase text-rose-800">{say(language, "Common slip", "Aam ghalti")}</p>
+                                                            <p className="text-xs font-extrabold uppercase text-rose-800">{"Common slip"}</p>
                                                             <p className="mt-1 font-display text-xl font-semibold text-rose-900">{mistake.wrong.id}. {read(language, mistake.wrong)}</p>
                                                             <p className="mt-2 text-base leading-7 text-rose-900">{read(language, mistake.reason)}</p>
                                                         </div>
                                                     </div>
                                                 </>
                                             ) : (
-                                                <p className="mt-3 font-bold text-slate-600">{say(language, "Keep the big idea in mind. In the quiz, every wrong answer explains itself.", "Big idea yaad rakho. Quiz mein har ghalat jawab apni wajah batata hai.")}</p>
+                                                <p className="mt-3 font-bold text-slate-600">{"Keep the big idea in mind. In the quiz, every wrong answer explains itself."}</p>
                                             )}
-                                            <InsightBlock tone="hint" className="mt-5" icon={<Lightbulb className="h-4 w-4" />} title={say(language, "Remember", "Yaad rakho")}>
+                                            <InsightBlock tone="hint" className="mt-5" icon={<Lightbulb className="h-4 w-4" />} title={"Remember"}>
                                                 <p className="text-base font-bold leading-7" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{read(language, idea)}</p>
                                             </InsightBlock>
                                         </section>
@@ -309,29 +306,29 @@ function LearnContent() {
 
                                     {step === 5 ? (
                                         quickCheck ? (
-                                            <LessonPractice key={quickCheck.id} item={quickCheck} language={language} eyebrow={stepName(4)} note={say(language, "1 question · not scored", "1 sawal · score nahi")} />
+                                            <LessonPractice key={quickCheck.id} item={quickCheck} language={language} eyebrow={stepName(4)} note={"1 question · not scored"} />
                                         ) : (
                                             <section className="rounded-3xl border border-slate-200 bg-white p-6 md:p-8 text-center">
                                                 <span className="rounded-xl bg-teal-50 px-2.5 py-1 text-xs font-extrabold uppercase text-teal-800">{stepName(4)}</span>
-                                                <p className="mt-3 font-display text-2xl font-semibold">{say(language, "Ready for the quiz?", "Quiz ke liye tayyar?")}</p>
-                                                <p className="mt-1 font-bold text-slate-600">{say(language, "Every right answer earns XP. A wrong one explains itself.", "Har sahi jawab XP deta hai. Ghalat apni wajah batata hai.")}</p>
+                                                <p className="mt-3 font-display text-2xl font-semibold">{"Ready for the quiz?"}</p>
+                                                <p className="mt-1 font-bold text-slate-600">{"Every right answer earns XP. A wrong one explains itself."}</p>
                                             </section>
                                         )
                                     ) : null}
 
                                     <div className="mt-5 flex items-center gap-3">
                                         <Button variant="outline" size="lg" className="h-13 rounded-2xl px-4 font-bold" onClick={() => goTo(step - 1)} disabled={step === 1}>
-                                            <ArrowLeft className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">{say(language, "Back", "Peechay")}</span>
+                                            <ArrowLeft className="h-5 w-5 sm:mr-2" /><span className="hidden sm:inline">{"Back"}</span>
                                         </Button>
                                         {step < LESSON_STEPS.length ? (
                                             <Button size="lg" className="h-13 flex-1 rounded-2xl text-base font-extrabold" onClick={() => goTo(step + 1)}>
-                                                {say(language, "Next", "Agay")}<ArrowRight className="ml-2 h-5 w-5" />
+                                                {"Next"}<ArrowRight className="ml-2 h-5 w-5" />
                                             </Button>
                                         ) : startButton("flex-1")}
                                     </div>
                                     {step < LESSON_STEPS.length ? (
                                         <div className="mt-3 text-center lg:hidden">
-                                            <Button variant="ghost" className="font-bold text-slate-600" onClick={startQuiz} disabled={starting}>{say(language, "Skip to the quiz", "Seedha quiz")}<ArrowRight className="ml-1 h-4 w-4" /></Button>
+                                            <Button variant="ghost" className="font-bold text-slate-600" onClick={startQuiz} disabled={starting}>{"Skip to the quiz"}<ArrowRight className="ml-1 h-4 w-4" /></Button>
                                         </div>
                                     ) : null}
                                 </section>
@@ -339,16 +336,16 @@ function LearnContent() {
                                 <aside className="hidden space-y-4 lg:block">
                                     <PiSays mood={PI_MOODS[step]}>{piLine}</PiSays>
                                     <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                                        <p className="text-[11px] font-extrabold uppercase text-slate-500">{say(language, "Remember", "Yaad rakho")}</p>
+                                        <p className="text-[11px] font-extrabold uppercase text-slate-500">{"Remember"}</p>
                                         <p className="mt-1 font-bold leading-7" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{read(language, idea)}</p>
                                     </div>
                                     <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                                        <p className="text-[11px] font-extrabold uppercase text-slate-500">{say(language, "Today's lesson", "Aaj ka lesson")}</p>
+                                        <p className="text-[11px] font-extrabold uppercase text-slate-500">{"Today's lesson"}</p>
                                         <p className="mt-1 font-display text-2xl font-bold text-indigo-700">{step}/{LESSON_STEPS.length}</p>
-                                        <p className="text-sm font-bold text-slate-600">{stepsLeft > 0 ? say(language, `${stepsLeft} ${stepsLeft === 1 ? "step" : "steps"} left, then the quiz`, `${stepsLeft} qadam baqi, phir quiz`) : say(language, "Then the quiz", "Phir quiz")}</p>
-                                        <p className="mt-1 text-xs font-bold text-slate-500">{say(language, `In the quiz: +${XP_FIRST_ATTEMPT_CORRECT} XP per right answer`, `Quiz mein: har sahi jawab par +${XP_FIRST_ATTEMPT_CORRECT} XP`)}</p>
+                                        <p className="text-sm font-bold text-slate-600">{stepsLeft > 0 ? `${stepsLeft} ${stepsLeft === 1 ? "step" : "steps"} left, then the quiz` : "Then the quiz"}</p>
+                                        <p className="mt-1 text-xs font-bold text-slate-500">{`In the quiz: +${XP_FIRST_ATTEMPT_CORRECT} XP per right answer`}</p>
                                         {step < LESSON_STEPS.length ? (
-                                            <Button variant="ghost" className="mt-2 w-full font-bold text-slate-600" onClick={startQuiz} disabled={starting}>{say(language, "Skip to the quiz", "Seedha quiz")}<ArrowRight className="ml-1 h-4 w-4" /></Button>
+                                            <Button variant="ghost" className="mt-2 w-full font-bold text-slate-600" onClick={startQuiz} disabled={starting}>{"Skip to the quiz"}<ArrowRight className="ml-1 h-4 w-4" /></Button>
                                         ) : null}
                                     </div>
                                 </aside>

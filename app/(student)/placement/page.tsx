@@ -1,5 +1,6 @@
 "use client";
 
+import { NoCopy } from "@/components/student/no-copy";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -143,7 +144,7 @@ export default function PlacementPage() {
     }
 
     return (
-        <div className="min-h-screen bg-slate-50">
+        <NoCopy className="min-h-screen bg-slate-50">
             <header className="border-b bg-white">
                 <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-4">
                     <div>
@@ -183,6 +184,6 @@ export default function PlacementPage() {
                     </Card>
                 ) : <Button onClick={() => user && start(user)}>Try again</Button>}
             </main>
-        </div>
+        </NoCopy>
     );
 }

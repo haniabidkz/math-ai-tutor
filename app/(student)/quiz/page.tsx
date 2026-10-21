@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged, type User } from "firebase/auth";
@@ -14,6 +14,7 @@ import { InsightBlock } from "@/components/insight-block";
 import { PiMascot, PiSays, type PiMood } from "@/components/student/pi-mascot";
 import { LanguagePrompt } from "@/components/student/language-prompt";
 import { MistakeBox, type AnswerInfo } from "@/components/student/mistake-box";
+import { NoCopy } from "@/components/student/no-copy";
 import { ComboChip, DifficultyLadder, OptionTile, QuestionPath, QuizStats, ScoreChip, type PathResult } from "@/components/student/quiz-hud";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -82,14 +83,16 @@ interface GameState {
     hints: number;
 }
 
+/** When no lesson could be attached to a review, the box still shows the answer and the working. */
+const fallbackRemedial = (quiz: { microTag: string }): RemedialState => ({
+    microTag: quiz.microTag, title: { english: "Learn from this one", romanUrdu: "Learn from this one" }, concept: { english: "", romanUrdu: "" }, visualKind: "pattern",
+});
+
 const FRESH_GAME: GameState = { results: [], combo: 0, bestCombo: 0, trend: null, lastDifficulty: null, hints: 0 };
 const LEVELS: Difficulty[] = ["easy", "medium", "hard"];
 const trendBetween = (from: Difficulty | null, to: Difficulty): "up" | "down" | null =>
     !from || from === to ? null : LEVELS.indexOf(to) > LEVELS.indexOf(from) ? "up" : "down";
 
-type Lang = "english" | "roman-urdu" | null;
-/** Pi speaks the language the student chose for their learning aids; English until they choose. */
-const say = (lang: Lang, english: string, romanUrdu: string) => (lang === "roman-urdu" ? romanUrdu : english);
 
 function QuizContent() {
     const router = useRouter();
@@ -114,6 +117,8 @@ function QuizContent() {
     const [game, setGame] = useState<GameState>(FRESH_GAME);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    /** A second tap while a request is out would reach the server after it moved on. */
+    const inFlight = useRef(false);
     const [pendingCount, setPendingCount] = useState(0);
     const [offline, setOffline] = useState(false);
     const [syncing, setSyncing] = useState(false);
@@ -158,6 +163,31 @@ function QuizContent() {
         setAnswerInfo(null);
         setExplanation(null);
         setShowSolution(false);
+    }
+
+    /** A quiz left midway: puts the screen back where the student was, review screen included. */
+    function restoreSession(session: {
+        status: string; question?: ClientQuestion; mainResults?: boolean[];
+        practice?: PracticeState | null; misconception?: MisconceptionState | null; foundation?: FoundationProgress | null;
+        review?: { remedial?: RemedialState; mistake?: MistakePayload; explanation?: LocalizedText; answer?: AnswerInfo; foundation?: FoundationProgress } | null;
+    }) {
+        const results: PathResult[] = session.mainResults ?? [];
+        let combo = 0;
+        let bestCombo = 0;
+        for (const result of results) {
+            combo = result ? combo + 1 : 0;
+            bestCombo = Math.max(bestCombo, combo);
+        }
+        setGame({ ...FRESH_GAME, results, combo, bestCombo, lastDifficulty: session.question?.difficulty ?? null });
+        setPractice(session.status === "misconception_practice" ? session.practice ?? null : null);
+        setMisconception(session.misconception ?? null);
+        setFoundation(session.status === "foundation_practice" ? session.foundation ?? null : session.review?.foundation ?? null);
+        if (session.status === "remedial_required" && session.review) {
+            setRemedial(session.review.remedial ?? fallbackRemedial(session as unknown as { microTag: string }));
+            setMistake(session.review.mistake ?? null);
+            setExplanation(session.review.explanation ?? null);
+            setAnswerInfo(session.review.answer ?? null);
+        }
     }
 
     /** Records how a question on the lesson's own list went, for the path and the combo. */
@@ -210,12 +240,14 @@ function QuizContent() {
                 }
                 throw new Error(data.error);
             }
-            // A fresh session invalidates anything still queued from an abandoned one.
-            clearSessionQueue(data.session.id);
+            // A fresh session invalidates anything still queued from an abandoned one; a resumed
+            // one keeps its queue, which syncs as soon as the screen is back.
+            if (!data.session.resumed) clearSessionQueue(data.session.id);
             setPendingCount(0);
             setOfflineFinished(false);
             setQuiz(data.session);
-            setGame({ ...FRESH_GAME, lastDifficulty: data.session.question?.difficulty ?? null });
+            if (data.session.resumed) restoreSession(data.session);
+            else setGame({ ...FRESH_GAME, lastDifficulty: data.session.question?.difficulty ?? null });
         } catch {
             setError("The quiz could not start. Please try again.");
         } finally {
@@ -224,7 +256,8 @@ function QuizContent() {
     }
 
     async function evaluate(action: "hint" | "answer" | "remedialComplete") {
-        if (!user || !quiz || loading) return;
+        if (!user || !quiz || loading || inFlight.current) return;
+        inFlight.current = true;
         setLoading(true);
         setError("");
         // Practice and foundation answers never count on the path or the combo.
@@ -242,7 +275,15 @@ function QuizContent() {
                 }),
             });
             const data = await response.json();
-            if (!response.ok) throw new Error(data.error);
+            if (!response.ok) {
+                // 409 means the server is a step ahead of this screen (a double tap, a retried
+                // request, another tab): pick the session up again where the server has it.
+                if (response.status === 409) {
+                    await resyncSession(user);
+                    return;
+                }
+                throw new Error(data.error);
+            }
 
             if (action === "hint") {
                 setHint(data.hint ?? null);
@@ -266,7 +307,8 @@ function QuizContent() {
                 return;
             }
             if (data.status === "remedial_required") {
-                setRemedial(data.remedial ?? null);
+                // The review opens even when the server could not name a lesson for it.
+                setRemedial(data.remedial ?? fallbackRemedial(quiz));
                 setMistake(data.mistake ?? null);
                 setAnswerInfo(data.answer ?? null);
                 setExplanation(data.explanation ?? null);
@@ -298,8 +340,16 @@ function QuizContent() {
             }
             setError("The quiz could not continue. Please try again.");
         } finally {
+            inFlight.current = false;
             setLoading(false);
         }
+    }
+
+    /** Reloads the session as the server has it; a quiz left midway continues from there. */
+    async function resyncSession(currentUser: User) {
+        inFlight.current = false;
+        setLoading(false);
+        await startQuiz(currentUser);
     }
 
     /** Stores the answer on the device and moves on using the locally held questions. */
@@ -427,9 +477,9 @@ function QuizContent() {
             <main className="flex min-h-screen items-center justify-center bg-[#F4F6FB] p-4 font-body text-slate-900">
                 <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white p-6 text-center md:p-8">
                     <PiMascot mood={result.mastered ? "cheer" : "happy"} size={96} className="mx-auto" />
-                    <h1 className="mt-3 font-display text-3xl font-bold">{result.mastered ? say(language, "Well done!", "Shabash!") : say(language, "Good effort!", "Achhi koshish!")}</h1>
+                    <h1 className="mt-3 font-display text-3xl font-bold">{result.mastered ? "Well done!" : "Good effort!"}</h1>
                     <p className="mt-1 text-base font-bold text-slate-600">
-                        {result.mastered ? say(language, "Lesson mastered", "Lesson mukammal: mastered") : say(language, "Not mastered yet. One more try and you have it.", "Abhi mastered nahi. Ek aur koshish, phir ho jayega.")}
+                        {result.mastered ? "Lesson mastered" : "Not mastered yet. One more try and you have it."}
                     </p>
 
                     <div className="mx-auto my-6 flex h-40 w-40 items-center justify-center rounded-full" style={{ background: `conic-gradient(${result.mastered ? "#15803D" : "#4F46E5"} ${Math.max(0, Math.min(100, result.percentage)) * 3.6}deg, #E6E8F0 0)` }} role="img" aria-label={`${result.percentage} percent`}>
@@ -454,13 +504,13 @@ function QuizContent() {
                             <p className="text-xs font-extrabold text-amber-800">best combo</p>
                         </div>
                     </div>
-                    {result.xpEarned === 0 ? <p className="mt-2 text-xs font-bold text-slate-500">{say(language, "A retry or a repeat today earns no XP, but mastery still counts.", "Dobara koshish ya aaj ka repeat XP nahi deta, lekin mastery ginti hai.")}</p> : null}
+                    {result.xpEarned === 0 ? <p className="mt-2 text-xs font-bold text-slate-500">{"A retry or a repeat today earns no XP, but mastery still counts."}</p> : null}
                     {result.bonuses && (result.bonuses.combo || result.bonuses.topic || result.bonuses.homework) ? (
                         <p className="mt-2 text-xs font-bold text-indigo-700">
-                            {say(language, "Bonus inside:", "Bonus shamil:")}
-                            {result.bonuses.topic ? ` +${result.bonuses.topic} ${say(language, "chapter complete", "chapter mukammal")}` : ""}
-                            {result.bonuses.combo ? ` +${result.bonuses.combo} ${say(language, "combo", "combo")}` : ""}
-                            {result.bonuses.homework ? ` +${result.bonuses.homework} ${say(language, "homework", "homework")}` : ""}
+                            {"Bonus inside:"}
+                            {result.bonuses.topic ? ` +${result.bonuses.topic} ${"chapter complete"}` : ""}
+                            {result.bonuses.combo ? ` +${result.bonuses.combo} ${"combo"}` : ""}
+                            {result.bonuses.homework ? ` +${result.bonuses.homework} ${"homework"}` : ""}
                         </p>
                     ) : null}
 
@@ -492,13 +542,13 @@ function QuizContent() {
                     <div className="mt-6 grid gap-3">
                         {unlocked ? (
                             <Button size="lg" className="h-13 rounded-2xl text-base font-extrabold" asChild>
-                                <Link href={`/learn?microTag=${encodeURIComponent(unlocked.microTag)}&class=${quiz.classLevel ?? ""}`}>{say(language, "Start the next lesson", "Agla lesson shuru karo")}<ArrowRight className="ml-2 h-5 w-5" /></Link>
+                                <Link href={`/learn?microTag=${encodeURIComponent(unlocked.microTag)}&class=${quiz.classLevel ?? ""}`}>{"Start the next lesson"}<ArrowRight className="ml-2 h-5 w-5" /></Link>
                             </Button>
                         ) : (
                             <Button size="lg" className="h-13 rounded-2xl text-base font-extrabold" asChild><Link href="/dashboard">Dashboard</Link></Button>
                         )}
                         <Button variant="outline" size="lg" className="h-12 rounded-2xl text-base font-bold" onClick={() => user && startQuiz(user, quiz.id)}>
-                            <RotateCcw className="mr-2 h-4 w-4" />{!result.mastered ? say(language, "Try again", "Dobara koshish") : result.percentage >= 100 ? say(language, "Play again", "Dobara khelo") : say(language, "Play again for 100%", "Dobara khelo, 100% ke liye")}
+                            <RotateCcw className="mr-2 h-4 w-4" />{!result.mastered ? "Try again" : result.percentage >= 100 ? "Play again" : "Play again for 100%"}
                         </Button>
                         {unlocked ? <Button variant="ghost" asChild><Link href="/dashboard">Dashboard</Link></Button> : null}
                     </div>
@@ -510,28 +560,28 @@ function QuizContent() {
     if (loading && !quiz) return <div className="flex min-h-screen items-center justify-center bg-[#F4F6FB] font-body"><p className="font-bold text-slate-600">Preparing quiz...</p></div>;
 
     if (remedial && quiz) return (
-        <main className="min-h-screen bg-white p-4 font-body text-slate-900 md:p-8">
+        <NoCopy><main className="min-h-screen bg-white p-4 font-body text-slate-900 md:p-8">
             <div className="mx-auto max-w-3xl">
                 <div className="mb-4 flex items-center justify-between gap-3">
                     <span className="text-sm font-extrabold text-slate-500">Question {quiz.questionNumber} of {quiz.totalQuestions}</span>
                 </div>
                 <PiSays mood="oops">
-                    {say(language, "No problem. See where it slipped, then the next one.", "Koi baat nahi. Dekho kahan phisle, phir agla sawal.")}
+                    {"No problem. See where it slipped, then the next one."}
                 </PiSays>
                 <ConceptGraphic imageUrl={remedial.imageUrl} alt={remedial.title.english} className="mt-4 rounded-2xl border border-gray-200" />
                 <div className="mt-5">
-                    <span className="inline-flex items-center gap-1 rounded-xl bg-indigo-50 px-2.5 py-1 text-xs font-extrabold text-indigo-800"><HelpCircle className="h-3 w-3" />{say(language, "Learn from this one", "Is se seekho")}</span>
+                    <span className="inline-flex items-center gap-1 rounded-xl bg-indigo-50 px-2.5 py-1 text-xs font-extrabold text-indigo-800"><HelpCircle className="h-3 w-3" />{"Learn from this one"}</span>
                     <h1 className="mt-2 font-display text-2xl font-semibold">{remedial.title.english}</h1>
                 </div>
                 <MistakeBox className="mt-4" language={language} mistake={mistake} answer={answerInfo} explanation={explanation} concept={remedial.concept}
                     misconception={misconception} foundation={foundation} classLevel={quiz.classLevel} />
                 <div className="mt-6 flex justify-end">
                     <Button size="lg" className="h-13 w-full rounded-2xl text-base font-extrabold sm:w-auto sm:px-8" onClick={() => evaluate("remedialComplete")} disabled={loading}>
-                        {foundation ? `Start the Class ${foundation.classLevel} round` : misconception ? "Start targeted practice" : say(language, "Got it, next", "Samajh gaya, agay")}<ArrowRight className="ml-2 h-5 w-5" />
+                        {foundation ? `Start the Class ${foundation.classLevel} round` : misconception ? "Start targeted practice" : "Got it, next"}<ArrowRight className="ml-2 h-5 w-5" />
                     </Button>
                 </div>
             </div>
-        </main>
+        </main></NoCopy>
     );
 
     const question = quiz?.question;
@@ -539,23 +589,23 @@ function QuizContent() {
     const wrong = game.results.filter((item) => item === false).length;
     const mood: PiMood = hint ? "think" : lastAnswer?.isCorrect ? "cheer" : lastAnswer && !lastAnswer.isCorrect ? "oops" : "happy";
     const piLine = hint
-        ? say(language, "The hint is here. Read it, then choose.", "Hint aa gaya. Parho, phir chuno.")
+        ? "The hint is here. Read it, then choose."
         : foundation
-            ? say(language, `Class ${foundation.classLevel} round. Take your time, this one is just practice.`, `Class ${foundation.classLevel} ka round. Aaram se, yeh sirf practice hai.`)
+            ? `Class ${foundation.classLevel} round. Take your time, this one is just practice.`
             : practice
-                ? say(language, "Practice question. It does not count; it helps.", "Practice sawal. Score mein nahi ginta, madad karta hai.")
+                ? "Practice question. It does not count; it helps."
                 : lastAnswer?.isCorrect && game.combo >= 2
-                    ? say(language, `${game.combo} in a row! Keep the combo going.`, `${game.combo} lagatar sahi! Combo chalta rakho.`)
+                    ? `${game.combo} in a row! Keep the combo going.`
                     : lastAnswer?.isCorrect
-                        ? say(language, "Correct! On to the next one.", "Sahi! Ab agla.")
+                        ? "Correct! On to the next one."
                         : game.trend === "up"
-                            ? say(language, "Right answers, so a bit harder now. You can do it.", "Sahi jawab, is liye ab thora mushkil. Tum kar sakte ho.")
+                            ? "Right answers, so a bit harder now. You can do it."
                             : game.trend === "down"
-                                ? say(language, "A little easier this time, then we climb again.", "Is baar thora asaan, phir upar chalenge.")
-                                : say(language, "Read the question slowly. You have this.", "Sawal aaram se parho. Tum kar lo ge.");
+                                ? "A little easier this time, then we climb again."
+                                : "Read the question slowly. You have this.";
 
     return (
-        <div className="min-h-screen bg-[#F4F6FB] font-body text-slate-900">
+        <NoCopy className="min-h-screen bg-[#F4F6FB] font-body text-slate-900">
             <header className="border-b bg-white">
                 <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
                     <Button variant="ghost" className="px-2 font-bold sm:px-4" asChild>
@@ -613,11 +663,11 @@ function QuizContent() {
                         ) : null}
                         {lastAnswer ? (
                             lastAnswer.isCorrect ? (
-                                <InsightBlock tone="correct" className="mb-4" icon={<CheckCircle2 className="h-4 w-4" />} title={<>{say(language, "Correct!", "Sahi!")}{lastAnswer.xp ? <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold normal-case tracking-normal"><Star className="mr-1 inline h-3 w-3" />+{XP_FIRST_ATTEMPT_CORRECT} XP</span> : null}</>}>
+                                <InsightBlock tone="correct" className="mb-4" icon={<CheckCircle2 className="h-4 w-4" />} title={<>{"Correct!"}{lastAnswer.xp ? <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold normal-case tracking-normal"><Star className="mr-1 inline h-3 w-3" />+{XP_FIRST_ATTEMPT_CORRECT} XP</span> : null}</>}>
                                     {lastAnswer.explanation ? (
                                         <>
                                             <button type="button" className="text-xs font-bold text-emerald-800 underline-offset-2 hover:underline" onClick={() => setShowSolution((open) => !open)} aria-expanded={showSolution}>
-                                                {showSolution ? say(language, "Hide solution", "Solution chhupao") : say(language, "Show solution", "Solution dekho")}
+                                                {showSolution ? "Hide solution" : "Show solution"}
                                             </button>
                                             {showSolution ? <BilingualText text={lastAnswer.explanation} switcher={false} className="mt-2" /> : null}
                                         </>
@@ -675,14 +725,14 @@ function QuizContent() {
                                 <div className="mt-2 grid grid-cols-5 gap-1.5">
                                     {Array.from({ length: 5 }, (_, index) => <span key={index} className={`h-3 rounded-full ${index < Math.min(game.combo, 5) ? "bg-indigo-600" : "bg-slate-200"}`} />)}
                                 </div>
-                                <p className="mt-2 text-xs font-bold text-slate-500">{say(language, "Right answers in a row. Best this quiz:", "Lagatar sahi jawab. Is quiz ka best:")} x{game.bestCombo}</p>
+                                <p className="mt-2 text-xs font-bold text-slate-500">{"Right answers in a row. Best this quiz:"} x{game.bestCombo}</p>
                             </div>
                             <QuizStats right={right} wrong={wrong} hints={game.hints} />
                         </aside>
                     ) : null}
                 </div>
             </main>
-        </div>
+        </NoCopy>
     );
 }
 

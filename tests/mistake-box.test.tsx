@@ -30,15 +30,16 @@ describe("MistakeBox", () => {
         expect(screen.getByText(/Its things are called elements/)).toBeInTheDocument();
     });
 
-    it("reads in Roman Urdu and keeps the generic tip only for a matching topic", () => {
+    it("reads the content in Roman Urdu with English labels, and keeps the generic tip only for a matching topic", () => {
         // Bilingual blocks follow the stored choice, as they do on the real screen.
         storeAidLanguage("roman-urdu");
         render(<MistakeBox language="roman-urdu" {...props}
             misconception={{ type: "concept", tag: "incomplete-inverse-operation", microTag: "c6-defination-of-sets", guidance: text("Undo on both sides.", "Dono taraf ulta karo.") }} />);
         expect(screen.getByText("Set curly brackets { } mein likhte hain, round nahi.")).toBeInTheDocument();
-        expect(screen.getByText("Yeh ghalti baar baar ho rahi hai")).toBeInTheDocument();
+        expect(screen.getByText("This mistake keeps coming back")).toBeInTheDocument();
         expect(screen.queryByText("Dono taraf ulta karo.")).not.toBeInTheDocument();
-        expect(screen.getByText(/Tumhara jawab/)).toBeInTheDocument();
+        expect(screen.getByText(/Your answer/)).toBeInTheDocument();
+        expect(screen.queryByText(/Tumhara jawab/)).not.toBeInTheDocument();
     });
 
     it("still works with only a reason, for practice questions", () => {

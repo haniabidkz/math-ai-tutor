@@ -27,7 +27,8 @@ function LoginContent() {
     const requestedRole = searchParams.get("role");
     const role: Exclude<UserRole, "super_admin"> = requestedRole === "parent" || requestedRole === "teacher" ? requestedRole : "student";
 
-    const [isSignUp, setIsSignUp] = useState(false);
+    // "Get Started" on the landing page lands on the sign-up form straight away.
+    const [isSignUp, setIsSignUp] = useState(searchParams.get("mode") === "signup");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
 

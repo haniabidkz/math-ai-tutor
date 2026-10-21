@@ -221,7 +221,9 @@ export async function POST(request: NextRequest) {
 
         const mainQuestion = initial.questions[initial.currentQuestionIndex];
         const remedialTag = mainQuestion?.prerequisiteTag ?? mainQuestion?.microTag ?? initial.remedialTag;
-        const remedialConcept = remedialTag ? await getPublishedConcept(remedialTag) : undefined;
+        // The review needs a lesson to show. A prerequisite that was unpublished or deleted used to
+        // leave the response without one, and the screen stayed on the question with no way on.
+        const remedialConcept = await publishedConceptWithFallback([remedialTag, mainQuestion?.microTag, initial.microTag]);
         const config = await getAssessmentConfig();
 
         // A wrong answer on a main question may open a practice queue, so prepare one up front:
@@ -664,6 +666,15 @@ export async function POST(request: NextRequest) {
             ? NextResponse.json(auth.body, { status: auth.status })
             : NextResponse.json({ success: false, error: conflict ? "Complete the current remediation step first" : "Failed to evaluate answer" }, { status: conflict ? 409 : 500 });
     }
+}
+
+/** The first of these lessons that is live, for screens that must always have one to show. */
+async function publishedConceptWithFallback(tags: Array<string | null | undefined>) {
+    for (const tag of [...new Set(tags.filter((value): value is string => typeof value === "string" && value.length > 0))]) {
+        const concept = await getPublishedConcept(tag);
+        if (concept) return concept;
+    }
+    return undefined;
 }
 
 /** Every lesson of the chapter with whether the student has mastered it, for the completion bonus. */

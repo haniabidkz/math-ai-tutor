@@ -39,9 +39,10 @@ describe("LessonPractice", () => {
         expect(screen.getByRole("button", { name: "Next" })).toBeInTheDocument();
     });
 
-    it("reads in Roman Urdu when that is the chosen language", () => {
-        render(<LessonPractice item={item} language="roman-urdu" eyebrow="Khud karo" />);
+    it("keeps the controls in English even when Roman Urdu is the chosen language", () => {
+        render(<LessonPractice item={item} language="roman-urdu" eyebrow="Try it" />);
         expect(screen.getByText("Set kaun sa hai?")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: /Check karo/ })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /^Check/ })).toBeInTheDocument();
+        expect(screen.queryByText(/Check karo/)).not.toBeInTheDocument();
     });
 });

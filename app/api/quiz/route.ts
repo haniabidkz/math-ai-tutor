@@ -17,7 +17,10 @@ import { adminDb } from "@/lib/firebase-admin";
 import { buildConceptItems } from "@/lib/learner-metrics";
 import { buildQuestionHistory, type HistoricalQuestionSession } from "@/lib/question-history";
 import { orderByFreshness, takeNextQuestion, targetDifficulty } from "@/lib/question-selection";
+import { getOptionAnalysis, MISCONCEPTIONS } from "@/lib/mistake-analysis";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
+import { cleanMathText } from "@/lib/text-clean";
+import type { LocalizedOption } from "@/types/curriculum";
 import type { Locale, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
 
 function parseClass(value: unknown): StudentClassLevel | null {
@@ -129,6 +132,13 @@ export async function POST(request: NextRequest) {
         // A lesson the student already fell short on opens the previous-class round after one miss.
         const struggledBefore = kind === "mastery" && typeof conceptProgress?.percentage === "number" && conceptProgress.percentage < config.masteryThresholdPercent;
 
+        // A quiz left midway continues where it stopped: the latest unfinished session for the same
+        // lesson (and homework) comes back instead of a new one, unless a retry was asked for.
+        if (typeof body.retryOf !== "string") {
+            const open = await latestOpenSession(user.uid, kind, kind === "weekly" ? "weekly-review" : microTag, homeworkId);
+            if (open) return NextResponse.json({ success: true, session: await describeSession(open, locale, true) });
+        }
+
         const history = await questionHistory(user.uid, kind, kind === "weekly" ? "weekly-review" : microTag);
         let questions: QuestionBankItem[];
         let pool: QuestionBankItem[] | null = null;
@@ -228,6 +238,84 @@ export async function POST(request: NextRequest) {
     }
 }
 
+/** The newest session on this lesson that was not finished, so a refresh or a return picks it up. */
+async function latestOpenSession(studentUid: string, kind: "mastery" | "weekly", microTag: string, homeworkId: string | null): Promise<StoredQuizSession | null> {
+    const snapshot = await adminDb.collection("students").doc(studentUid).collection("assessmentSessions")
+        .where("kind", "==", kind).where("microTag", "==", microTag).get();
+    const millis = (value: unknown) => (value && typeof (value as { toMillis?: () => number }).toMillis === "function" ? (value as { toMillis: () => number }).toMillis() : 0);
+    const open = snapshot.docs
+        .map((doc) => doc.data() as StoredQuizSession & { startedAt?: unknown; updatedAt?: unknown })
+        .filter((session) => session.status !== "completed" && (session.homeworkId ?? null) === homeworkId && Array.isArray(session.questions) && session.questions.length > 0)
+        .sort((left, right) => millis(right.updatedAt ?? right.startedAt) - millis(left.updatedAt ?? left.startedAt));
+    return open[0] ?? null;
+}
+
+/**
+ * A session as the quiz screen needs it: the current question, the whole list for offline
+ * answering, how the lesson's own questions went so far, and, when the student left on the
+ * review screen, everything that screen showed.
+ */
+async function describeSession(session: StoredQuizSession, locale: Locale, resumed = false) {
+    const current = currentQuizQuestion(session);
+    const total = session.questionCount ?? session.questions.length;
+    const everyQuestion = [...session.questions, ...(session.pool ?? []), ...(session.practiceQueue ?? []), ...(session.foundation?.queue ?? [])];
+    const practiceIndex = session.practiceIndex ?? 0;
+    const practiceTotal = session.practiceQueue?.length ?? 0;
+    const misconception = session.misconception && (session.status === "misconception_practice" || session.status === "remedial_required") && practiceTotal > 0
+        ? {
+            microTag: session.misconception.microTag,
+            type: session.misconception.mistakeType,
+            tag: session.misconception.misconceptionTag,
+            label: MISCONCEPTIONS[session.misconception.misconceptionTag]?.label.english ?? "",
+            guidance: MISCONCEPTIONS[session.misconception.misconceptionTag]?.guidance ?? { english: "", romanUrdu: "" },
+            practiceTotal,
+        }
+        : undefined;
+    const base = {
+        id: session.id,
+        kind: session.kind,
+        homeworkId: session.homeworkId ?? null,
+        microTag: session.microTag,
+        classLevel: session.classLevel,
+        status: session.status,
+        score: session.score,
+        maxScore: session.maxScore,
+        questionNumber: Math.min(session.currentQuestionIndex + 1, total),
+        totalQuestions: total,
+        question: current ? toClientQuestion(current, locale) : undefined,
+        questions: [...session.questions, ...(session.pool ?? [])].map((item) => toClientQuestion(item, locale)),
+        remedialTag: session.remedialTag,
+        resumed,
+        mainResults: (session.answers ?? []).filter((answer) => !answer.practice).map((answer) => answer.isCorrect),
+        foundation: session.status === "foundation_practice" && session.foundationSource && session.foundation
+            ? foundationProgress(session.foundationSource, session.foundation)
+            : undefined,
+        practice: session.status === "misconception_practice" ? { number: practiceIndex + 1, total: practiceTotal, isRecheck: practiceIndex === practiceTotal - 1 } : undefined,
+        misconception,
+    };
+    if (session.status !== "remedial_required") return base;
+
+    // The review screen, rebuilt from the answer that opened it.
+    const last = [...(session.answers ?? [])].reverse().find((answer) => !answer.practice);
+    const question = last ? everyQuestion.find((item) => item.id === last.questionId) : undefined;
+    const analysis = question && last ? getOptionAnalysis(question, last.optionId as LocalizedOption["id"]) : null;
+    let remedialConcept = session.remedialTag ? await getPublishedConcept(session.remedialTag) : undefined;
+    if (!remedialConcept) remedialConcept = await getPublishedConcept(question?.microTag ?? session.microTag);
+    const option = (id: string) => ({ id, text: cleanMathText(question?.options.find((item) => item.id === id)?.english ?? "") });
+    return {
+        ...base,
+        review: {
+            remedial: remedialConcept ? { microTag: remedialConcept.microTag, title: remedialConcept.title, concept: remedialConcept.concept, visualKind: remedialConcept.visualKind, imageUrl: remedialConcept.imageUrl } : undefined,
+            mistake: analysis ? { type: analysis.mistakeType, tag: analysis.misconceptionTag, label: MISCONCEPTIONS[analysis.misconceptionTag]?.label.english ?? "", whyWrong: analysis.whyWrong } : undefined,
+            explanation: question?.explanation,
+            answer: question && last ? { selected: option(last.optionId), correct: option(question.correctOptionId) } : undefined,
+            foundation: session.foundation && session.foundationSource && !session.foundation.outcome && session.foundation.index === 0
+                ? foundationProgress(session.foundationSource, session.foundation)
+                : undefined,
+        },
+    };
+}
+
 export async function GET(request: NextRequest) {
     try {
         const user = await requireUser(request, ["student"]);
@@ -235,27 +323,7 @@ export async function GET(request: NextRequest) {
         if (!sessionId) return NextResponse.json({ success: false, error: "sessionId is required" }, { status: 400 });
         const snapshot = await adminDb.collection("students").doc(user.uid).collection("assessmentSessions").doc(sessionId).get();
         if (!snapshot.exists) return NextResponse.json({ success: false, error: "Session not found" }, { status: 404 });
-        const session = snapshot.data() as StoredQuizSession;
-        const current = currentQuizQuestion(session);
-        return NextResponse.json({
-            success: true,
-            session: {
-                id: session.id,
-                kind: session.kind,
-                microTag: session.microTag,
-                classLevel: session.classLevel,
-                status: session.status,
-                score: session.score,
-                maxScore: session.maxScore,
-                questionNumber: Math.min(session.currentQuestionIndex + 1, session.questionCount ?? session.questions.length),
-                totalQuestions: session.questionCount ?? session.questions.length,
-                question: current ? toClientQuestion(current, "english") : undefined,
-                remedialTag: session.remedialTag,
-                foundation: session.status === "foundation_practice" && session.foundationSource && session.foundation
-                    ? foundationProgress(session.foundationSource, session.foundation)
-                    : undefined,
-            },
-        });
+        return NextResponse.json({ success: true, session: await describeSession(snapshot.data() as StoredQuizSession, "english") });
     } catch (error) {
         const auth = authErrorResponse(error);
         return auth

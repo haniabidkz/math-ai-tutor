@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { CheckCircle2, Lightbulb, RotateCcw, XCircle } from "lucide-react";
 import { BilingualText } from "@/components/bilingual-text";
 import { InsightBlock } from "@/components/insight-block";
+import { NoCopy } from "@/components/student/no-copy";
 import { OptionTile } from "@/components/student/quiz-hud";
 import { Button } from "@/components/ui/button";
 import type { AidLanguage } from "@/lib/aid-language";
@@ -43,7 +44,7 @@ export function LessonPractice({ item, language, eyebrow, note, onResult, childr
     }
 
     return (
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 md:p-7">
+        <NoCopy className="rounded-3xl border border-slate-200 bg-white p-5 md:p-7">
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="rounded-xl bg-indigo-50 px-2.5 py-1 text-xs font-extrabold uppercase text-indigo-800">{eyebrow}</span>
                 {note ? <span className="text-xs font-bold text-slate-500">{note}</span> : null}
@@ -56,24 +57,24 @@ export function LessonPractice({ item, language, eyebrow, note, onResult, childr
             </div>
             {checked ? (
                 correct ? (
-                    <InsightBlock tone="correct" className="mt-4" icon={<CheckCircle2 className="h-4 w-4" />} title={ru ? "Sahi!" : "Correct!"}>
+                    <InsightBlock tone="correct" className="mt-4" icon={<CheckCircle2 className="h-4 w-4" />} title={"Correct!"}>
                         <BilingualText text={item.explanation} switcher={false} />
                     </InsightBlock>
                 ) : (
-                    <InsightBlock tone="wrong" className="mt-4" icon={<XCircle className="h-4 w-4" />} title={ru ? "Abhi nahi" : "Not yet"}>
+                    <InsightBlock tone="wrong" className="mt-4" icon={<XCircle className="h-4 w-4" />} title={"Not yet"}>
                         {wrongReason ? <BilingualText text={wrongReason} switcher={false} /> : <BilingualText text={item.hint} switcher={false} />}
-                        <Button type="button" variant="outline" size="sm" className="mt-3 font-bold" onClick={tryAgain}><RotateCcw className="mr-2 h-4 w-4" />{ru ? "Dobara koshish" : "Try again"}</Button>
+                        <Button type="button" variant="outline" size="sm" className="mt-3 font-bold" onClick={tryAgain}><RotateCcw className="mr-2 h-4 w-4" />{"Try again"}</Button>
                     </InsightBlock>
                 )
             ) : null}
             {!checked ? (
                 <div className="mt-6 flex flex-wrap items-center gap-3">
                     <Button type="button" size="lg" className="h-14 flex-1 rounded-2xl text-base font-extrabold" onClick={check} disabled={!selected}>
-                        {ru ? "Check karo" : "Check"}<CheckCircle2 className="ml-2 h-5 w-5" />
+                        {"Check"}<CheckCircle2 className="ml-2 h-5 w-5" />
                     </Button>
-                    <span className="flex items-center gap-1 text-xs font-bold text-slate-500"><Lightbulb className="h-3.5 w-3.5" />{ru ? "Ghalat ho to wajah dikhegi" : "A wrong pick shows why"}</span>
+                    <span className="flex items-center gap-1 text-xs font-bold text-slate-500"><Lightbulb className="h-3.5 w-3.5" />{"A wrong pick shows why"}</span>
                 </div>
             ) : correct ? <div className="mt-6">{children}</div> : null}
-        </div>
+        </NoCopy>
     );
 }

@@ -25,7 +25,7 @@ export default function Home() {
             title: "Student",
             icon: GraduationCap,
             description: "Learn math with AI help, take quizzes, and track your progress.",
-            href: "/login?role=student",
+            href: "/login?role=student&mode=signup",
             color: "text-indigo-600 dark:text-indigo-400",
             bg: "bg-indigo-50 dark:bg-indigo-900/20",
             border: "hover:border-indigo-500",
@@ -35,7 +35,7 @@ export default function Home() {
             title: "Parent",
             icon: Users,
             description: "Monitor your child's learning journey and view detailed insights.",
-            href: "/login?role=parent",
+            href: "/login?role=parent&mode=signup",
             color: "text-emerald-600 dark:text-emerald-400",
             bg: "bg-emerald-50 dark:bg-emerald-900/20",
             border: "hover:border-emerald-500",
@@ -45,7 +45,7 @@ export default function Home() {
             title: "Teacher",
             icon: School,
             description: "Manage classes, view student performance, and identify needs.",
-            href: "/login?role=teacher",
+            href: "/login?role=teacher&mode=signup",
             color: "text-amber-600 dark:text-amber-400",
             bg: "bg-amber-50 dark:bg-amber-900/20",
             border: "hover:border-amber-500",
@@ -89,7 +89,7 @@ export default function Home() {
                             <Link href="/login">Sign In</Link>
                         </Button>
                         <Button asChild>
-                            <Link href="/login?role=student">Get Started</Link>
+                            <Link href="/login?role=student&mode=signup">Get Started</Link>
                         </Button>
                     </div>
                 </div>
