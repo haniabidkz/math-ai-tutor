@@ -13,7 +13,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ uid
 
         const student = await adminDb.collection("students").doc(uid).get();
         // A missing child and someone else's child look the same, so neither leaks existence.
-        if (!student.exists || !isParentOf(user.email, student.data()?.parentEmail)) {
+        const linkedByPhone = Boolean(user.phone) && student.data()?.parentPhone === user.phone;
+        if (!student.exists || (!isParentOf(user.email, student.data()?.parentEmail) && !linkedByPhone)) {
             return NextResponse.json({ success: false, error: "Child not found" }, { status: 404 });
         }
 

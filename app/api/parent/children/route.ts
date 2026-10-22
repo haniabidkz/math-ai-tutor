@@ -1,23 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildChildReport } from "@/lib/child-report";
 import { adminDb } from "@/lib/firebase-admin";
+import { formatPhone, isPhoneEmail } from "@/lib/phone";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 
 /** Every child whose profile names this parent's email, with headline progress. */
 export async function GET(request: NextRequest) {
     try {
         const user = await requireUser(request, ["parent"]);
-        const email = user.email.trim();
-        if (!email) return NextResponse.json({ success: false, error: "Your account has no email address" }, { status: 400 });
+        // A child names the parent by email or by phone; both are matched.
+        const email = isPhoneEmail(user.email) ? "" : user.email.trim();
+        const phone = user.phone;
+        if (!email && !phone) return NextResponse.json({ success: false, error: "Your account has no email address or phone number" }, { status: 400 });
 
         const parentSnapshot = await adminDb.collection("parents").doc(user.uid).get();
-        const candidates = [...new Set([email, email.toLowerCase()])];
-        const snapshot = await adminDb.collection("students").where("parentEmail", "in", candidates).get();
-        const children = (await Promise.all(snapshot.docs.map((doc) => buildChildReport(doc.id, false)))).filter(Boolean);
+        const candidates = [...new Set([email, email.toLowerCase()].filter(Boolean))];
+        const [byEmail, byPhone] = await Promise.all([
+            candidates.length ? adminDb.collection("students").where("parentEmail", "in", candidates).get() : null,
+            phone ? adminDb.collection("students").where("parentPhone", "==", phone).get() : null,
+        ]);
+        const ids = [...new Set([...(byEmail?.docs ?? []), ...(byPhone?.docs ?? [])].map((doc) => doc.id))];
+        const children = (await Promise.all(ids.map((uid) => buildChildReport(uid, false)))).filter(Boolean);
 
         return NextResponse.json({
             success: true,
-            parent: { name: String(parentSnapshot.data()?.name ?? user.email), email },
+            parent: { name: String(parentSnapshot.data()?.name ?? user.email), email: email || formatPhone(phone) },
             children,
         });
     } catch (error) {

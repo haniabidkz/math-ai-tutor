@@ -1,3 +1,4 @@
+import { isLessonOpen, type StudentAccess } from "@/lib/access";
 import { compareChapters } from "@/lib/concept-autofill";
 import type { LocalizedText, MicroConcept } from "@/types/curriculum";
 
@@ -126,8 +127,46 @@ export interface ConceptProgressItem extends MicroConcept {
     mastered: boolean;
     percentage: number;
     locked: boolean;
+    /** Why it is locked: the lesson before it is not done yet, or the chapter is outside the free plan. */
+    lockReason: "sequence" | "premium" | null;
+    /** The chapter's place in the class, from 0. */
+    chapterIndex: number;
+    /** The lesson's place inside its chapter, from 0. */
+    lessonIndex: number;
     /** The lesson that must be mastered before this one opens, while it is locked. */
     blockedBy: { microTag: string; title: LocalizedText } | null;
+}
+
+/** Each chapter's position in the teaching order of a class, from 0. */
+export function chapterIndexes(concepts: MicroConcept[], classLevel: number): Map<string, number> {
+    const ordered = orderClassConcepts(concepts, classLevel);
+    const indexes = new Map<string, number>();
+    for (const concept of ordered) if (!indexes.has(concept.topicId)) indexes.set(concept.topicId, indexes.size);
+    return indexes;
+}
+
+export interface LessonPosition {
+    chapterIndex: number;
+    lessonIndex: number;
+}
+
+/** Where each lesson sits: its chapter's place in the class and its own place inside the chapter. */
+export function lessonPositions(concepts: MicroConcept[], classLevel: number): Map<string, LessonPosition> {
+    const ordered = orderClassConcepts(concepts, classLevel);
+    const chapters = chapterIndexes(concepts, classLevel);
+    const seen = new Map<string, number>();
+    const positions = new Map<string, LessonPosition>();
+    for (const concept of ordered) {
+        const lessonIndex = seen.get(concept.topicId) ?? 0;
+        seen.set(concept.topicId, lessonIndex + 1);
+        positions.set(concept.microTag, { chapterIndex: chapters.get(concept.topicId) ?? 0, lessonIndex });
+    }
+    return positions;
+}
+
+/** True when a free or trial student may open this lesson. */
+export function lessonOpenFor(position: LessonPosition | undefined, access: Pick<StudentAccess, "curriculum" | "freeChapterCount" | "freeLessonsPerChapter">): boolean {
+    return isLessonOpen(position?.chapterIndex ?? 0, position?.lessonIndex ?? 0, access);
 }
 
 /** A class's lessons in the order they are taught: chapter by chapter, and within a chapter in order. */
@@ -148,20 +187,28 @@ export function buildConceptItems(
     classLevel: number,
     progress: Map<string, { mastered?: boolean; percentage?: number }>,
     strongTags: Set<string>,
+    access?: Pick<StudentAccess, "curriculum" | "freeChapterCount" | "freeLessonsPerChapter"> | null,
 ): ConceptProgressItem[] {
     const classConcepts = orderClassConcepts(concepts, classLevel);
+    const positions = lessonPositions(concepts, classLevel);
     const done = (microTag: string) => progress.get(microTag)?.mastered === true || strongTags.has(microTag);
     return classConcepts.map((concept, index) => {
         const item = progress.get(concept.microTag);
         const previous = index > 0 ? classConcepts[index - 1] : null;
         const prerequisite = concept.prerequisiteTag ? classConcepts.find((candidate) => candidate.microTag === concept.prerequisiteTag) ?? null : null;
         const blockedBy = previous && !done(previous.microTag) ? previous : prerequisite && !done(prerequisite.microTag) ? prerequisite : null;
+        const position = positions.get(concept.microTag) ?? { chapterIndex: 0, lessonIndex: 0 };
+        // A free or trial student stops at the end of the free lessons, whatever they mastered.
+        const premiumLocked = access ? !lessonOpenFor(position, access) : false;
         return {
             ...concept,
             mastered: item?.mastered === true,
             percentage: Number(item?.percentage ?? 0),
-            locked: blockedBy !== null,
-            blockedBy: blockedBy ? { microTag: blockedBy.microTag, title: blockedBy.title } : null,
+            locked: premiumLocked || blockedBy !== null,
+            lockReason: premiumLocked ? "premium" : blockedBy ? "sequence" : null,
+            chapterIndex: position.chapterIndex,
+            lessonIndex: position.lessonIndex,
+            blockedBy: !premiumLocked && blockedBy ? { microTag: blockedBy.microTag, title: blockedBy.title } : null,
         };
     });
 }

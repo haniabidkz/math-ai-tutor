@@ -23,6 +23,8 @@ export const homeworkInputSchema = z.preprocess((value) => {
     allStudents: z.boolean().default(true),
     studentUids: z.array(z.string().trim().min(1)).default([]),
     note: z.string().trim().max(280).optional(),
+    /** A school teacher may limit whole-class homework to one section. */
+    sectionId: z.string().trim().max(120).optional(),
 }).superRefine((value, context) => {
     if (!value.allStudents && value.studentUids.length === 0) {
         context.addIssue({ code: "custom", message: "Select at least one student", path: ["studentUids"] });
@@ -33,6 +35,30 @@ export const homeworkInputSchema = z.preprocess((value) => {
 }));
 
 export const ALL_CLASSES = [6, 7, 8] as const;
+
+export interface HomeworkAudience {
+    uid: string;
+    classLevel: number;
+    schoolId: string | null;
+    sectionId: string | null;
+}
+
+/**
+ * Whole-class homework reaches the students of that class in the same school (and in the
+ * same section when one was chosen); homework set by name reaches exactly those students.
+ * Individual students (no school) never see a school's homework, and the other way round.
+ */
+export function homeworkReachesStudent(
+    data: { allStudents?: unknown; classLevel?: unknown; studentUids?: unknown; schoolId?: unknown; sectionId?: unknown },
+    student: HomeworkAudience,
+): boolean {
+    if (Array.isArray(data.studentUids) && data.studentUids.includes(student.uid)) return true;
+    if (data.allStudents !== true || Number(data.classLevel) !== student.classLevel) return false;
+    const schoolId = typeof data.schoolId === "string" && data.schoolId ? data.schoolId : null;
+    if (schoolId !== student.schoolId) return false;
+    const sectionId = typeof data.sectionId === "string" && data.sectionId ? data.sectionId : null;
+    return !sectionId || sectionId === student.sectionId;
+}
 
 /**
  * The classes a teacher may assign to. Teachers without assigned classes keep access to

@@ -25,18 +25,21 @@ export async function GET(request: NextRequest) {
         }
         const weekKey = leaderboardWeekKey(now);
         const lastWeek = previousWeekKey(weekKey);
+        // A school's students compete among themselves; individual students share the public board.
+        const scope = user.schoolId;
         const [entries, participants, me, previous, previousReward, previousMe] = await Promise.all([
-            readBoard(weekKey, classLevel),
-            countParticipants(weekKey, classLevel),
-            standingFor(weekKey, classLevel, user.uid),
-            boardSummary(lastWeek, classLevel),
-            rewardSummary(lastWeek, classLevel),
-            standingFor(lastWeek, classLevel, user.uid),
+            readBoard(weekKey, classLevel, scope),
+            countParticipants(weekKey, classLevel, scope),
+            standingFor(weekKey, classLevel, user.uid, scope),
+            boardSummary(lastWeek, classLevel, scope),
+            rewardSummary(lastWeek, classLevel, scope),
+            standingFor(lastWeek, classLevel, user.uid, scope),
         ]);
 
         return NextResponse.json({
             success: true,
             classLevel,
+            school: user.school ? { name: user.school.name } : null,
             weekKey,
             label: weekLabel(weekKey),
             resetsAt: weekEndMillis(weekKey),

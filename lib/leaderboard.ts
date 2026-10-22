@@ -33,6 +33,14 @@ export function isLeaderboardClass(value: unknown): value is LeaderboardClass {
     return (LEADERBOARD_CLASSES as readonly number[]).includes(Number(value));
 }
 
+/**
+ * A board belongs to a class and, for school students, to their school; individual students
+ * share the public board, whose id is unchanged from before schools existed.
+ */
+export function boardId(weekKey: string, classLevel: number, schoolId?: string | null): string {
+    return schoolId ? `${weekKey}_${classLevel}_${schoolId}` : `${weekKey}_${classLevel}`;
+}
+
 function keyToUtc(key: string): number {
     const [year, month, day] = key.split("-").map(Number);
     return Date.UTC(year, month - 1, day);

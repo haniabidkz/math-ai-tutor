@@ -4,6 +4,7 @@ import {
     approveWinners, boardSummary, ensureWeekFinalized, finalizeWeek, LeaderboardError, pointHistory, rewardHistory, rewardSummary,
     setMembership, setRewardDelivered, setStudentFlags, studentsMeta,
 } from "@/lib/leaderboard-server";
+import { listSchools } from "@/lib/schools-server";
 import { authErrorResponse, requireSuperAdmin } from "@/lib/server-auth";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +35,7 @@ export async function GET(request: NextRequest) {
         const current = leaderboardWeekKey(now);
         const weekKey = params.get("week") ?? current;
         const classLevel = Number(params.get("class") ?? 6);
+        const schoolId = params.get("school") || null;
         if (!isValidWeekKey(weekKey)) return NextResponse.json({ success: false, error: "week must be a Monday date like 2026-10-05" }, { status: 400 });
         if (!isLeaderboardClass(classLevel)) return NextResponse.json({ success: false, error: "class must be 6, 7 or 8" }, { status: 400 });
 
@@ -43,7 +45,7 @@ export async function GET(request: NextRequest) {
             console.error("Could not close last week's leaderboard", error);
         }
 
-        const [summary, reward, history] = await Promise.all([boardSummary(weekKey, classLevel), rewardSummary(weekKey, classLevel), rewardHistory()]);
+        const [summary, reward, history, schools] = await Promise.all([boardSummary(weekKey, classLevel, schoolId), rewardSummary(weekKey, classLevel, schoolId), rewardHistory(), listSchools()]);
         const meta = await studentsMeta(summary.top.map((entry) => entry.uid));
         const weeks: string[] = [];
         for (let key = current, index = 0; index < WEEKS_LISTED; key = previousWeekKey(key), index++) weeks.push(key);
@@ -53,6 +55,8 @@ export async function GET(request: NextRequest) {
             weekKey,
             label: weekLabel(weekKey),
             classLevel,
+            schoolId,
+            schools: schools.map((school) => ({ id: school.id, name: school.name, code: school.code })),
             current,
             weeks: weeks.map((key) => ({ weekKey: key, label: weekLabel(key) })),
             finalized: summary.finalized,
@@ -82,6 +86,7 @@ export async function POST(request: NextRequest) {
         const action = String(body.action ?? "");
         const weekKey = String(body.weekKey ?? "");
         const classLevel = Number(body.classLevel);
+        const schoolId = typeof body.schoolId === "string" && body.schoolId ? body.schoolId : null;
 
         if (action === "finalize") {
             if (!isValidWeekKey(weekKey)) return NextResponse.json({ success: false, error: "weekKey must be a Monday date" }, { status: 400 });
@@ -93,11 +98,11 @@ export async function POST(request: NextRequest) {
             const picks = Array.isArray(body.winners)
                 ? body.winners.map((pick: { uid?: unknown; place?: unknown }) => ({ uid: String(pick.uid ?? ""), place: Number(pick.place) }))
                 : [];
-            return NextResponse.json({ success: true, reward: await approveWinners(weekKey, classLevel, picks, admin) });
+            return NextResponse.json({ success: true, reward: await approveWinners(weekKey, classLevel, picks, admin, schoolId) });
         }
         if (action === "delivered") {
             if (!isValidWeekKey(weekKey) || !isLeaderboardClass(classLevel)) return NextResponse.json({ success: false, error: "weekKey and classLevel are required" }, { status: 400 });
-            return NextResponse.json({ success: true, reward: await setRewardDelivered(weekKey, classLevel, String(body.uid ?? ""), body.delivered !== false, admin) });
+            return NextResponse.json({ success: true, reward: await setRewardDelivered(weekKey, classLevel, String(body.uid ?? ""), body.delivered !== false, admin, schoolId) });
         }
         if (action === "flags") {
             const uid = String(body.uid ?? "");

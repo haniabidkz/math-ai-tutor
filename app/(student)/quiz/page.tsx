@@ -234,7 +234,7 @@ function QuizContent() {
             const data = await response.json();
             if (!response.ok) {
                 // A lesson without practice questions yet, or one still locked, explains itself instead of failing.
-                if (data.code === "no_questions" || data.code === "locked") {
+                if (data.code === "no_questions" || data.code === "locked" || data.code === "premium") {
                     setError(data.error);
                     return;
                 }

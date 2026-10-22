@@ -11,6 +11,7 @@ import {
 } from "@/lib/assessment-content";
 import { currentQuizQuestion as activeQuestion, quizTotal, sessionXp, type StoredAnswer, type StoredQuizSession } from "@/lib/assessment-session";
 import { getConcept } from "@/lib/curriculum";
+import { recordAnswerStats } from "@/lib/analytics-server";
 import { adminDb } from "@/lib/firebase-admin";
 import {
     advanceFoundationRound, FOUNDATION_MAX_ROUNDS, FOUNDATION_ROUND_SIZE, foundationProgress, planFoundationRound, shouldOfferFoundation,
@@ -93,7 +94,7 @@ interface CompletionAward {
     /** Days this week on which the topic already earned points, today excluded. */
     scoringDays: number;
     /** This week's leaderboard entry for the student, when their class has a board. */
-    board: { weekKey: string; now: Date; entry: LeaderboardEntry | null; name: string } | null;
+    board: { weekKey: string; now: Date; entry: LeaderboardEntry | null; name: string; schoolId: string | null } | null;
     /** The chapter the lesson belongs to, with every lesson's mastery, for the completion bonus. */
     topic: { topicId: string; title: string; awarded: boolean; lessons: Array<{ microTag: string; mastered: boolean }> } | null;
     homework: { awarded: boolean } | null;
@@ -271,7 +272,7 @@ export async function POST(request: NextRequest) {
         // weekly cap on scoring days. The heavier lookups run only when this answer can end the quiz.
         const now = new Date();
         const weekKey = leaderboardWeekKey(now);
-        const boardEntryRef = isLeaderboardClass(initial.classLevel) ? entryRef(weekKey, initial.classLevel, user.uid) : null;
+        const boardEntryRef = isLeaderboardClass(initial.classLevel) ? entryRef(weekKey, initial.classLevel, user.uid, user.schoolId) : null;
         const lessonConcept = initial.kind === "weekly" ? undefined : await getPublishedConcept(initial.microTag);
         const topicAwardRef = lessonConcept ? studentRef.collection("pointEvents").doc(pointEventId("topic", lessonConcept.topicId)) : null;
         const homeworkAwardRef = initial.homeworkId ? studentRef.collection("pointEvents").doc(pointEventId("homework", initial.homeworkId)) : null;
@@ -296,7 +297,7 @@ export async function POST(request: NextRequest) {
                 awardRef,
                 alreadyAwardedToday,
                 scoringDays,
-                board: boardEntryRef ? { weekKey, now, entry: boardEntry, name: String(student.name ?? "Student") } : null,
+                board: boardEntryRef ? { weekKey, now, entry: boardEntry, name: String(student.name ?? "Student"), schoolId: user.schoolId } : null,
                 topic: lessonConcept ? { topicId: lessonConcept.topicId, title: lessonConcept.topicTitle.english, awarded: topicAwarded, lessons: chapterLessons } : null,
                 homework: homeworkAwardRef ? { awarded: homeworkAwarded } : null,
             };
@@ -656,6 +657,16 @@ export async function POST(request: NextRequest) {
             );
         });
 
+        // Platform-wide question and misconception counts, outside the transaction and never fatal.
+        const answered = action === "answer" ? (fromPool ?? initialQuestion) : null;
+        if (answered && typeof body.optionId === "string") {
+            const correct = body.optionId === answered.correctOptionId;
+            await recordAnswerStats({
+                questionId: answered.id, microTag: answered.microTag, classLevel: answered.classLevel, isCorrect: correct,
+                misconceptionTag: correct ? null : getOptionAnalysis(answered, body.optionId)?.misconceptionTag ?? null,
+            });
+        }
+
         return NextResponse.json(outcome);
     } catch (error) {
         console.error("Quiz evaluation error", error);
@@ -786,7 +797,7 @@ function completeOrContinue(
     if (award.board && events.length) {
         applyPointsGrant(transaction, {
             uid, name: award.board.name, classLevel: session.classLevel, weekKey: award.board.weekKey, now: award.board.now,
-            existing: award.board.entry, grant: grantFromEvents(events),
+            existing: award.board.entry, grant: grantFromEvents(events), schoolId: award.board.schoolId,
         });
     }
 

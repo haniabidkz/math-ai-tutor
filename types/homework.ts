@@ -20,6 +20,10 @@ export interface HomeworkAssignment {
     /** Set when several modules were assigned together as one packet. */
     packetId?: string | null;
     packetTitle?: string | null;
+    /** Null for homework set to individual students; a school's homework stays inside the school. */
+    schoolId?: string | null;
+    sectionId?: string | null;
+    sectionLabel?: string | null;
 }
 
 export interface StudentHomework extends HomeworkAssignment {
@@ -27,4 +31,6 @@ export interface StudentHomework extends HomeworkAssignment {
     percentage: number | null;
     completedAt: string | null;
     overdue: boolean;
+    /** The lesson sits outside the student's free chapters; it opens with a paid plan. */
+    locked?: boolean;
 }

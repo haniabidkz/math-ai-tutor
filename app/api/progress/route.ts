@@ -3,7 +3,8 @@ import { getRuntimeConcepts } from "@/lib/assessment-content";
 import { adminDb } from "@/lib/firebase-admin";
 import { BADGES } from "@/lib/gamification";
 import { buildConceptItems, selectActiveTopics } from "@/lib/learner-metrics";
-import { homeworkStatus, isOverdue, sortHomework } from "@/lib/homework";
+import { homeworkReachesStudent, homeworkStatus, isOverdue, sortHomework } from "@/lib/homework";
+import { accessForStudent } from "@/lib/schools-server";
 import { learningStatus, LEARNING_STATUS_LABELS, recommendNextLesson } from "@/lib/adaptive-recommendation";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { StudentClassLevel } from "@/types/curriculum";
@@ -26,7 +27,10 @@ export async function GET(request: NextRequest) {
         if (![6, 7, 8].includes(classLevel)) return NextResponse.json({ success: false, error: "Student class must be 6, 7, or 8" }, { status: 409 });
         const progress = new Map(progressSnapshot.docs.map((doc) => [doc.id, doc.data()]));
         const strong = new Set<string>(profile.diagnosticProfile?.strongMicroTags ?? []);
-        const conceptItems = buildConceptItems(concepts, classLevel, progress, strong);
+        const access = await accessForStudent(profile, user.school);
+        const conceptItems = buildConceptItems(concepts, classLevel, progress, strong, access);
+        const premiumLocked = new Set(conceptItems.filter((concept) => concept.lockReason === "premium").map((concept) => concept.microTag));
+        const audience = { uid: user.uid, classLevel, schoolId: user.schoolId, sectionId: typeof profile.sectionId === "string" ? profile.sectionId : null };
         const topicIds = [...new Set(conceptItems.map((concept) => concept.topicId))];
         const topics = topicIds.map((topicId) => ({
             topicId,
@@ -55,7 +59,9 @@ export async function GET(request: NextRequest) {
         ]);
         const homeworkProgressById = new Map(homeworkProgressSnapshot.docs.map((doc) => [doc.id, doc.data()]));
         const homeworkDocs = new Map<string, FirebaseFirestore.DocumentData>();
-        for (const doc of [...classWideHomework.docs, ...namedHomework.docs]) homeworkDocs.set(doc.id, doc.data());
+        for (const doc of [...classWideHomework.docs, ...namedHomework.docs]) {
+            if (homeworkReachesStudent(doc.data(), audience)) homeworkDocs.set(doc.id, doc.data());
+        }
         const homework = sortHomework([...homeworkDocs.entries()].map(([id, data]) => {
             const record = homeworkProgressById.get(id);
             const status = homeworkStatus(record);
@@ -78,6 +84,7 @@ export async function GET(request: NextRequest) {
                 percentage: typeof record?.percentage === "number" ? record.percentage : null,
                 completedAt: record?.completedAt?.toDate?.()?.toISOString() ?? null,
                 overdue: isOverdue(data.dueDate, status),
+                locked: premiumLocked.has(String(data.microTag)),
             } satisfies StudentHomework;
         }));
 
@@ -99,7 +106,11 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json({
             success: true,
-            profile: { name: profile.name, email: profile.email, classLevel, diagnosticCompleted: profile.diagnosticCompleted === true || profile.placementCompleted === true },
+            profile: {
+                name: profile.name, email: profile.email, classLevel, diagnosticCompleted: profile.diagnosticCompleted === true || profile.placementCompleted === true,
+                schoolName: user.school?.name ?? null, sectionLabel: typeof profile.sectionLabel === "string" ? profile.sectionLabel : null,
+            },
+            access,
             gamification: {
                 xp: Number(profile.xp ?? 0),
                 streak,
@@ -131,6 +142,7 @@ export async function GET(request: NextRequest) {
                 topicTitle: concept.topicTitle,
                 mastered: concept.mastered,
                 locked: concept.locked,
+                lockReason: concept.lockReason,
                 percentage: concept.percentage,
             })),
             learningStatus: {

@@ -13,7 +13,10 @@ import {
 import { currentQuizQuestion, type StoredQuizSession } from "@/lib/assessment-session";
 import { findPreviousClassTopic, foundationProgress, type FoundationSource } from "@/lib/foundation-fallback";
 import { getClassConcepts, getConcept, isLearningConceptForClass } from "@/lib/curriculum";
+import { PREMIUM_LOCK_CODE, premiumLockMessage } from "@/lib/access";
 import { adminDb } from "@/lib/firebase-admin";
+import { homeworkReachesStudent } from "@/lib/homework";
+import { accessForStudent } from "@/lib/schools-server";
 import { buildConceptItems } from "@/lib/learner-metrics";
 import { buildQuestionHistory, type HistoricalQuestionSession } from "@/lib/question-history";
 import { orderByFreshness, takeNextQuestion, targetDifficulty } from "@/lib/question-selection";
@@ -88,9 +91,8 @@ export async function POST(request: NextRequest) {
             const snapshot = await adminDb.collection("homework").doc(homeworkId).get();
             if (!snapshot.exists) return NextResponse.json({ success: false, error: "Homework not found" }, { status: 404 });
             homework = snapshot.data() ?? null;
-            const assignedToClass = homework?.allStudents === true && Number(homework?.classLevel) === classLevel;
-            const assignedByName = Array.isArray(homework?.studentUids) && homework.studentUids.includes(user.uid);
-            if (!assignedToClass && !assignedByName) {
+            const reaches = homework ? homeworkReachesStudent(homework, { uid: user.uid, classLevel, schoolId: user.schoolId, sectionId: typeof profile.sectionId === "string" ? profile.sectionId : null }) : false;
+            if (!reaches) {
                 return NextResponse.json({ success: false, error: "This homework is not assigned to you" }, { status: 403 });
             }
         }
@@ -117,13 +119,16 @@ export async function POST(request: NextRequest) {
             }
             topicTitle = concept.title.english;
             const concepts = await getRuntimeConcepts();
-            // Lessons unlock one after another; homework set by a teacher opens its lesson regardless.
-            if (!homeworkId) {
-                const items = buildConceptItems(concepts, classLevel, new Map(progressSnapshot!.docs.map((doc) => [doc.id, doc.data()])), new Set(profile.diagnosticProfile?.strongMicroTags ?? []));
-                const item = items.find((entry) => entry.microTag === microTag);
-                if (item?.locked && item.blockedBy) {
-                    return NextResponse.json({ success: false, code: "locked", error: `Finish "${item.blockedBy.title.english}" first. Lessons unlock one after another.` }, { status: 409 });
-                }
+            const access = await accessForStudent(profile, user.school);
+            // Lessons unlock one after another; homework set by a teacher opens its lesson regardless,
+            // but never a lesson outside the free chapters for a free or trial student.
+            const items = buildConceptItems(concepts, classLevel, new Map(progressSnapshot!.docs.map((doc) => [doc.id, doc.data()])), new Set(profile.diagnosticProfile?.strongMicroTags ?? []), access);
+            const item = items.find((entry) => entry.microTag === microTag);
+            if (item?.lockReason === "premium") {
+                return NextResponse.json({ success: false, code: PREMIUM_LOCK_CODE, error: premiumLockMessage(access) }, { status: 403 });
+            }
+            if (!homeworkId && item?.locked && item.blockedBy) {
+                return NextResponse.json({ success: false, code: "locked", error: `Finish "${item.blockedBy.title.english}" first. Lessons unlock one after another.` }, { status: 409 });
             }
             // The same topic one class down, ready in case the student struggles with this one.
             foundationSource = findPreviousClassTopic(concept, concepts);

@@ -28,6 +28,9 @@ interface StudentData {
     uid: string;
     name: string;
     email: string;
+    contact?: string;
+    sectionLabel?: string | null;
+    premium?: boolean;
     class: ClassLevel;
     parentEmail?: string;
     adaptive_level?: number;
@@ -105,8 +108,10 @@ export default function TeacherStudentsPage() {
 
     const filteredStudents = students.filter(s => {
         const matchSearch = (s.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
-            (s.email ?? "").toLowerCase().includes(search.toLowerCase());
-        const matchClass = classFilter === "all" || String(s.class) === classFilter;
+            (s.email ?? "").toLowerCase().includes(search.toLowerCase()) ||
+            (s.contact ?? "").toLowerCase().includes(search.toLowerCase()) ||
+            (s.sectionLabel ?? "").toLowerCase().includes(search.toLowerCase());
+        const matchClass = classFilter === "all" || String(s.class) === classFilter || s.sectionLabel === classFilter;
         const matchLevel = levelFilter === "all" || getOverallLevel(s) === levelFilter;
         return matchSearch && matchClass && matchLevel;
     });
@@ -170,6 +175,9 @@ export default function TeacherStudentsPage() {
                         {[...new Set(students.map(s => s.class))].sort().map(c => (
                             <option key={c} value={c.toString()}>Class {c}</option>
                         ))}
+                        {[...new Set(students.map((s) => s.sectionLabel).filter(Boolean))].sort().map((label) => (
+                            <option key={String(label)} value={String(label)}>{label}</option>
+                        ))}
                     </select>
                     <select
                         className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -219,14 +227,19 @@ export default function TeacherStudentsPage() {
                                                             </Badge>
                                                         )}
                                                     </div>
-                                                    <p className="text-xs text-muted-foreground mt-0.5">{student.email}</p>
+                                                    <p className="text-xs text-muted-foreground mt-0.5">{student.contact || student.email}</p>
                                                 </div>
                                                 <div className="flex items-center gap-3 mr-2 shrink-0">
                                                     <div className="text-right hidden md:block">
                                                         <p className="text-xs font-medium">{progressPct}%</p>
                                                         <p className="text-[10px] text-muted-foreground">Progress</p>
                                                     </div>
-                                                    <Badge variant="outline" className="h-5 text-[10px] px-1.5">Class {student.class}</Badge>
+                                                    <Badge variant="outline" className="h-5 text-[10px] px-1.5">{student.sectionLabel ?? `Class ${student.class}`}</Badge>
+                                                    {student.premium !== undefined && (
+                                                        <Badge className={`h-5 text-[10px] px-1.5 border-0 ${student.premium ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                                                            {student.premium ? "Paid" : "Free"}
+                                                        </Badge>
+                                                    )}
                                                     {student.diagnostic && (
                                                         <Badge variant="outline" className="h-5 text-[10px] px-1.5 hidden sm:inline-flex">
                                                             Diagnostic {student.diagnostic.correct}/{student.diagnostic.total}

@@ -4,7 +4,10 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { fetchTeacherStudents } from "@/lib/teacher-data";
+import { fetchTeacherData, type TeacherSchool } from "@/lib/teacher-data";
+import { PlanBadge } from "@/components/school/plan-badge";
+import { StudentManager } from "@/components/school/student-manager";
+import type { SchoolSection } from "@/types/school";
 import { calculateClassStats } from "@/lib/understanding";
 import { ClassLevel, UnderstandingLevel } from "@/types/user";
 
@@ -50,6 +53,9 @@ interface StudentData {
     uid: string;
     name: string;
     email: string;
+    contact?: string;
+    sectionLabel?: string | null;
+    premium?: boolean;
     class: ClassLevel;
     parentEmail?: string;
     adaptive_level?: number;
@@ -77,6 +83,8 @@ export default function TeacherDashboard() {
     const router = useRouter();
     const [user, setUser] = useState<User | null>(null);
     const [students, setStudents] = useState<StudentData[]>([]);
+    const [school, setSchool] = useState<TeacherSchool | null>(null);
+    const [sections, setSections] = useState<SchoolSection[]>([]);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
     const [selectedClass, setSelectedClass] = useState<string>("all");
@@ -101,7 +109,10 @@ export default function TeacherDashboard() {
         setLoading(true);
         setLoadError("");
         try {
-            setStudents(await fetchTeacherStudents<StudentData>(currentUser));
+            const data = await fetchTeacherData<StudentData>(currentUser);
+            setStudents(data.students);
+            setSchool(data.school);
+            setSections(data.sections);
         } catch (err) {
             console.error("Fetch error:", err);
             setLoadError(err instanceof Error ? err.message : "Please try again.");
@@ -117,9 +128,11 @@ export default function TeacherDashboard() {
 
     // Filter Logic
     const filteredStudents = students.filter((s) => {
-        const matchesClass = selectedClass === "all" || String(s.class) === selectedClass;
+        const matchesClass = selectedClass === "all" || String(s.class) === selectedClass || s.sectionLabel === selectedClass;
         const matchesSearch = (s.name ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (s.email ?? "").toLowerCase().includes(searchQuery.toLowerCase());
+            (s.email ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (s.contact ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (s.sectionLabel ?? "").toLowerCase().includes(searchQuery.toLowerCase());
         return matchesClass && matchesSearch;
     });
 
@@ -174,10 +187,11 @@ export default function TeacherDashboard() {
         >
             <PageHeader
                 title="Teacher Dashboard"
-                description="Overview of student performance and attention areas."
+                description={school ? `${school.name} · school code ${school.code}` : "Overview of student performance and attention areas."}
                 icon={<GraduationCap className="h-6 w-6" />}
                 action={
                     <div className="flex items-center gap-2">
+                        {school ? <PlanBadge plan={school.plan} trialDaysLeft={school.trialDaysLeft} /> : null}
                         <Badge variant="secondary" className="px-3 py-1">
                             {filteredStudents.length} Students
                         </Badge>
@@ -247,6 +261,7 @@ export default function TeacherDashboard() {
                         <TabsTrigger value="students">Students</TabsTrigger>
                         <TabsTrigger value="insights">Insights</TabsTrigger>
                         <TabsTrigger value="homework">Homework</TabsTrigger>
+                        {school ? <TabsTrigger value="manage">Add students</TabsTrigger> : null}
                     </TabsList>
 
                     <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -271,10 +286,19 @@ export default function TeacherDashboard() {
                                 {[...new Set(students.map(s => s.class))].sort().map(c => (
                                     <option key={c} value={c.toString()}>Class {c}</option>
                                 ))}
+                                {[...new Set(students.map((s) => s.sectionLabel).filter(Boolean))].sort().map((label) => (
+                                    <option key={String(label)} value={String(label)}>{label}</option>
+                                ))}
                             </select>
                         </div>
                     </div>
                 </div>
+
+                {school ? (
+                    <TabsContent value="manage" className="animate-in fade-in-50">
+                        <StudentManager sections={sections} canManage={false} onChanged={() => user && loadStudents(user)} />
+                    </TabsContent>
+                ) : null}
 
                 <TabsContent value="overview" className="space-y-6 animate-in fade-in-50">
                     {filteredStudents.length === 0 ? (

@@ -2,7 +2,7 @@ import { FieldValue, type DocumentSnapshot, type Transaction } from "firebase-ad
 import { adminDb } from "@/lib/firebase-admin";
 import { writeAuditLog } from "@/lib/admin-audit";
 import {
-    LEADERBOARD_CLASSES, LEADERBOARD_SIZE, REWARD_PLACES, isLeaderboardClass, leaderboardWeekKey, previousWeekKey, rankKey, secondsIntoWeek,
+    LEADERBOARD_CLASSES, LEADERBOARD_SIZE, REWARD_PLACES, boardId, isLeaderboardClass, leaderboardWeekKey, previousWeekKey, rankKey, secondsIntoWeek,
     type LeaderboardClass, type LeaderboardEntry, type PointEvent, type PointsGrant, type RankedEntry, type RewardCandidate, type RewardStatus, type RewardWinner,
 } from "@/lib/leaderboard";
 import { resultsNotification, rewardNotification } from "@/lib/notifications";
@@ -11,9 +11,18 @@ import { notifyEach } from "@/lib/notifications-server";
 /** How many of the top students are kept as reward candidates, so the admin can skip a few. */
 const CANDIDATE_COUNT = 10;
 
-export const boardRef = (weekKey: string, classLevel: number) => adminDb.collection("leaderboards").doc(`${weekKey}_${classLevel}`);
-export const entryRef = (weekKey: string, classLevel: number, uid: string) => boardRef(weekKey, classLevel).collection("entries").doc(uid);
-export const rewardRef = (weekKey: string, classLevel: number) => adminDb.collection("weeklyRewards").doc(`${weekKey}_${classLevel}`);
+/** Individual students share the public board of their class; a school's students have their own. */
+export type BoardScope = string | null;
+
+export const boardRef = (weekKey: string, classLevel: number, schoolId: BoardScope = null) => adminDb.collection("leaderboards").doc(boardId(weekKey, classLevel, schoolId));
+export const entryRef = (weekKey: string, classLevel: number, uid: string, schoolId: BoardScope = null) => boardRef(weekKey, classLevel, schoolId).collection("entries").doc(uid);
+export const rewardRef = (weekKey: string, classLevel: number, schoolId: BoardScope = null) => adminDb.collection("weeklyRewards").doc(boardId(weekKey, classLevel, schoolId));
+
+/** Every school that exists, so each one's week can be closed. */
+export async function schoolScopes(): Promise<string[]> {
+    const snapshot = await adminDb.collection("schools").select().get();
+    return snapshot.docs.map((doc) => doc.id);
+}
 
 function toMillis(value: unknown): number | null {
     if (value && typeof value === "object" && typeof (value as { toMillis?: () => number }).toMillis === "function") {
@@ -54,8 +63,10 @@ export function applyPointsGrant(transaction: Transaction, input: {
     now: Date;
     existing: LeaderboardEntry | null;
     grant: PointsGrant;
+    schoolId?: BoardScope;
 }): LeaderboardEntry | null {
     const { uid, name, classLevel, weekKey, now, existing, grant } = input;
+    const schoolId = input.schoolId ?? null;
     if (!grant.events.length || grant.points <= 0) return existing;
     const points = (existing?.points ?? 0) + grant.points;
     const correctAnswers = (existing?.correctAnswers ?? 0) + grant.correctAnswers;
@@ -64,8 +75,8 @@ export function applyPointsGrant(transaction: Transaction, input: {
         rankKey: rankKey(points, correctAnswers, secondsIntoWeek(now, weekKey)),
         lastScoredAt: now.getTime(),
     };
-    transaction.set(entryRef(weekKey, classLevel, uid), { ...entry, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-    transaction.set(boardRef(weekKey, classLevel), { weekKey, classLevel, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    transaction.set(entryRef(weekKey, classLevel, uid, schoolId), { ...entry, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    transaction.set(boardRef(weekKey, classLevel, schoolId), { weekKey, classLevel, schoolId, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     const history = adminDb.collection("students").doc(uid).collection("pointEvents");
     for (const event of grant.events) {
         transaction.set(history.doc(event.id), { ...event, weekKey, createdAt: FieldValue.serverTimestamp() }, { merge: true });
@@ -73,34 +84,35 @@ export function applyPointsGrant(transaction: Transaction, input: {
     return entry;
 }
 
-async function readEntries(weekKey: string, classLevel: number, limit?: number): Promise<RankedEntry[]> {
-    let query = boardRef(weekKey, classLevel).collection("entries").orderBy("rankKey", "desc");
+async function readEntries(weekKey: string, classLevel: number, schoolId: BoardScope, limit?: number): Promise<RankedEntry[]> {
+    let query = boardRef(weekKey, classLevel, schoolId).collection("entries").orderBy("rankKey", "desc");
     if (limit) query = query.limit(limit);
     const snapshot = await query.get();
     return snapshot.docs.map((doc, index) => ({ ...toEntry(doc)!, rank: index + 1 }));
 }
 
-export async function readBoard(weekKey: string, classLevel: number, limit = LEADERBOARD_SIZE): Promise<RankedEntry[]> {
-    return readEntries(weekKey, classLevel, limit);
+export async function readBoard(weekKey: string, classLevel: number, schoolId: BoardScope = null, limit = LEADERBOARD_SIZE): Promise<RankedEntry[]> {
+    return readEntries(weekKey, classLevel, schoolId, limit);
 }
 
-export async function countParticipants(weekKey: string, classLevel: number): Promise<number> {
-    const result = await boardRef(weekKey, classLevel).collection("entries").count().get();
+export async function countParticipants(weekKey: string, classLevel: number, schoolId: BoardScope = null): Promise<number> {
+    const result = await boardRef(weekKey, classLevel, schoolId).collection("entries").count().get();
     return result.data().count;
 }
 
 /** A student's own row with its rank, even far below the listed top. */
-export async function standingFor(weekKey: string, classLevel: number, uid: string): Promise<RankedEntry | null> {
-    const doc = await entryRef(weekKey, classLevel, uid).get();
+export async function standingFor(weekKey: string, classLevel: number, uid: string, schoolId: BoardScope = null): Promise<RankedEntry | null> {
+    const doc = await entryRef(weekKey, classLevel, uid, schoolId).get();
     const entry = toEntry(doc);
     if (!entry) return null;
-    const above = await boardRef(weekKey, classLevel).collection("entries").where("rankKey", ">", entry.rankKey).count().get();
+    const above = await boardRef(weekKey, classLevel, schoolId).collection("entries").where("rankKey", ">", entry.rankKey).count().get();
     return { ...entry, rank: above.data().count + 1 };
 }
 
 export interface BoardSummary {
     weekKey: string;
     classLevel: number;
+    schoolId: BoardScope;
     finalized: boolean;
     finalizedAt: number | null;
     participants: number;
@@ -108,18 +120,18 @@ export interface BoardSummary {
 }
 
 /** The board as students and admins see it: the frozen snapshot once a week is closed, live before. */
-export async function boardSummary(weekKey: string, classLevel: number): Promise<BoardSummary> {
-    const doc = await boardRef(weekKey, classLevel).get();
+export async function boardSummary(weekKey: string, classLevel: number, schoolId: BoardScope = null): Promise<BoardSummary> {
+    const doc = await boardRef(weekKey, classLevel, schoolId).get();
     const data = doc.data();
     if (data?.finalized === true) {
         return {
-            weekKey, classLevel, finalized: true, finalizedAt: toMillis(data.finalizedAt),
+            weekKey, classLevel, schoolId, finalized: true, finalizedAt: toMillis(data.finalizedAt),
             participants: Number(data.participants ?? 0),
             top: (Array.isArray(data.top) ? data.top : []) as RankedEntry[],
         };
     }
-    const [top, participants] = await Promise.all([readBoard(weekKey, classLevel), countParticipants(weekKey, classLevel)]);
-    return { weekKey, classLevel, finalized: false, finalizedAt: null, participants, top };
+    const [top, participants] = await Promise.all([readBoard(weekKey, classLevel, schoolId), countParticipants(weekKey, classLevel, schoolId)]);
+    return { weekKey, classLevel, schoolId, finalized: false, finalizedAt: null, participants, top };
 }
 
 export interface StudentMeta {
@@ -152,6 +164,7 @@ export async function studentsMeta(uids: string[]): Promise<Map<string, StudentM
 export interface WeeklyReward {
     weekKey: string;
     classLevel: number;
+    schoolId: BoardScope;
     status: RewardStatus;
     candidates: RewardCandidate[];
     winners: RewardWinner[];
@@ -159,12 +172,12 @@ export interface WeeklyReward {
     approvedBy: string | null;
 }
 
-export async function rewardSummary(weekKey: string, classLevel: number): Promise<WeeklyReward | null> {
-    const doc = await rewardRef(weekKey, classLevel).get();
+export async function rewardSummary(weekKey: string, classLevel: number, schoolId: BoardScope = null): Promise<WeeklyReward | null> {
+    const doc = await rewardRef(weekKey, classLevel, schoolId).get();
     const data = doc.data();
     if (!data) return null;
     return {
-        weekKey, classLevel,
+        weekKey, classLevel, schoolId,
         status: data.status === "approved" ? "approved" : "pending",
         candidates: Array.isArray(data.candidates) ? data.candidates : [],
         winners: Array.isArray(data.winners) ? data.winners : [],
@@ -190,24 +203,29 @@ async function buildCandidates(entries: RankedEntry[]): Promise<RewardCandidate[
  * admin and tells every participant where they finished. Safe to call again; a closed week
  * is left alone.
  */
-export async function finalizeClassWeek(weekKey: string, classLevel: number): Promise<{ finalized: boolean; participants: number }> {
-    const board = boardRef(weekKey, classLevel);
+export async function finalizeClassWeek(weekKey: string, classLevel: number, schoolId: BoardScope = null): Promise<{ finalized: boolean; participants: number }> {
+    const board = boardRef(weekKey, classLevel, schoolId);
     if ((await board.get()).data()?.finalized === true) return { finalized: false, participants: 0 };
-    const entries = await readEntries(weekKey, classLevel);
+    const entries = await readEntries(weekKey, classLevel, schoolId);
+    // A school board that nobody joined is closed quietly, with no reward decision to make.
+    if (schoolId && !entries.length) {
+        await board.set({ weekKey, classLevel, schoolId, finalized: true, finalizedAt: FieldValue.serverTimestamp(), participants: 0, top: [], updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+        return { finalized: true, participants: 0 };
+    }
     const candidates = await buildCandidates(entries);
 
     const written = await adminDb.runTransaction(async (transaction) => {
-        const [fresh, reward] = await Promise.all([transaction.get(board), transaction.get(rewardRef(weekKey, classLevel))]);
+        const [fresh, reward] = await Promise.all([transaction.get(board), transaction.get(rewardRef(weekKey, classLevel, schoolId))]);
         if (fresh.data()?.finalized === true) return false;
         transaction.set(board, {
-            weekKey, classLevel, finalized: true, finalizedAt: FieldValue.serverTimestamp(),
+            weekKey, classLevel, schoolId, finalized: true, finalizedAt: FieldValue.serverTimestamp(),
             participants: entries.length,
             top: entries.slice(0, LEADERBOARD_SIZE).map((entry) => ({ ...entry })),
             updatedAt: FieldValue.serverTimestamp(),
         }, { merge: true });
         if (!reward.exists) {
-            transaction.set(rewardRef(weekKey, classLevel), {
-                weekKey, classLevel, status: "pending", candidates, winners: [],
+            transaction.set(rewardRef(weekKey, classLevel, schoolId), {
+                weekKey, classLevel, schoolId, status: "pending", candidates, winners: [],
                 createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
             });
         }
@@ -228,8 +246,11 @@ export async function finalizeClassWeek(weekKey: string, classLevel: number): Pr
 
 export async function finalizeWeek(weekKey: string) {
     const outcomes = [];
-    for (const classLevel of LEADERBOARD_CLASSES) {
-        outcomes.push({ classLevel, ...(await finalizeClassWeek(weekKey, classLevel)) });
+    const scopes: BoardScope[] = [null, ...(await schoolScopes())];
+    for (const schoolId of scopes) {
+        for (const classLevel of LEADERBOARD_CLASSES) {
+            outcomes.push({ classLevel, schoolId, ...(await finalizeClassWeek(weekKey, classLevel, schoolId)) });
+        }
     }
     return outcomes;
 }
@@ -237,7 +258,9 @@ export async function finalizeWeek(weekKey: string) {
 /** Called on the way into any board read: closes last week once the new week has begun. */
 export async function ensureWeekFinalized(now: Date = new Date()): Promise<void> {
     const previous = previousWeekKey(leaderboardWeekKey(now));
-    const docs = await adminDb.getAll(...LEADERBOARD_CLASSES.map((classLevel) => boardRef(previous, classLevel)));
+    const scopes: BoardScope[] = [null, ...(await schoolScopes())];
+    const refs = scopes.flatMap((schoolId) => LEADERBOARD_CLASSES.map((classLevel) => boardRef(previous, classLevel, schoolId)));
+    const docs = await adminDb.getAll(...refs);
     if (docs.every((doc) => doc.data()?.finalized === true)) return;
     await finalizeWeek(previous);
 }
@@ -250,7 +273,7 @@ export class LeaderboardError extends Error {
 }
 
 /** The admin names the winners; only paid, unflagged students may be approved. */
-export async function approveWinners(weekKey: string, classLevel: number, picks: Array<{ uid: string; place: number }>, admin: { uid: string; email: string }): Promise<WeeklyReward> {
+export async function approveWinners(weekKey: string, classLevel: number, picks: Array<{ uid: string; place: number }>, admin: { uid: string; email: string }, schoolId: BoardScope = null): Promise<WeeklyReward> {
     if (!isLeaderboardClass(classLevel)) throw new LeaderboardError(400, "Class must be 6, 7 or 8");
     if (!picks.length || picks.length > REWARD_PLACES) throw new LeaderboardError(400, `Choose between 1 and ${REWARD_PLACES} winners`);
     const places = picks.map((pick) => pick.place);
@@ -259,7 +282,7 @@ export async function approveWinners(weekKey: string, classLevel: number, picks:
     }
     if (new Set(picks.map((pick) => pick.uid)).size !== picks.length) throw new LeaderboardError(400, "A student can win one place only");
 
-    const summary = await boardSummary(weekKey, classLevel);
+    const summary = await boardSummary(weekKey, classLevel, schoolId);
     if (!summary.finalized) throw new LeaderboardError(409, "This week is still running; close it first");
     const byUid = new Map(summary.top.map((entry) => [entry.uid, entry]));
     const meta = await studentsMeta(picks.map((pick) => pick.uid));
@@ -274,12 +297,12 @@ export async function approveWinners(weekKey: string, classLevel: number, picks:
             return { uid: pick.uid, name: info.name, place: pick.place, rank: entry.rank, points: entry.points, delivered: false, deliveredAt: null };
         });
 
-    await rewardRef(weekKey, classLevel).set({
-        weekKey, classLevel, status: "approved", winners,
+    await rewardRef(weekKey, classLevel, schoolId).set({
+        weekKey, classLevel, schoolId, status: "approved", winners,
         approvedBy: admin.uid, approvedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
     }, { merge: true });
     await writeAuditLog({
-        actorUid: admin.uid, actorEmail: admin.email, action: "leaderboard.rewards.approve", targetType: "weeklyReward", targetId: `${weekKey}_${classLevel}`,
+        actorUid: admin.uid, actorEmail: admin.email, action: "leaderboard.rewards.approve", targetType: "weeklyReward", targetId: boardId(weekKey, classLevel, schoolId),
         summary: `Approved Class ${classLevel} winners for the week of ${weekKey}: ${winners.map((winner) => `${winner.place}. ${winner.name}`).join(", ")}`,
     });
     try {
@@ -287,20 +310,20 @@ export async function approveWinners(weekKey: string, classLevel: number, picks:
     } catch (error) {
         console.error(`Reward notifications failed for ${weekKey} class ${classLevel}`, error);
     }
-    return (await rewardSummary(weekKey, classLevel))!;
+    return (await rewardSummary(weekKey, classLevel, schoolId))!;
 }
 
-export async function setRewardDelivered(weekKey: string, classLevel: number, uid: string, delivered: boolean, admin: { uid: string; email: string }): Promise<WeeklyReward> {
-    const current = await rewardSummary(weekKey, classLevel);
+export async function setRewardDelivered(weekKey: string, classLevel: number, uid: string, delivered: boolean, admin: { uid: string; email: string }, schoolId: BoardScope = null): Promise<WeeklyReward> {
+    const current = await rewardSummary(weekKey, classLevel, schoolId);
     if (!current || current.status !== "approved") throw new LeaderboardError(409, "Approve the winners first");
     if (!current.winners.some((winner) => winner.uid === uid)) throw new LeaderboardError(404, "That student is not a winner this week");
     const winners = current.winners.map((winner) => (winner.uid === uid ? { ...winner, delivered, deliveredAt: delivered ? Date.now() : null } : winner));
-    await rewardRef(weekKey, classLevel).set({ winners, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    await rewardRef(weekKey, classLevel, schoolId).set({ winners, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     await writeAuditLog({
         actorUid: admin.uid, actorEmail: admin.email, action: delivered ? "leaderboard.rewards.delivered" : "leaderboard.rewards.undelivered",
-        targetType: "weeklyReward", targetId: `${weekKey}_${classLevel}`, summary: `${delivered ? "Marked" : "Unmarked"} reward delivered for ${uid}`,
+        targetType: "weeklyReward", targetId: boardId(weekKey, classLevel, schoolId), summary: `${delivered ? "Marked" : "Unmarked"} reward delivered for ${uid}`,
     });
-    return (await rewardSummary(weekKey, classLevel))!;
+    return (await rewardSummary(weekKey, classLevel, schoolId))!;
 }
 
 export async function setStudentFlags(uid: string, flags: { banned?: boolean; suspicious?: boolean; note?: string }, admin: { uid: string; email: string }): Promise<StudentMeta> {
@@ -356,7 +379,7 @@ export async function rewardHistory(limit = 24): Promise<WeeklyReward[]> {
     return snapshot.docs.map((doc) => {
         const data = doc.data();
         return {
-            weekKey: String(data.weekKey), classLevel: Number(data.classLevel),
+            weekKey: String(data.weekKey), classLevel: Number(data.classLevel), schoolId: typeof data.schoolId === "string" ? data.schoolId : null,
             status: data.status === "approved" ? "approved" : "pending",
             candidates: Array.isArray(data.candidates) ? data.candidates : [],
             winners: Array.isArray(data.winners) ? data.winners : [],

@@ -23,6 +23,8 @@ interface Reward {
 }
 interface BoardData {
     weekKey: string; label: string; classLevel: number; current: string;
+    schoolId: string | null;
+    schools: Array<{ id: string; name: string; code: string }>;
     weeks: Array<{ weekKey: string; label: string }>;
     finalized: boolean; finalizedAt: number | null; participants: number;
     entries: AdminEntry[]; reward: Reward | null; history: Reward[];
@@ -36,6 +38,8 @@ const formatDate = (millis: number | null | undefined) => (millis ? new Intl.Dat
 export function LeaderboardAdmin() {
     const [classLevel, setClassLevel] = useState<number>(6);
     const [weekKey, setWeekKey] = useState<string>("");
+    /** Empty for the public board of individual students; a school id for that school's own board. */
+    const [schoolId, setSchoolId] = useState<string>("");
     const [data, setData] = useState<BoardData | null>(null);
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
@@ -44,11 +48,11 @@ export function LeaderboardAdmin() {
     const [history, setHistory] = useState<{ entry: AdminEntry; items: HistoryItem[] } | null>(null);
     const [notes, setNotes] = useState<Record<string, string>>({});
 
-    const load = useCallback(async (nextClass = classLevel, nextWeek = weekKey) => {
+    const load = useCallback(async (nextClass = classLevel, nextWeek = weekKey, nextSchool = schoolId) => {
         setLoading(true);
         setError("");
         try {
-            const query = new URLSearchParams({ class: String(nextClass), ...(nextWeek ? { week: nextWeek } : {}) });
+            const query = new URLSearchParams({ class: String(nextClass), ...(nextWeek ? { week: nextWeek } : {}), ...(nextSchool ? { school: nextSchool } : {}) });
             const result = await adminApi<BoardData>(`/api/admin/leaderboard?${query}`);
             setData(result);
             setWeekKey(result.weekKey);
@@ -60,15 +64,15 @@ export function LeaderboardAdmin() {
         } finally {
             setLoading(false);
         }
-    }, [classLevel, weekKey]);
+    }, [classLevel, weekKey, schoolId]);
 
-    useEffect(() => { void load(6, ""); }, []);
+    useEffect(() => { void load(6, "", ""); }, []);
 
     async function act(body: Record<string, unknown>, success: string) {
         setError("");
         setNotice("");
         try {
-            await adminApi("/api/admin/leaderboard", jsonInit("POST", body));
+            await adminApi("/api/admin/leaderboard", jsonInit("POST", { schoolId: schoolId || null, ...body }));
             setNotice(success);
             await load();
         } catch (caught) {
@@ -98,6 +102,10 @@ export function LeaderboardAdmin() {
                             <Button key={level} size="sm" variant={classLevel === level ? "default" : "outline"} onClick={() => { setClassLevel(level); void load(level, weekKey); }}>Class {level}</Button>
                         ))}
                     </div>
+                    <select className="h-9 rounded-md border px-2 text-sm" value={schoolId} onChange={(event) => { setSchoolId(event.target.value); void load(classLevel, weekKey, event.target.value); }} aria-label="Board">
+                        <option value="">Individual students (public board)</option>
+                        {(data?.schools ?? []).map((school) => <option key={school.id} value={school.id}>{school.name} ({school.code})</option>)}
+                    </select>
                     <select className="h-9 rounded-md border px-2 text-sm" value={weekKey} onChange={(event) => { setWeekKey(event.target.value); void load(classLevel, event.target.value); }}>
                         {(data?.weeks ?? []).map((week) => (
                             <option key={week.weekKey} value={week.weekKey}>{week.label}{week.weekKey === data?.current ? " (this week)" : ""}</option>
@@ -121,7 +129,7 @@ export function LeaderboardAdmin() {
             {data ? (
                 <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
                     <section className="rounded-lg bg-white p-4">
-                        <h2 className="mb-3 font-semibold">Class {data.classLevel} · week of {data.label}</h2>
+                        <h2 className="mb-3 font-semibold">Class {data.classLevel} · week of {data.label}{data.schoolId ? ` · ${data.schools.find((school) => school.id === data.schoolId)?.name ?? "school"}` : " · individual students"}</h2>
                         <div className="overflow-auto">
                             <table className="w-full min-w-[860px] text-left text-sm">
                                 <thead className="bg-slate-100"><tr><th className="p-2">Rank</th><th className="p-2">Student</th><th className="p-2">Points</th><th className="p-2">Correct</th><th className="p-2">Paid member</th><th className="p-2">Flags</th><th className="p-2">Note</th><th className="p-2"></th></tr></thead>

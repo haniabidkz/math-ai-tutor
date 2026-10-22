@@ -9,6 +9,8 @@ export interface ActiveTopic {
     topicTitle: LocalizedText;
     mastered: boolean;
     locked: boolean;
+    /** Why it is locked: the lesson before it, or the chapter is outside the free plan. */
+    lockReason?: "sequence" | "premium" | null;
     percentage: number;
 }
 
@@ -29,7 +31,7 @@ export function ActiveTopicList({
     return (
         <ol className="grid gap-2">
             {topics.map((topic, index) => {
-                const status = topic.mastered ? "Mastered" : topic.locked ? "Unlocks after the previous topic" : topic.percentage > 0 ? "In progress" : "Ready to learn";
+                const status = topic.mastered ? "Mastered" : topic.locked ? (topic.lockReason === "premium" ? "Paid plan" : "Unlocks after the previous topic") : topic.percentage > 0 ? "In progress" : "Ready to learn";
                 const row = (
                     <div className={`flex items-center gap-3 rounded-lg border p-3 ${topic.locked ? "bg-slate-50 opacity-70" : "bg-white"} ${linkable && !topic.locked ? "transition hover:border-indigo-300 hover:bg-indigo-50/40" : ""}`}>
                         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600">{index + 1}</span>

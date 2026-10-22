@@ -6,13 +6,14 @@ import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 import {
     Award, BookOpen, CheckCircle2, ChevronRight, ClipboardCheck, Clock, Flame,
-    LayoutDashboard, NotebookPen, Sparkles, Target, Trophy, type LucideIcon,
+    LayoutDashboard, Lock, NotebookPen, Sparkles, Target, Trophy, type LucideIcon,
 } from "lucide-react";
 import { ActiveTopicList, type ActiveTopic } from "@/components/active-topics";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/stat-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { premiumLockMessage, type StudentAccess } from "@/lib/access";
 import { WeeklyRankCard } from "@/components/student/weekly-rank-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,7 +41,8 @@ interface DiagnosticTopicSummary {
 }
 
 interface DashboardData {
-    profile: { name: string; email: string; classLevel: 6 | 7 | 8; diagnosticCompleted: boolean };
+    profile: { name: string; email: string; classLevel: 6 | 7 | 8; diagnosticCompleted: boolean; schoolName?: string | null; sectionLabel?: string | null };
+    access?: StudentAccess;
     gamification: {
         xp: number;
         streak: { current: number; longest: number; lastActivityDate: string | null };
@@ -126,9 +128,17 @@ export default function StudentDashboard() {
         >
             <PageHeader
                 title={`Welcome, ${data.profile.name.split(" ")[0]}`}
-                description="Here is what to work on next."
+                description={data.profile.schoolName ? `${data.profile.schoolName}${data.profile.sectionLabel ? ` · ${data.profile.sectionLabel}` : ""} · here is what to work on next.` : "Here is what to work on next."}
                 icon={<LayoutDashboard className="h-6 w-6" />}
             />
+
+            {data.access && !data.access.premium ? (
+                <Alert className="border-slate-300 bg-slate-50">
+                    <Lock className="h-4 w-4" />
+                    <AlertTitle>Free lessons</AlertTitle>
+                    <AlertDescription>{premiumLockMessage(data.access)}</AlertDescription>
+                </Alert>
+            ) : null}
 
             {data.weeklyDue ? (
                 <Alert className="border-amber-300 bg-amber-50">
@@ -235,7 +245,9 @@ export default function StudentDashboard() {
                                         <Badge variant={item.status === "completed" ? "secondary" : item.overdue ? "destructive" : "outline"}>
                                             {HOMEWORK_STATUS[item.status]}{item.percentage !== null ? ` · ${item.percentage}%` : ""}
                                         </Badge>
-                                        {item.status !== "completed" ? (
+                                        {item.locked ? (
+                                            <Badge variant="outline" className="gap-1"><Lock className="h-3 w-3" />Paid plan</Badge>
+                                        ) : item.status !== "completed" ? (
                                             <Button size="sm" asChild>
                                                 <Link href={`/quiz?homeworkId=${item.id}&class=${data.profile.classLevel}`}>
                                                     {item.status === "in_progress" ? "Resume" : "Start"}

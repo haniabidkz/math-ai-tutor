@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, Loader2, NotebookPen, Package, Plus, School, Trash2, Users } from "lucide-react";
+import { CalendarDays, Loader2, Lock, NotebookPen, Package, Plus, School, Trash2, Users } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { freeScopeLabel } from "@/lib/access";
 import { MAX_HOMEWORK_QUESTIONS, MAX_PACKET_MODULES, MIN_HOMEWORK_QUESTIONS } from "@/lib/homework";
 import type { LocalizedText, StudentClassLevel } from "@/types/curriculum";
 import type { HomeworkAssignment } from "@/types/homework";
@@ -22,7 +23,19 @@ interface AssignableStudent {
 interface ModuleTopic {
     topicId: string;
     title: LocalizedText;
-    concepts: Array<{ microTag: string; title: LocalizedText }>;
+    /** The school's plan has ended and every lesson of this chapter is outside the free ones. */
+    locked?: boolean;
+    concepts: Array<{ microTag: string; title: LocalizedText; locked?: boolean }>;
+}
+
+interface AssignScope {
+    schoolId: string | null;
+    schoolName: string | null;
+    plan: "trial" | "paid" | "expired" | null;
+    sections: Array<{ id: string; classLevel: number; label: string }>;
+    lockedAssignments: boolean;
+    freeChapterCount: number;
+    freeLessonsPerChapter: number;
 }
 
 interface ClassSummary {
@@ -52,6 +65,8 @@ export function HomeworkAssigner({ getToken, students }: { getToken: () => Promi
     const [selectedUids, setSelectedUids] = useState<string[]>([]);
     const [assignments, setAssignments] = useState<HomeworkAssignment[]>([]);
     const [modules, setModules] = useState<Partial<Record<StudentClassLevel, ModuleTopic[]>>>({});
+    const [scope, setScope] = useState<AssignScope | null>(null);
+    const [sectionId, setSectionId] = useState("");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
@@ -60,7 +75,8 @@ export function HomeworkAssigner({ getToken, students }: { getToken: () => Promi
     const classStudents = students.filter((student) => Number(student.class) === classLevel);
 
     useEffect(() => { void load(); }, []);
-    useEffect(() => { setMicroTags([]); setSelectedUids([]); setPacketTitle(""); }, [classLevel]);
+    useEffect(() => { setMicroTags([]); setSelectedUids([]); setPacketTitle(""); setSectionId(""); }, [classLevel]);
+    const classSections = (scope?.sections ?? []).filter((section) => section.classLevel === classLevel);
 
     async function load() {
         try {
@@ -70,6 +86,7 @@ export function HomeworkAssigner({ getToken, students }: { getToken: () => Promi
             setAssignments(data.homework ?? []);
             setMyClasses(data.myClasses ?? []);
             setModules(data.modules ?? {});
+            setScope(data.scope ?? null);
             setHasAssignedClasses(data.hasAssignedClasses !== false);
             setClassLevel((current) => current ?? data.myClasses?.[0]?.classLevel ?? null);
         } catch (caught) {
@@ -98,6 +115,7 @@ export function HomeworkAssigner({ getToken, students }: { getToken: () => Promi
                     dueDate,
                     allStudents,
                     studentUids: allStudents ? [] : selectedUids,
+                    sectionId: sectionId || undefined,
                 }),
             });
             const data = await response.json();
@@ -169,22 +187,26 @@ export function HomeworkAssigner({ getToken, students }: { getToken: () => Promi
                     <CardContent className="space-y-4">
                         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
                         {notice ? <Alert className="border-emerald-300 bg-emerald-50"><AlertDescription>{notice}</AlertDescription></Alert> : null}
+                        {scope?.lockedAssignments ? (
+                            <Alert className="border-amber-300 bg-amber-50"><Lock className="h-4 w-4" /><AlertDescription>Your school&apos;s plan has ended, so homework can be set from {freeScopeLabel(scope)} of each class only. Ask your school to renew to open the rest.</AlertDescription></Alert>
+                        ) : null}
 
                         <div className="space-y-3">
                             <Label>Modules {microTags.length ? <Badge variant="secondary" className="ml-2">{microTags.length} selected</Badge> : null}</Label>
                             {!topics.length ? <p className="text-sm text-muted-foreground">No lessons exist for this class yet.</p> : null}
                             {topics.map((topic) => (
-                                <div key={topic.topicId} className="rounded-lg border p-3">
-                                    <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">{topic.title.english}</p>
+                                <div key={topic.topicId} className={`rounded-lg border p-3 ${topic.locked ? "bg-slate-50 opacity-70" : ""}`}>
+                                    <p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">{topic.locked ? <Lock className="h-3 w-3" /> : null}{topic.title.english}{topic.locked ? <span className="normal-case">· paid plan</span> : null}</p>
                                     <div className="grid gap-2 sm:grid-cols-2">
                                         {topic.concepts.map((concept) => (
                                             <label key={concept.microTag} className="flex items-center gap-2 text-sm">
                                                 <input
                                                     type="checkbox"
+                                                    disabled={concept.locked}
                                                     checked={microTags.includes(concept.microTag)}
                                                     onChange={() => toggleModule(concept.microTag)}
                                                 />
-                                                {concept.title.english}
+                                                <span className={concept.locked ? "text-muted-foreground" : ""}>{concept.title.english}{concept.locked ? <Lock className="ml-1 inline h-3 w-3" /> : null}</span>
                                             </label>
                                         ))}
                                     </div>
@@ -214,6 +236,15 @@ export function HomeworkAssigner({ getToken, students }: { getToken: () => Promi
                                     <Button type="button" size="sm" variant={!allStudents ? "default" : "outline"} onClick={() => setAllStudents(false)}>Selected students</Button>
                                 </div>
                             </div>
+                            {scope?.schoolId && allStudents ? (
+                                <div className="space-y-1 md:col-span-3">
+                                    <Label htmlFor="homework-section">Section</Label>
+                                    <select id="homework-section" className="h-9 w-full rounded-md border px-2 text-sm md:w-72" value={sectionId} onChange={(event) => setSectionId(event.target.value)}>
+                                        <option value="">Every Class {classLevel} student in {scope.schoolName ?? "the school"}</option>
+                                        {classSections.map((section) => <option key={section.id} value={section.id}>{section.label} only</option>)}
+                                    </select>
+                                </div>
+                            ) : null}
                         </div>
 
                         {!allStudents ? (
@@ -260,7 +291,7 @@ export function HomeworkAssigner({ getToken, students }: { getToken: () => Promi
                                         {item.packetTitle ? <p className="text-[11px] font-semibold uppercase text-indigo-700">{item.packetTitle}</p> : null}
                                         <p className="text-sm font-semibold">{item.title?.english ?? item.microTag}</p>
                                         <p className="text-xs text-muted-foreground">
-                                            Class {item.classLevel} · {item.questionCount} questions · {item.allStudents ? "whole class" : `${item.studentUids.length} students`}
+                                            {item.sectionLabel ?? `Class ${item.classLevel}`} · {item.questionCount} questions · {item.allStudents ? (item.sectionLabel ? "whole section" : "whole class") : `${item.studentUids.length} students`}
                                         </p>
                                     </div>
                                     <div className="flex items-center gap-2">

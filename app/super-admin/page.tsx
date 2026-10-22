@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
-    BookOpen, Download, FileUp, Gauge, LayoutDashboard, LogOut,
+    BarChart3, BookOpen, Building2, Download, FileUp, Gauge, KeyRound, LayoutDashboard, LogOut,
     Pencil, RefreshCw, Save, Settings, ShieldCheck, Sparkles, Trash2, Trophy, Users,
 } from "lucide-react";
 import { AiStudio } from "@/components/admin/ai-studio";
+import { AnalyticsAdmin } from "@/components/admin/analytics-admin";
+import { SchoolsAdmin } from "@/components/admin/schools-admin";
 import { ConceptEditor, type ConceptPayload } from "@/components/admin/concept-editor";
 import { LeaderboardAdmin } from "@/components/admin/leaderboard-admin";
 import { QuestionEditor, type QuestionPayload } from "@/components/admin/question-editor";
@@ -33,6 +35,8 @@ interface Overview {
 interface ManagedUser {
     uid: string;
     email?: string;
+    phone?: string | null;
+    contact?: string;
     displayName?: string;
     emailVerified: boolean;
     disabled: boolean;
@@ -40,7 +44,15 @@ interface ManagedUser {
     superAdmin: boolean;
     isTeacher?: boolean;
     assignedClasses?: number[];
+    schoolId?: string | null;
+    schoolName?: string | null;
+    classLevel?: number | null;
+    sectionLabel?: string | null;
+    paid?: boolean | null;
+    schoolStatus?: "active" | "graduated" | null;
 }
+
+interface SchoolOption { id: string; name: string; code: string }
 
 const api = adminApi;
 
@@ -52,6 +64,9 @@ export default function SuperAdminPage() {
     const [questions, setQuestions] = useState<QuestionBankItem[]>([]);
     const [concepts, setConcepts] = useState<MicroConcept[]>([]);
     const [users, setUsers] = useState<ManagedUser[]>([]);
+    const [schoolOptions, setSchoolOptions] = useState<SchoolOption[]>([]);
+    const [userFilter, setUserFilter] = useState({ school: "", role: "", query: "" });
+    const [revealed, setRevealed] = useState<{ who: string; password: string } | null>(null);
     const [config, setConfig] = useState<AssessmentConfig | null>(null);
     const [configDraft, setConfigDraft] = useState<Record<string, string>>({});
     const [editingQuestion, setEditingQuestion] = useState<QuestionBankItem | null>(null);
@@ -96,6 +111,7 @@ export default function SuperAdminPage() {
             setQuestionsTruncated(questionData.truncated === true);
             setConcepts(conceptData.concepts);
             setUsers(userData.users);
+            setSchoolOptions(userData.schools ?? []);
             applyConfig(configData.config);
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : "Admin data could not be loaded");
@@ -193,10 +209,30 @@ export default function SuperAdminPage() {
         catch (caught) { fail(caught, "Upload failed"); return null; }
     }
 
-    async function userAction(uid: string, action: "disable" | "revoke" | "class" | "assignedClasses", value?: boolean | number | number[]) {
-        try { await api("/api/admin/users", jsonInit("PATCH", { uid, action, value })); await loadAll(); showNotice("User updated."); }
+    async function userAction(uid: string, action: "disable" | "revoke" | "class" | "assignedClasses" | "paid" | "resetPassword" | "delete", value?: boolean | number | number[] | string) {
+        try {
+            const data = await api("/api/admin/users", jsonInit("PATCH", { uid, action, value }));
+            if (action === "resetPassword" && data.password) setRevealed({ who: users.find((item) => item.uid === uid)?.displayName ?? uid, password: data.password });
+            await loadAll();
+            showNotice(action === "delete" ? "Account deleted." : "User updated.");
+        }
         catch (caught) { fail(caught, "User update failed"); }
     }
+
+    function confirmDelete(managedUser: ManagedUser) {
+        const name = managedUser.displayName ?? managedUser.email ?? managedUser.uid;
+        if (!window.confirm(`Delete the student account of ${name}? Their sign-in, profile, progress and history are removed for good.`)) return;
+        if (window.prompt(`Type DELETE to remove ${name}`) !== "DELETE") return;
+        void userAction(managedUser.uid, "delete");
+    }
+
+    const visibleUsers = users.filter((managedUser) => {
+        if (userFilter.school === "none" && managedUser.schoolId) return false;
+        if (userFilter.school && userFilter.school !== "none" && managedUser.schoolId !== userFilter.school) return false;
+        if (userFilter.role && (managedUser.superAdmin ? "super_admin" : managedUser.role ?? "") !== userFilter.role) return false;
+        const query = userFilter.query.trim().toLowerCase();
+        return !query || `${managedUser.displayName ?? ""} ${managedUser.email ?? ""} ${managedUser.contact ?? ""} ${managedUser.phone ?? ""}`.toLowerCase().includes(query);
+    });
 
     function toggleTeacherClass(user: ManagedUser, level: number) {
         const current = user.assignedClasses ?? [];
@@ -255,9 +291,19 @@ export default function SuperAdminPage() {
                         <TabsTrigger value="curriculum"><Gauge className="mr-2 h-4 w-4" />Curriculum</TabsTrigger>
                         <TabsTrigger value="ai-studio"><Sparkles className="mr-2 h-4 w-4" />AI Studio</TabsTrigger>
                         <TabsTrigger value="leaderboard"><Trophy className="mr-2 h-4 w-4" />Leaderboard</TabsTrigger>
+                        <TabsTrigger value="schools"><Building2 className="mr-2 h-4 w-4" />Schools</TabsTrigger>
+                        <TabsTrigger value="analytics"><BarChart3 className="mr-2 h-4 w-4" />Analytics</TabsTrigger>
                         <TabsTrigger value="users"><Users className="mr-2 h-4 w-4" />Users</TabsTrigger>
                         <TabsTrigger value="config"><Settings className="mr-2 h-4 w-4" />Configuration</TabsTrigger>
                     </TabsList>
+
+                    <TabsContent value="schools">
+                        <SchoolsAdmin />
+                    </TabsContent>
+
+                    <TabsContent value="analytics">
+                        <AnalyticsAdmin />
+                    </TabsContent>
 
                     <TabsContent value="ai-studio">
                         <AiStudio concepts={concepts} config={config} onPublished={() => loadAll()} />
@@ -368,16 +414,43 @@ export default function SuperAdminPage() {
 
                     <TabsContent value="users">
                         <section className="bg-white p-4">
-                            <h2 className="mb-1 font-semibold">Authentication users</h2>
-                            <p className="mb-4 text-xs text-muted-foreground">Tick a teacher&apos;s classes to control which classes they can see and assign homework to.</p>
+                            <h2 className="mb-1 font-semibold">Accounts</h2>
+                            <p className="mb-3 text-xs text-muted-foreground">Every account on the platform: individual and school students, parents, teachers and school admins. Tick a teacher&apos;s classes to control which classes they can see and assign homework to; untick &quot;Paid&quot; to put an individual student on the free chapters.</p>
+                            {revealed ? (
+                                <Alert className="mb-3 border-indigo-300 bg-indigo-50"><KeyRound className="h-4 w-4" /><AlertDescription>New password for <strong>{revealed.who}</strong>: <code className="rounded bg-white px-1.5 py-0.5 font-mono">{revealed.password}</code>. Share it now; it is not shown again. <Button size="sm" variant="ghost" onClick={() => setRevealed(null)}>Hide</Button></AlertDescription></Alert>
+                            ) : null}
+                            <div className="mb-3 flex flex-wrap items-center gap-2">
+                                <Input className="h-9 w-64" placeholder="Search name, phone or email" value={userFilter.query} onChange={(event) => setUserFilter({ ...userFilter, query: event.target.value })} />
+                                <select className="h-9 rounded-md border px-2 text-sm" value={userFilter.school} onChange={(event) => setUserFilter({ ...userFilter, school: event.target.value })}>
+                                    <option value="">All schools and individuals</option>
+                                    <option value="none">Individual accounts only</option>
+                                    {schoolOptions.map((school) => <option key={school.id} value={school.id}>{school.name} ({school.code})</option>)}
+                                </select>
+                                <select className="h-9 rounded-md border px-2 text-sm" value={userFilter.role} onChange={(event) => setUserFilter({ ...userFilter, role: event.target.value })}>
+                                    <option value="">All roles</option>
+                                    <option value="student">Students</option>
+                                    <option value="teacher">Teachers</option>
+                                    <option value="parent">Parents</option>
+                                    <option value="school_admin">School admins</option>
+                                    <option value="super_admin">Super admins</option>
+                                </select>
+                                <span className="text-xs text-muted-foreground">{visibleUsers.length} of {users.length}</span>
+                            </div>
                             <div className="overflow-auto">
-                                <table className="w-full min-w-[980px] text-left text-sm">
-                                    <thead className="bg-slate-100"><tr><th className="p-2">User</th><th className="p-2">Role</th><th className="p-2">Teacher classes</th><th className="p-2">Verified</th><th className="p-2">Status</th><th className="p-2">Controls</th></tr></thead>
+                                <table className="w-full min-w-[1180px] text-left text-sm">
+                                    <thead className="bg-slate-100"><tr><th className="p-2">User</th><th className="p-2">Role</th><th className="p-2">School</th><th className="p-2">Class</th><th className="p-2">Plan</th><th className="p-2">Teacher classes</th><th className="p-2">Verified</th><th className="p-2">Status</th><th className="p-2">Controls</th></tr></thead>
                                     <tbody className="divide-y">
-                                        {users.map((managedUser) => (
+                                        {visibleUsers.map((managedUser) => (
                                             <tr key={managedUser.uid}>
-                                                <td className="p-2"><strong>{managedUser.displayName ?? managedUser.email}</strong><p className="font-mono text-xs text-muted-foreground">{managedUser.email}</p></td>
+                                                <td className="p-2"><strong>{managedUser.displayName ?? managedUser.email}</strong><p className="font-mono text-xs text-muted-foreground">{managedUser.contact || managedUser.email}</p></td>
                                                 <td className="p-2">{managedUser.superAdmin ? "super_admin" : managedUser.role ?? "profile role"}</td>
+                                                <td className="p-2">{managedUser.schoolName ?? <span className="text-xs text-muted-foreground">Individual</span>}</td>
+                                                <td className="p-2">{managedUser.role === "student" ? (managedUser.sectionLabel ?? (managedUser.classLevel ? `Class ${managedUser.classLevel}` : "—")) : "—"}{managedUser.schoolStatus === "graduated" ? <span className="ml-1 text-xs text-muted-foreground">(graduated)</span> : null}</td>
+                                                <td className="p-2">
+                                                    {managedUser.role === "student" ? (
+                                                        <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={managedUser.paid === true} onChange={() => userAction(managedUser.uid, "paid", managedUser.paid !== true)} />Paid</label>
+                                                    ) : <span className="text-xs text-muted-foreground">—</span>}
+                                                </td>
                                                 <td className="p-2">
                                                     {managedUser.isTeacher ? (
                                                         <div className="flex gap-3">
@@ -390,12 +463,14 @@ export default function SuperAdminPage() {
                                                         </div>
                                                     ) : <span className="text-xs text-muted-foreground">—</span>}
                                                 </td>
-                                                <td className="p-2">{managedUser.emailVerified ? "Yes" : "No"}</td>
+                                                <td className="p-2">{managedUser.emailVerified ? "Yes" : managedUser.phone ? "Phone" : "No"}</td>
                                                 <td className="p-2">{managedUser.disabled ? "Disabled" : "Active"}</td>
                                                 <td className="p-2">
-                                                    <div className="flex gap-2">
+                                                    <div className="flex flex-wrap gap-1">
                                                         <Button size="sm" variant="outline" onClick={() => userAction(managedUser.uid, "disable", !managedUser.disabled)}>{managedUser.disabled ? "Enable" : "Disable"}</Button>
                                                         <Button size="sm" variant="outline" onClick={() => userAction(managedUser.uid, "revoke")}>Revoke sessions</Button>
+                                                        {!managedUser.superAdmin ? <Button size="sm" variant="outline" title="Reset password" onClick={() => { if (window.confirm(`Give ${managedUser.displayName ?? managedUser.email} a new password?`)) void userAction(managedUser.uid, "resetPassword"); }}><KeyRound className="h-4 w-4" /></Button> : null}
+                                                        {managedUser.role === "student" ? <Button size="sm" variant="outline" className="text-red-600" title="Delete account" onClick={() => confirmDelete(managedUser)}><Trash2 className="h-4 w-4" /></Button> : null}
                                                     </div>
                                                 </td>
                                             </tr>

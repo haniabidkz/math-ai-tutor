@@ -6,39 +6,72 @@ service cloud.firestore {
     function superAdmin() { return verified() && request.auth.token.super_admin == true; }
     function owner(uid) { return signedIn() && request.auth.uid == uid; }
     function teacher() { return signedIn() && exists(/databases/$(database)/documents/teachers/$(request.auth.uid)); }
+    function teacherSchool() { return get(/databases/$(database)/documents/teachers/$(request.auth.uid)).data.get('schoolId', null); }
+    // A teacher reads the students of their own school; an individual teacher reads individual students.
+    function teacherOf(studentData) { return teacher() && studentData.get('schoolId', null) == teacherSchool(); }
+    function schoolAdmin() { return signedIn() && exists(/databases/$(database)/documents/schoolAdmins/$(request.auth.uid)); }
+    function schoolAdminOf(schoolId) {
+      return schoolAdmin() && schoolId != null
+        && get(/databases/$(database)/documents/schoolAdmins/$(request.auth.uid)).data.schoolId == schoolId;
+    }
     function parent() { return signedIn() && exists(/databases/$(database)/documents/parents/$(request.auth.uid)); }
     function parentOf(uid) {
       return parent()
         && get(/databases/$(database)/documents/students/$(uid)).data.parentEmail == request.auth.token.email;
     }
+    // Fields a student may never change about themselves; the server sets them.
+    function protectedStudentFields() {
+      return ['uid', 'email', 'phone', 'role', 'class', 'schoolId', 'sectionId', 'sectionLabel', 'schoolStatus', 'membership', 'leaderboardFlags', 'xp', 'badgeIds', 'streak'];
+    }
 
+    // Accounts are created by the server (sign-up API, school panels), never by the browser.
     match /students/{uid} {
-      allow read: if owner(uid) || superAdmin() || teacher()
+      allow read: if owner(uid) || superAdmin() || teacherOf(resource.data) || schoolAdminOf(resource.data.get('schoolId', null))
         || (parent() && resource.data.parentEmail == request.auth.token.email);
-      allow update: if owner(uid) || superAdmin();
-      allow create: if signedIn() && request.auth.uid == uid;
+      allow update: if superAdmin()
+        || (owner(uid) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(protectedStudentFields()));
+      allow create: if false;
       allow delete: if superAdmin();
       match /{subcollection}/{document=**} {
-        allow read: if owner(uid) || superAdmin() || teacher() || parentOf(uid);
+        allow read: if owner(uid) || superAdmin() || parentOf(uid)
+          || teacherOf(get(/databases/$(database)/documents/students/$(uid)).data);
         allow write: if superAdmin();
       }
     }
     match /parents/{uid} {
-      allow read, update: if owner(uid) || superAdmin();
-      allow create: if signedIn() && request.auth.uid == uid;
+      allow read: if owner(uid) || superAdmin();
+      allow update: if superAdmin()
+        || (owner(uid) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid', 'email', 'phone', 'role', 'schoolId']));
+      allow create: if false;
       allow delete: if superAdmin();
     }
     match /teachers/{uid} {
+      allow read: if owner(uid) || superAdmin() || schoolAdminOf(resource.data.get('schoolId', null));
+      allow create, update, delete: if superAdmin();
+    }
+    match /schoolAdmins/{uid} {
       allow read: if owner(uid) || superAdmin();
-      allow create: if signedIn() && request.auth.uid == uid;
-      allow update, delete: if superAdmin();
+      allow write: if false;
+    }
+    match /schools/{schoolId} {
+      allow read: if superAdmin() || schoolAdminOf(schoolId) || (teacher() && teacherSchool() == schoolId);
+      allow write: if false;
+      match /{subcollection}/{document=**} {
+        allow read: if superAdmin() || schoolAdminOf(schoolId) || (teacher() && teacherSchool() == schoolId);
+        allow write: if false;
+      }
     }
     match /admins/{uid} { allow read: if owner(uid) && superAdmin(); allow write: if false; }
     match /microConcepts/{id} { allow read: if signedIn(); allow write: if superAdmin(); }
     match /questions/{id} { allow read: if signedIn() && resource.data.status == 'published'; allow write: if superAdmin(); }
     match /assessmentConfigs/{id} { allow read: if signedIn(); allow write: if superAdmin(); }
-    // Homework is created and removed through the server API; clients only read it.
-    match /homework/{id} { allow read: if signedIn(); allow write: if superAdmin(); }
+    // Homework, boards, codes, settings and statistics are read and written through the server API only.
+    match /homework/{id} { allow read: if superAdmin(); allow write: if superAdmin(); }
+    match /schoolCodes/{code} { allow read, write: if false; }
+    match /platformSettings/{id} { allow read: if superAdmin(); allow write: if false; }
+    match /activityLog/{id} { allow read, write: if false; }
+    match /questionStats/{id} { allow read: if superAdmin(); allow write: if false; }
+    match /misconceptionStats/{id} { allow read: if superAdmin(); allow write: if false; }
     match /auditLogs/{id} { allow read: if superAdmin(); allow write: if false; }
   }
 }

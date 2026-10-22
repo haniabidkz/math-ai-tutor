@@ -138,6 +138,31 @@ export default function Home() {
                         ))}
                     </div>
 
+                    {/* Schools */}
+                    <Card className="mb-24 border-2 border-sky-200 bg-sky-50/60 dark:border-sky-900 dark:bg-sky-950/20">
+                        <CardHeader>
+                            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4 bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+                                <School className="h-7 w-7" />
+                            </div>
+                            <CardTitle className="text-2xl">For schools</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <p className="text-muted-foreground leading-relaxed max-w-3xl">
+                                Your own school panel: teachers, classes and sections, bulk student enrolment, homework by section,
+                                performance reports and a weekly leaderboard for your students only. Every school starts with a free 14-day trial.
+                                Students join with your school code, and parents follow their child&apos;s progress.
+                            </p>
+                            <div className="flex flex-wrap gap-3">
+                                <Button asChild>
+                                    <Link href="/login?role=school">School admin sign in <ArrowRight className="ml-2 h-4 w-4" /></Link>
+                                </Button>
+                                <Button variant="outline" asChild>
+                                    <Link href="/login?role=student&mode=signup">Student with a school code</Link>
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+
                     {/* Features Section */}
                     <div className="grid md:grid-cols-3 gap-8">
                         {features.map((feature, idx) => (

@@ -3,7 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getPublishedConcept, getPublishedQuestions, getRuntimeConcepts, localized } from "@/lib/assessment-content";
 import { buildConceptItems } from "@/lib/learner-metrics";
 import { getClassConcepts, getConcept } from "@/lib/curriculum";
+import { PREMIUM_LOCK_CODE, premiumLockMessage } from "@/lib/access";
 import { adminDb } from "@/lib/firebase-admin";
+import { accessForStudent } from "@/lib/schools-server";
 import { pickPractice } from "@/lib/lesson-steps";
 import { activityDateKey, newlyEarnedBadges, nextStreak, type StreakState } from "@/lib/gamification";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
@@ -69,8 +71,12 @@ export async function POST(request: NextRequest) {
         const [profileSnapshot, progressSnapshot, concepts] = await Promise.all([studentRef.get(), studentRef.collection("conceptProgress").get(), getRuntimeConcepts()]);
         const profile = profileSnapshot.data() ?? {};
         if (Number(profile.class) === concept.classLevel) {
-            const items = buildConceptItems(concepts, concept.classLevel, new Map(progressSnapshot.docs.map((doc) => [doc.id, doc.data()])), new Set(profile.diagnosticProfile?.strongMicroTags ?? []));
+            const access = await accessForStudent(profile, user.school);
+            const items = buildConceptItems(concepts, concept.classLevel, new Map(progressSnapshot.docs.map((doc) => [doc.id, doc.data()])), new Set(profile.diagnosticProfile?.strongMicroTags ?? []), access);
             const item = items.find((entry) => entry.microTag === concept.microTag);
+            if (item?.lockReason === "premium") {
+                return NextResponse.json({ success: false, code: PREMIUM_LOCK_CODE, error: premiumLockMessage(access) }, { status: 403 });
+            }
             if (item?.locked && item.blockedBy) {
                 return NextResponse.json({ success: false, code: "locked", error: `Finish "${item.blockedBy.title.english}" first. Lessons unlock one after another.` }, { status: 409 });
             }
