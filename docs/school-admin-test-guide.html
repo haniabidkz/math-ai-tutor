@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LearnAI Tutor – School Platform Test Guide</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 18mm 16mm; }
+  body { font-family: "Segoe UI", Arial, sans-serif; font-size: 11pt; color: #1e293b; line-height: 1.45; }
+  h1 { font-size: 24pt; margin: 0 0 4px; color: #0f172a; }
+  h2 { font-size: 16pt; margin: 26px 0 8px; padding-bottom: 4px; border-bottom: 2px solid #4f46e5; color: #312e81; page-break-after: avoid; }
+  h3 { font-size: 12.5pt; margin: 18px 0 6px; color: #0f172a; page-break-after: avoid; }
+  p { margin: 6px 0; }
+  .sub { color: #475569; font-size: 11pt; margin-bottom: 14px; }
+  .box { border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; margin: 10px 0; background: #f8fafc; }
+  .box.warn { border-color: #f59e0b; background: #fffbeb; }
+  .box.ok { border-color: #10b981; background: #ecfdf5; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 14px; font-size: 10pt; page-break-inside: auto; }
+  th, td { border: 1px solid #cbd5e1; padding: 6px 8px; vertical-align: top; text-align: left; }
+  th { background: #eef2ff; color: #312e81; }
+  tr { page-break-inside: avoid; }
+  .scenario { border: 1px solid #c7d2fe; border-left: 5px solid #4f46e5; border-radius: 6px; padding: 10px 14px; margin: 12px 0; page-break-inside: avoid; }
+  .scenario h3 { margin-top: 0; }
+  .scenario .goal { color: #475569; font-style: italic; margin-bottom: 6px; }
+  ol { margin: 4px 0 6px 20px; padding: 0; }
+  li { margin: 3px 0; }
+  .expect { background: #ecfdf5; border-left: 4px solid #10b981; padding: 6px 10px; margin-top: 6px; }
+  .expect strong { color: #065f46; }
+  code { background: #e2e8f0; padding: 1px 5px; border-radius: 4px; font-family: Consolas, monospace; font-size: 10pt; }
+  .pill { display: inline-block; background: #e0e7ff; color: #3730a3; border-radius: 999px; padding: 1px 9px; font-size: 9.5pt; font-weight: 600; margin-right: 4px; }
+  .toc li { margin: 2px 0; }
+  .small { font-size: 9.5pt; color: #64748b; }
+  .check { width: 28px; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>LearnAI Tutor – School Platform Test Guide</h1>
+<p class="sub">How to try every new feature: schools, school admin panel, phone sign-in, teachers and sections, trial and paid plans, seats, promotion, reports and the new Super Admin tabs. Written for the product owner. Version 22 October 2026.</p>
+
+<div class="box">
+  <strong>Live site:</strong> https://learnaitutor.com &nbsp;·&nbsp; <strong>Super Admin:</strong> /super-admin &nbsp;·&nbsp; <strong>School Portal:</strong> /login?role=school &nbsp;·&nbsp; <strong>School Admin panel:</strong> /school-admin<br>
+  <strong>Nothing old changed:</strong> existing students, parents and teachers keep their email sign-in and everything they had. Every individual student still has the full curriculum.
+</div>
+
+<h2>1. What was built, in one page</h2>
+<table>
+  <tr><th style="width:22%">Who</th><th>What they can do now</th><th style="width:26%">Where</th></tr>
+  <tr><td><strong>Super Admin</strong> (you)</td><td>Create schools (code, trial, seats, first admin), change a school's plan (trial / paid / expired), seat limit, demo access, suspend a school, add or reset school admins, see all accounts by school, delete a student account, mark a student Paid/Free, read platform analytics (DAU, drop-offs, free vs paid, most failed questions, misconceptions), set the free-lesson rules.</td><td>/super-admin → tabs <span class="pill">Schools</span> <span class="pill">Analytics</span> <span class="pill">Users</span> <span class="pill">Leaderboard</span></td></tr>
+  <tr><td><strong>School Admin</strong> (new role)</td><td>Own school only: overview (plan, seats, counts), classes &amp; sections (6-A, 6-B …), teachers (add, assign sections, reset password, suspend, remove), students (add one, bulk import, edit, reset password, suspend, remove), reports (Excel/CSV and print-to-PDF), one-click annual promotion, school details.</td><td>/login?role=school → /school-admin</td></tr>
+  <tr><td><strong>Teacher</strong> (school)</td><td>Same teacher pages as before, limited to their school and sections; Free/Paid badge per student; "Add students" tab; homework per section; on an expired plan, homework from the free lessons only.</td><td>/teacher-dashboard</td></tr>
+  <tr><td><strong>Teacher</strong> (individual)</td><td>Unchanged: individual students in their classes.</td><td>/teacher-dashboard</td></tr>
+  <tr><td><strong>Student</strong></td><td>Sign up with a mobile number (no code is sent) and optionally a school code; school students see their school's leaderboard; free/trial students see the free lessons and a clear "Paid plan" label on the rest.</td><td>/login?role=student&amp;mode=signup</td></tr>
+  <tr><td><strong>Parent</strong></td><td>Unchanged; can also be linked by phone number now.</td><td>/parent-dashboard</td></tr>
+</table>
+
+<div class="box warn">
+  <strong>Two things to know before testing</strong><br>
+  1. Today every class has <em>one</em> published chapter (Sets). The default free rule is "the first chapter", so trial students currently see every lesson. To see the lock in action, set <em>Free lessons in each free chapter</em> to 1 or 2 in Super Admin → Schools → Access settings (scenario 6). Set it back to 0 afterwards if you want trial schools to see the whole first chapter.<br>
+  2. There is no online payment. "Paid" means you marked it: a school's plan is set by you in the Schools tab, and an individual student's Paid tick is in the Users tab.
+</div>
+
+<h2>2. Accounts you will create while testing</h2>
+<table>
+  <tr><th>Account</th><th>How it is made</th><th>Signs in with</th></tr>
+  <tr><td>School admin</td><td>By you, when you create the school (or later with "Add admin")</td><td>Mobile number + password at /login?role=school</td></tr>
+  <tr><td>Teacher of a school</td><td>By the school admin, Teachers tab</td><td>Mobile number + password at /login?role=teacher</td></tr>
+  <tr><td>Student of a school</td><td>By the school admin or teacher (add / import), or self sign-up with the school code</td><td>Mobile number + password at /login?role=student</td></tr>
+  <tr><td>Individual student / parent / teacher</td><td>Self sign-up (mobile number required, email optional)</td><td>Mobile number or email + password</td></tr>
+</table>
+<p class="small">Use made-up mobile numbers for tests (for example 0300 0000101, 0300 0000102 …). A number can be used once on the platform. Passwords are at least 6 characters. Generated passwords look like <code>Tiger4821</code> and are shown only once, so write them down.</p>
+
+<h2>3. Test scenarios</h2>
+<p>Tick each box as you go. "You should see" tells you the expected result.</p>
+
+<div class="scenario">
+  <h3>Scenario 1 – Create a school <span class="pill">Super Admin</span></h3>
+  <p class="goal">Goal: a new school with its code, a 14-day trial, a seat limit and its first admin.</p>
+  <ol>
+    <li>Sign in at /login with your super admin email and open <strong>Schools</strong>.</li>
+    <li>Click <strong>New school</strong>. Enter the name (e.g. <em>Eagle Public School</em>), city, seat limit <strong>5</strong>, keep "14-day free trial".</li>
+    <li>Fill the first admin: name, mobile number, password. Click <strong>Create school</strong>.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> a green message "… created with code EAGLE-1" (the code comes from the name), a blue box with the admin's phone and password, and the school in the list with <em>Trial · 14 days left</em> and seats <em>0 / 5</em>. Creating a second school with the same admin phone is refused: "This phone number already has an account".</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 2 – School admin signs in and sets up classes <span class="pill">School Admin</span></h3>
+  <p class="goal">Goal: the school admin reaches only their own school and creates sections.</p>
+  <ol>
+    <li>Open /login?role=school (or the "School admin sign in" button on the home page). Enter the admin's mobile number and password.</li>
+    <li>On the panel, open <strong>Classes &amp; Sections</strong>. Create <strong>Class 6 / A</strong> and <strong>Class 7 / A</strong>.</li>
+    <li>Try to create Class 6 / A again.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> the panel header shows the school name and code with <em>Trial · N days left</em>; the Overview shows the trial end date and "0 of 5 seats"; sections <em>6-A</em> and <em>7-A</em> appear with 0 students; the duplicate is refused with "Section 6-A already exists".</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 3 – Add a teacher and students <span class="pill">School Admin</span></h3>
+  <p class="goal">Goal: accounts created by the school, with passwords shown once.</p>
+  <ol>
+    <li><strong>Teachers</strong> tab → Add teacher: name, mobile, leave password blank, tick <em>6-A</em>. Add.</li>
+    <li><strong>Students</strong> tab → Add student: name, mobile, Class 6, section 6-A. Add.</li>
+    <li>Students → <strong>Bulk import</strong>. Paste three lines, one per student: <code>Name, Phone, Class, Section</code> for example:<br>
+      <code>Ali Ahmed, 03000000111, 6, A</code><br><code>Sara Malik, 03000000112, 7, A, Sara2026</code><br><code>Bad Row, 0300, 6, A</code><br>
+      Click <strong>Check rows</strong>, then <strong>Create 2 accounts</strong>.</li>
+    <li>Click <strong>Download logins</strong>.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> each new account's phone and generated password in a blue box; the check marks the third row "Phone number is not valid"; the import creates 2 and fails 1; a CSV with the logins downloads; the Students list shows every student with class-section, <em>Free</em> badge, "Not yet" for the diagnostic and <em>Active</em>. The Overview seat bar now says 3 of 5.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 4 – A student joins with the school code <span class="pill">Student</span></h3>
+  <p class="goal">Goal: self sign-up by phone, linked to the school by code; the seat limit holds.</p>
+  <ol>
+    <li>Open /login?role=student&amp;mode=signup (the home page "Get Started" also lands here).</li>
+    <li>Enter name, mobile, password, Class 6, school code <em>EAGLE-1</em> (lowercase works too) and a parent's phone. Create Account.</li>
+    <li>Repeat with two more students to reach the seat limit of 5, then try a sixth.</li>
+    <li>Try a wrong code, e.g. <em>NOPE-9</em>.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> the student lands on the diagnostic test; the school admin's Students tab lists them in Class 6 (no section yet, the admin can set one); the sixth sign-up is refused with "The school has used all 5 of its seats"; the wrong code says "That school code was not found".</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 5 – Phone sign-in and password reset <span class="pill">All roles</span></h3>
+  <ol>
+    <li>Sign out. Sign in as the student with the mobile number (any of these forms work: 03000000111, 0300-0000111, +92 300 0000111) and the password.</li>
+    <li>Sign in with a wrong password.</li>
+    <li>As school admin, Students → key icon <em>Reset password</em> on a student; sign in with the new password.</li>
+    <li>Sign in with an old <em>email</em> account you already had (a demo student or teacher).</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> all phone forms sign in; a wrong password says "The phone/email or the password is wrong"; the new password works and the old one does not; email accounts sign in exactly as before.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 6 – What a trial student can open <span class="pill">Student</span></h3>
+  <ol>
+    <li>In Super Admin → Schools → <strong>Access settings</strong>, set <em>Free lessons in each free chapter</em> to <strong>1</strong> and save.</li>
+    <li>Sign in as a student of the trial school and finish the diagnostic (or open the dashboard if already done).</li>
+    <li>Look at "Your 5 active topics" and the Learn page; open the first lesson; then try the second lesson or its quiz.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> a grey "Free lessons" notice on the dashboard explaining the trial; the first lesson opens; later lessons show <em>Paid plan</em> and opening one says "Your school's trial includes the first lesson of the first chapter. Ask your school to upgrade…". The teacher and school admin panels show the student as <em>Free</em>.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 7 – Paid plan, demo trial and individually paid students <span class="pill">Super Admin</span></h3>
+  <ol>
+    <li>Schools → <strong>Manage</strong> the school → Plan <em>Paid</em> → Save. Reload the student's dashboard.</li>
+    <li>Set the plan back to <em>Trial</em>, tick <em>Demo trial: open the whole curriculum during the trial</em> → Save. Reload the student.</li>
+    <li>Untick demo. Then in <strong>Users</strong>, filter by the school, tick <em>Paid</em> for one student only. Reload that student.</li>
+    <li>Set <em>Free lessons in each free chapter</em> back to 0 when you are done.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> paid plan → the notice disappears and every lesson opens; demo trial → the same; after unticking demo, only the individually paid student has everything (badge <em>Paid</em>), the others are <em>Free</em> again.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 8 – Teacher of a school <span class="pill">Teacher</span></h3>
+  <ol>
+    <li>Sign in at /login?role=teacher with the teacher's mobile and password.</li>
+    <li>Look at the dashboard header, the student list and the class filter.</li>
+    <li>Open <strong>Add students</strong> and add one to 6-A. Try to reset a 7-A student's password (there is none in the list – that is the point).</li>
+    <li>Open <strong>Homework</strong>: pick Class 6, a lesson, "Whole class" and the section <em>6-A only</em>. Assign.</li>
+    <li>Sign in as a 6-A student and as a Class 6 student without a section.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> the header shows the school name and plan badge; only 6-A students are listed, each with a section and a Free/Paid badge; the homework appears for the 6-A student but not for the Class 6 student without a section; the teacher cannot see or touch students outside their sections. A teacher with no sections ticked sees the whole school.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 9 – Expired trial <span class="pill">Super Admin</span> <span class="pill">Teacher</span></h3>
+  <ol>
+    <li>Schools → Manage → Plan <em>Expired / free</em> → Save (or set the trial end date to yesterday).</li>
+    <li>Sign in as the school admin and as the teacher. Open Homework as the teacher with <em>Free lessons in each free chapter</em> = 1.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> the panels still work fully; the school admin overview says "Trial ended"; the teacher's Homework tab shows an amber notice and locked lessons with a lock icon that cannot be ticked; assigning a free lesson still works; students keep the free lessons only.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 10 – Suspend a school, suspend a person <span class="pill">Super Admin</span> <span class="pill">School Admin</span></h3>
+  <ol>
+    <li>Schools → Manage → Status <em>Suspended</em> → Save. Try the school admin, teacher and student sign-ins.</li>
+    <li>Set the status back to <em>Active</em>.</li>
+    <li>As school admin, Students → suspend one student; try to sign in as that student; unsuspend.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> every member of a suspended school is refused with "Your school's account is suspended"; a suspended person sees "This account is deactivated"; after unsuspending, sign-in works again.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 11 – Remove and delete <span class="pill">School Admin</span> <span class="pill">Super Admin</span></h3>
+  <ol>
+    <li>As school admin, Students → <em>Remove from school</em> on a student. Check the Overview seats. Sign in as that student.</li>
+    <li>Teachers → <em>Remove from school</em> on the teacher. Try the teacher sign-in.</li>
+    <li>As super admin, Users → filter by the school → trash icon on a student → type DELETE.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> the removed student keeps the account and progress as an individual student and a seat is freed; the removed teacher is deactivated ("This account is deactivated"); the deleted student disappears from Users and cannot sign in; the seat is freed.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 12 – Annual promotion <span class="pill">School Admin</span></h3>
+  <ol>
+    <li>Have students in 6-A, 7-A and 8-A. Open <strong>Promotion</strong> and read the preview table.</li>
+    <li>Type the school code to confirm and click <strong>Promote all classes</strong>.</li>
+    <li>Open Students; switch the filter to <em>Graduated</em>. Try Promotion again.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> the preview lists 6-A → 7-A, 7-A → 8-A, 8-A → Graduated and any sections that will be created; after running, students moved up with their section names kept, Class 8 students are listed under Graduated with all their history, seats count current students only, promoted students are asked to take the new class's diagnostic (if the box was ticked), and a second run within six months needs the "I understand" tick.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 13 – Reports <span class="pill">School Admin</span> <span class="pill">Teacher</span></h3>
+  <ol>
+    <li>School admin → <strong>Reports</strong>. Click <em>Sections (Excel)</em>, <em>Students (Excel)</em> and <em>Print / Save as PDF</em>.</li>
+    <li>Students tab → <em>Export CSV</em>.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> a table per section (students, diagnostic done, quizzes, lessons, average XP, active last 7 days, paid/free) and a table of every student; the CSV files open in Excel; the print view has the school name and date and saves as PDF from the browser's print dialog.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 14 – Two schools never see each other <span class="pill">Isolation</span></h3>
+  <ol>
+    <li>Create a second school (Scenario 1) with its own admin, teacher and students.</li>
+    <li>Sign in as school B's admin: look at Students, Teachers, Reports. Open <code>/school-admin?schoolId=&lt;school A id&gt;</code> (copy the id from the Open panel link in Super Admin).</li>
+    <li>Sign in as a student of school A and open Leaderboard; then as a student of school B.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> school B's admin sees only school B; the school A link answers "You can only manage your own school"; each student sees a board with their own school's name and only its students; individual students keep the public board. Homework from school A never reaches school B.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 15 – Super Admin analytics and users <span class="pill">Super Admin</span></h3>
+  <ol>
+    <li>Open <strong>Analytics</strong> after a day or two of real use.</li>
+    <li>Open <strong>Users</strong>: search by phone, filter by school and by role, reset a password, revoke sessions.</li>
+    <li>Open <strong>Leaderboard</strong>: choose a school in the first drop-down.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> Active today (DAU), active 7/30 days, regular students (3+ days), signed-up vs diagnostic completed vs drop-offs vs one-lesson completers, paid vs free, school vs individual, a bar per day, most failed questions with their wrong rate, top misconceptions with the lessons they appear in, and a schools table. Users shows School, Class, Plan columns and the new actions. The leaderboard shows the chosen school's board and its reward decision.</div>
+</div>
+
+<h2>4. Messages you may see and what they mean</h2>
+<table>
+  <tr><th style="width:42%">Message</th><th>Meaning</th></tr>
+  <tr><td>This phone number already has an account. Sign in instead, or use another number.</td><td>Each mobile number can be used once on the platform.</td></tr>
+  <tr><td>The school has used all N of its seats. Ask the platform admin to add seats.</td><td>Seat limit reached; raise it in Super Admin → Schools → Manage.</td></tr>
+  <tr><td>That school code was not found.</td><td>Typo in the code, or the school does not exist.</td></tr>
+  <tr><td>You can only manage your own school / That record belongs to another school</td><td>Cross-school attempt refused (HTTP 403).</td></tr>
+  <tr><td>Your school's account is suspended.</td><td>The school is suspended by the super admin.</td></tr>
+  <tr><td>This account is deactivated.</td><td>The person is suspended or removed.</td></tr>
+  <tr><td>Your school's trial includes … / plan has ended …</td><td>The lesson is outside the free lessons; a paid plan or an individual Paid tick opens it.</td></tr>
+  <tr><td>Choose a section for whole-class homework</td><td>A teacher with assigned sections must pick one of them.</td></tr>
+  <tr><td>Type the school code … to confirm</td><td>Promotion needs the exact code typed in.</td></tr>
+  <tr><td>This school was promoted on … tick "I understand"</td><td>Promotion ran less than six months ago.</td></tr>
+</table>
+
+<h2>5. Limits and decisions to know</h2>
+<ul>
+  <li><strong>Classes 6, 7 and 8</strong> only, because the curriculum and diagnostics exist for those. Promotion graduates Class 8. Adding Class 9 later needs content first.</li>
+  <li><strong>Free rule:</strong> first chapter(s) of each class, optionally only the first N lessons of each. With one chapter per class live today, use the lesson limit to restrict trials.</li>
+  <li><strong>Individual (old) students</strong> stay on the full curriculum unless you untick Paid for them in Users. Unticking also removes them from weekly rewards, as before.</li>
+  <li><strong>Password reset</strong> for phone accounts is done by the school admin, teacher (own sections) or super admin; there is no email reset link for phone accounts.</li>
+  <li><strong>Individual teachers</strong> who signed up themselves and have no classes ticked still see every individual student (unchanged from before). Tick their classes in Users to limit them.</li>
+  <li><strong>School leaderboards</strong> close every Monday like the public board; rewards per school are approved in Super Admin → Leaderboard with the school selected.</li>
+  <li><strong>Trial length, free lessons and default seats</strong> are in Super Admin → Schools → Access settings.</li>
+</ul>
+
+<p class="small">Everything in this guide was verified on 22 October 2026 with 83 automated checks on production plus a browser walk-through; all test schools and accounts were deleted afterwards.</p>
+
+</body>
+</html>
