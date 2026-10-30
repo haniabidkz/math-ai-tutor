@@ -273,7 +273,7 @@ export default function SuperAdminPage() {
                 <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4 px-4 py-3">
                     <div className="flex items-center gap-3">
                         <ShieldCheck className="h-6 w-6 text-emerald-400" />
-                        <div><h1 className="font-semibold">SMART Tutor Super Admin</h1><p className="text-xs text-slate-400">{email}</p></div>
+                        <div><h1 className="font-semibold">LearnAI Tutor Super Admin</h1><p className="text-xs text-slate-400">{email}</p></div>
                     </div>
                     <div className="flex gap-2">
                         <Button variant="outline" size="sm" className="border-slate-700 bg-transparent text-white" onClick={() => loadAll()}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>

@@ -20,12 +20,12 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
     title: {
-        template: "%s | SMART Math Tutor",
-        default: "SMART Math Tutor - Learn Math with AI",
+        template: "%s | LearnAI Tutor",
+        default: "LearnAI Tutor - Learn Math with AI",
     },
-    description: "A patient, encouraging AI math tutor focused on understanding, not speed or marks.",
+    description: "A patient, encouraging AI tutor focused on understanding, not speed or marks.",
     keywords: ["math", "tutor", "AI", "learning", "education", "children"],
-    authors: [{ name: "SMART Math Tutor Team" }],
+    authors: [{ name: "LearnAI Tutor Team" }],
     icons: {
         icon: "/favicon.ico",
     },

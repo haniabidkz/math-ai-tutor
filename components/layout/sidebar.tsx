@@ -83,7 +83,7 @@ export function Sidebar({ user, onSignOut }: SidebarProps) {
                             🧮
                         </div>
                         <span className="font-bold text-xl tracking-tight text-foreground">
-                            SMART <span className="text-primary">Tutor</span>
+                            LearnAI <span className="text-primary">Tutor</span>
                         </span>
                     </div>
 

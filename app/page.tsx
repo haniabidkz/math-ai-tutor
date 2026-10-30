@@ -82,7 +82,7 @@ export default function Home() {
                         <div className="bg-primary/10 p-2 rounded-lg text-primary">
                             <Calculator className="h-6 w-6" />
                         </div>
-                        <span className="text-xl font-bold tracking-tight">SMART Tutor</span>
+                        <span className="text-xl font-bold tracking-tight">LearnAI Tutor</span>
                     </div>
                     <div className="flex gap-4">
                         <Button variant="ghost" asChild>
@@ -195,7 +195,7 @@ export default function Home() {
             {/* Footer */}
             <footer className="py-8 border-t bg-slate-50 dark:bg-slate-900">
                 <div className="container mx-auto px-6 text-center text-sm text-muted-foreground">
-                    <p>&copy; {new Date().getFullYear()} SMART Math Tutor. Powered by AI.</p>
+                    <p>&copy; {new Date().getFullYear()} LearnAI Tutor (formerly SMART Math Tutor). Powered by AI.</p>
                 </div>
             </footer>
         </div>
