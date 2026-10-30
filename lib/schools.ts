@@ -89,6 +89,30 @@ const optionalEmail = z.string().trim().optional().transform((value, context) =>
 });
 
 const classField = z.coerce.number().refine(isSchoolClass, { message: `Class must be ${SUPPORTED_SCHOOL_CLASSES.join(", ")}` });
+const classList = z.array(classField).max(10).transform((values) => [...new Set(values)].sort());
+
+/** On an update, a missing phone means "keep it"; a given one must be valid. */
+const updatePhone = z.string().trim().optional().transform((value, context) => {
+    if (value === undefined || value === "") return undefined;
+    const phone = normalizePhone(value);
+    if (!phone) {
+        context.addIssue({ code: "custom", message: "Enter a valid mobile number, like 03001234567" });
+        return z.NEVER;
+    }
+    return phone;
+});
+
+/** On an update, a missing email means "keep it", an empty one clears it. */
+const updateEmail = z.string().trim().optional().transform((value, context) => {
+    if (value === undefined) return undefined;
+    if (value === "") return null;
+    const email = value.toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        context.addIssue({ code: "custom", message: "Enter a valid email address" });
+        return z.NEVER;
+    }
+    return email;
+});
 const optionalClass = z.coerce.number().optional().refine((value) => value === undefined || isSchoolClass(value), { message: `Class must be ${SUPPORTED_SCHOOL_CLASSES.join(", ")}` });
 const optionalId = z.string().trim().max(120).optional().transform((value) => (value ? value : null));
 const dateField = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-12-31");
@@ -163,25 +187,73 @@ export type ManagedStudentInput = z.infer<typeof managedStudentSchema>;
 
 export const studentUpdateSchema = z.object({
     name: nameField.optional(),
+    phone: updatePhone,
+    email: updateEmail,
     classLevel: optionalClass,
     sectionId: z.string().trim().max(120).nullable().optional(),
     parentPhone: optionalPhone,
     parentEmail: optionalEmail,
 });
+export type StudentUpdate = z.infer<typeof studentUpdateSchema>;
 
+/** A teacher looks after whole classes, particular sections, or (nothing ticked) the whole school. */
 export const managedTeacherSchema = z.object({
     name: nameField,
     phone: phoneField,
     email: optionalEmail,
     password: optionalPassword,
+    classes: classList.default([]),
     sectionIds: z.array(z.string().trim().min(1)).max(50).default([]),
 });
 export type ManagedTeacherInput = z.infer<typeof managedTeacherSchema>;
 
 export const teacherUpdateSchema = z.object({
     name: nameField.optional(),
+    phone: updatePhone,
+    email: updateEmail,
+    classes: classList.optional(),
     sectionIds: z.array(z.string().trim().min(1)).max(50).optional(),
 });
+export type TeacherUpdate = z.infer<typeof teacherUpdateSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// What a school teacher may see
+
+export interface TeacherScopeRule {
+    /** Whole classes (every section, and students without a section). */
+    classes: number[];
+    /** Particular sections. */
+    sectionIds: string[];
+}
+
+/** Null when nothing is ticked: the teacher sees the whole school. */
+export function teacherRuleFromProfile(profile: Record<string, unknown> | null | undefined): TeacherScopeRule | null {
+    const classes = Array.isArray(profile?.assignedClassLevels) ? [...new Set(profile.assignedClassLevels.map(Number))].filter(isSchoolClass).sort() : [];
+    const sectionIds = Array.isArray(profile?.assignedSectionIds) ? profile.assignedSectionIds.map(String).filter(Boolean) : [];
+    return classes.length || sectionIds.length ? { classes, sectionIds } : null;
+}
+
+export function teacherCanSeeStudent(rule: TeacherScopeRule | null, student: { classLevel: number; sectionId: string | null }): boolean {
+    if (!rule) return true;
+    if (rule.classes.includes(student.classLevel)) return true;
+    return Boolean(student.sectionId && rule.sectionIds.includes(student.sectionId));
+}
+
+export function teacherCanUseSection(rule: TeacherScopeRule | null, section: { id: string; classLevel: number }): boolean {
+    return !rule || rule.classes.includes(section.classLevel) || rule.sectionIds.includes(section.id);
+}
+
+/** True when the teacher may address every student of the class, not only a section of it. */
+export function teacherHasWholeClass(rule: TeacherScopeRule | null, classLevel: number): boolean {
+    return !rule || rule.classes.includes(classLevel);
+}
+
+/** The classes a teacher works with: ticked classes plus the classes of ticked sections; all when unrestricted. */
+export function teacherClassesFor(rule: TeacherScopeRule | null, sections: Array<{ id: string; classLevel: number }>): number[] {
+    if (!rule) return [...SUPPORTED_SCHOOL_CLASSES];
+    const fromSections = sections.filter((section) => rule.sectionIds.includes(section.id)).map((section) => section.classLevel);
+    return [...new Set([...rule.classes, ...fromSections])].filter(isSchoolClass).sort();
+}
 
 /** Generic member actions shared by the school and super-admin panels. */
 export const memberActionSchema = z.object({

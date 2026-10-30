@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged, signOut } from "firebase/auth";
@@ -10,7 +10,7 @@ import {
 import { PlanBadge } from "@/components/school/plan-badge";
 import { PromotionPanel } from "@/components/school/promotion-panel";
 import { ReportPanel } from "@/components/school/report-panel";
-import { formatDate, jsonInit, schoolApi } from "@/components/school/school-api";
+import { ApiError, formatDate, jsonInit, schoolApi } from "@/components/school/school-api";
 import { SectionManager } from "@/components/school/section-manager";
 import { StudentManager } from "@/components/school/student-manager";
 import { TeacherManager } from "@/components/school/teacher-manager";
@@ -47,39 +47,64 @@ function SchoolAdminContent() {
     const [notice, setNotice] = useState("");
     const [contact, setContact] = useState({ name: "", city: "", contactName: "", contactPhone: "", contactEmail: "" });
     const [saving, setSaving] = useState(false);
+    /** Another sign-in in this browser (a different tab) replaced the school admin's session. */
+    const [switched, setSwitched] = useState<string | null>(null);
+    const activeUid = useRef<string | null>(null);
 
     const schoolId = superAdmin ? requestedSchool : null;
+
+    const applyOverview = useCallback((data: Overview) => {
+        setOverview(data);
+        setContact({ name: data.school.name, city: data.school.city, contactName: data.school.contactName, contactPhone: data.school.contactPhone ? formatPhone(data.school.contactPhone) : "", contactEmail: data.school.contactEmail });
+    }, []);
 
     const load = useCallback(async () => {
         setError("");
         try {
-            const data = await schoolApi<Overview>("/api/school/overview", undefined, superAdmin ? requestedSchool : null);
-            setOverview(data);
-            setContact({ name: data.school.name, city: data.school.city, contactName: data.school.contactName, contactPhone: data.school.contactPhone ? formatPhone(data.school.contactPhone) : "", contactEmail: data.school.contactEmail });
+            applyOverview(await schoolApi<Overview>("/api/school/overview", undefined, superAdmin ? requestedSchool : null));
         } catch (caught) {
+            if (caught instanceof ApiError && caught.status === 401) return router.replace("/login?role=school");
             setError(caught instanceof Error ? caught.message : "The school could not be loaded");
         }
-    }, [superAdmin, requestedSchool]);
+    }, [superAdmin, requestedSchool, applyOverview, router]);
 
+    // Who may manage the school is decided by the server from the account itself, not from the
+    // browser's token claims, so a stale or missing claim can never lock a real admin out.
     useEffect(() => onAuthStateChanged(auth, async (user) => {
         if (!user) return router.replace("/login?role=school");
-        const token = await user.getIdTokenResult(true);
-        const isSuper = token.claims.super_admin === true;
-        if (!isSuper && token.claims.role !== "school_admin") {
-            setError("This account is not a school admin. Sign in with your school admin account.");
-            setReady(true);
+        if (activeUid.current && activeUid.current !== user.uid) {
+            setSwitched(user.displayName || user.email || "another account");
             return;
         }
-        if (isSuper && !requestedSchool) {
-            setError("Open a school from the Super Admin Schools tab.");
+        try {
+            const token = await user.getIdTokenResult();
+            const isSuper = token.claims.super_admin === true;
+            if (isSuper && !requestedSchool) {
+                setError("Open a school from the Super Admin Schools tab.");
+                setReady(true);
+                return;
+            }
+            const data = await schoolApi<Overview>("/api/school/overview", undefined, isSuper ? requestedSchool : null);
+            if (data.viewer.role === "teacher") {
+                setError("This is a teacher account. Teachers use the teacher dashboard; sign in here with the school admin account.");
+                setReady(true);
+                return;
+            }
+            activeUid.current = user.uid;
+            setSuperAdmin(isSuper);
+            applyOverview(data);
             setReady(true);
-            return;
+        } catch (caught) {
+            const status = caught instanceof ApiError ? caught.status : 0;
+            if (status === 401) return router.replace("/login?role=school");
+            if (status === 403) {
+                setError(`This account (${user.displayName || user.email || "unknown"}) is not a school admin. If you signed in with another account in a different tab of this browser, sign in again here with the school admin account.`);
+            } else {
+                setError(caught instanceof Error ? caught.message : "The school could not be loaded. Check your connection and refresh.");
+            }
+            setReady(true);
         }
-        setSuperAdmin(isSuper);
-        setReady(true);
-    }), [router, requestedSchool]);
-
-    useEffect(() => { if (ready && !error) void load(); }, [ready, error, load]);
+    }), [router, requestedSchool, applyOverview]);
 
     function say(message: string) {
         setNotice(message);
@@ -101,6 +126,16 @@ function SchoolAdminContent() {
     }
 
     if (!ready) return <div className="flex min-h-screen items-center justify-center text-muted-foreground">Loading…</div>;
+    if (switched) {
+        return (
+            <main className="mx-auto max-w-xl p-8">
+                <Alert className="border-amber-300 bg-amber-50"><ShieldCheck className="h-4 w-4" /><AlertTitle>Signed in as a different account</AlertTitle><AlertDescription>This browser is now signed in as <strong>{switched}</strong> (probably from another tab). A browser holds one sign-in at a time, so this school panel stopped. Sign in again with the school admin account to continue here.</AlertDescription></Alert>
+                <div className="mt-4 flex gap-2">
+                    <Button asChild><Link href="/login?role=school">Sign in as school admin</Link></Button>
+                </div>
+            </main>
+        );
+    }
     if (error && !overview) {
         return (
             <main className="mx-auto max-w-xl p-8">

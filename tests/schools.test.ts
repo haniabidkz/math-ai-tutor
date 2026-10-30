@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-    firstIssue, generatePassword, managedStudentSchema, normalizeSchoolCode, parseClassCell, parseStudentImport, planPromotion,
-    schoolCodeFor, schoolCodePrefix, schoolInputSchema, sectionInputSchema, sectionLabel, signupSchema,
+    firstIssue, generatePassword, managedStudentSchema, managedTeacherSchema, normalizeSchoolCode, parseClassCell, parseStudentImport, planPromotion,
+    schoolCodeFor, schoolCodePrefix, schoolInputSchema, sectionInputSchema, sectionLabel, signupSchema, studentUpdateSchema,
+    teacherCanSeeStudent, teacherCanUseSection, teacherClassesFor, teacherHasWholeClass, teacherRuleFromProfile, teacherUpdateSchema,
 } from "@/lib/schools";
 
 describe("school codes", () => {
@@ -43,6 +44,53 @@ describe("request schemas", () => {
         expect(student.password).toBeNull();
         expect(student.sectionId).toBeNull();
         expect(managedStudentSchema.safeParse({ name: "Sara Malik", phone: "03001234568", classLevel: 6, password: "123" }).success).toBe(false);
+    });
+});
+
+describe("teacher scope: whole classes, sections, or the whole school", () => {
+    const sections = [{ id: "s6a", classLevel: 6 }, { id: "s7a", classLevel: 7 }, { id: "s7b", classLevel: 7 }];
+    const rule = { classes: [6], sectionIds: ["s7a"] };
+
+    it("sees the whole school when nothing is ticked", () => {
+        expect(teacherRuleFromProfile({})).toBeNull();
+        expect(teacherRuleFromProfile({ assignedClassLevels: [], assignedSectionIds: [] })).toBeNull();
+        expect(teacherCanSeeStudent(null, { classLevel: 8, sectionId: null })).toBe(true);
+        expect(teacherHasWholeClass(null, 8)).toBe(true);
+        expect(teacherClassesFor(null, sections)).toEqual([6, 7, 8]);
+    });
+
+    it("sees every student of a ticked class and only the students of a ticked section", () => {
+        expect(teacherCanSeeStudent(rule, { classLevel: 6, sectionId: null })).toBe(true);
+        expect(teacherCanSeeStudent(rule, { classLevel: 6, sectionId: "s6a" })).toBe(true);
+        expect(teacherCanSeeStudent(rule, { classLevel: 7, sectionId: "s7a" })).toBe(true);
+        expect(teacherCanSeeStudent(rule, { classLevel: 7, sectionId: "s7b" })).toBe(false);
+        expect(teacherCanSeeStudent(rule, { classLevel: 7, sectionId: null })).toBe(false);
+        expect(teacherCanSeeStudent(rule, { classLevel: 8, sectionId: null })).toBe(false);
+    });
+
+    it("knows which sections and classes the teacher may use", () => {
+        expect(teacherCanUseSection(rule, sections[0])).toBe(true);
+        expect(teacherCanUseSection(rule, sections[1])).toBe(true);
+        expect(teacherCanUseSection(rule, sections[2])).toBe(false);
+        expect(teacherHasWholeClass(rule, 6)).toBe(true);
+        expect(teacherHasWholeClass(rule, 7)).toBe(false);
+        expect(teacherClassesFor(rule, sections)).toEqual([6, 7]);
+    });
+
+    it("reads a clean rule from the stored profile", () => {
+        expect(teacherRuleFromProfile({ assignedClassLevels: [7, 7, 9, "6"], assignedSectionIds: ["x", ""] })).toEqual({ classes: [6, 7], sectionIds: ["x"] });
+    });
+
+    it("validates teacher forms with classes and keeps the phone on an update unless given", () => {
+        const teacher = managedTeacherSchema.parse({ name: "Ms Khan", phone: "03001234567", classes: ["7", 6, 6], sectionIds: ["s7a"] });
+        expect(teacher.classes).toEqual([6, 7]);
+        expect(managedTeacherSchema.parse({ name: "Ms Khan", phone: "03001234567" }).classes).toEqual([]);
+        expect(managedTeacherSchema.safeParse({ name: "Ms Khan", phone: "03001234567", classes: [9] }).success).toBe(false);
+        expect(teacherUpdateSchema.parse({ name: "New Name" })).toEqual({ name: "New Name" });
+        expect(teacherUpdateSchema.parse({ phone: "0300-1234567", email: "" })).toEqual({ phone: "+923001234567", email: null });
+        expect(teacherUpdateSchema.parse({ email: "Ms@School.PK", classes: [] })).toEqual({ email: "ms@school.pk", classes: [] });
+        expect(firstIssue(teacherUpdateSchema.safeParse({ phone: "0300" }).error)).toContain("valid mobile number");
+        expect(studentUpdateSchema.parse({ phone: "03001234568" }).phone).toBe("+923001234568");
     });
 });
 

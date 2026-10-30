@@ -34,7 +34,7 @@ export function SectionManager({ schoolId, sections, onChanged }: { schoolId?: s
         <div className="space-y-4">
             {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
             <Card>
-                <CardHeader><CardTitle className="text-base">New section</CardTitle><CardDescription>Classes come from the curriculum (6, 7, 8); sections are yours, for example A, B or Blue.</CardDescription></CardHeader>
+                <CardHeader><CardTitle className="text-base">New section</CardTitle><CardDescription>Classes come from the curriculum (6, 7, 8); sections are yours, for example A, B or Blue. Sections are optional: a school that teaches each class as one group can skip this tab and put students straight into the class.</CardDescription></CardHeader>
                 <CardContent>
                     <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); void run(() => api("/api/school/sections", jsonInit("POST", { classLevel: Number(classLevel), name })).then(() => setName("")), "The section could not be created"); }}>
                         <div className="space-y-1">

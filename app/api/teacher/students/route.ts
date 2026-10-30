@@ -4,6 +4,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { toDiagnosticSummary } from "@/lib/diagnostic-summary";
 import { effectiveTeacherClasses } from "@/lib/homework";
 import { displayContact } from "@/lib/phone";
+import { teacherCanSeeStudent, teacherCanUseSection, teacherClassesFor, teacherRuleFromProfile } from "@/lib/schools";
 import { getAccessSettings, listSections, schoolPlanInfo } from "@/lib/schools-server";
 import { authErrorResponse, requireUser, type AuthenticatedUser } from "@/lib/server-auth";
 
@@ -21,23 +22,23 @@ function toIso(value: unknown): string {
 
 /**
  * Which students a teacher may see. A school teacher sees their school only, narrowed to
- * their sections when the admin assigned some; an individual teacher sees individual
+ * the classes and sections the admin ticked for them; an individual teacher sees individual
  * students in their classes, as before schools existed; the super admin sees everyone.
  */
-async function visibleStudents(user: AuthenticatedUser) {
+async function visibleStudents(user: AuthenticatedUser, schoolSections: Array<{ id: string; classLevel: number }>) {
     const profile = user.profile ?? {};
-    const classes = user.role === "teacher" ? effectiveTeacherClasses(profile.assignedClasses) : [6, 7, 8];
-    const sectionIds = Array.isArray(profile.assignedSectionIds) && profile.assignedSectionIds.length ? profile.assignedSectionIds.map(String) : null;
     if (user.role === "teacher" && user.schoolId) {
+        const rule = teacherRuleFromProfile(profile);
+        const classes = teacherClassesFor(rule, schoolSections);
         const snapshot = await adminDb.collection("students").where("schoolId", "==", user.schoolId).get();
         const docs = snapshot.docs.filter((doc) => {
             const data = doc.data();
             if (data.schoolStatus === "graduated") return false;
-            if (!classes.includes(Number(data.class) as 6 | 7 | 8)) return false;
-            return !sectionIds || (typeof data.sectionId === "string" && sectionIds.includes(data.sectionId));
+            return teacherCanSeeStudent(rule, { classLevel: Number(data.class), sectionId: typeof data.sectionId === "string" ? data.sectionId : null });
         });
         return { classes, docs };
     }
+    const classes = user.role === "teacher" ? effectiveTeacherClasses(profile.assignedClasses) : [6, 7, 8];
     const snapshot = await adminDb.collection("students").where("class", "in", classes).get();
     const docs = user.role === "teacher" ? snapshot.docs.filter((doc) => !doc.data().schoolId) : snapshot.docs;
     return { classes, docs };
@@ -51,11 +52,8 @@ async function visibleStudents(user: AuthenticatedUser) {
 export async function GET(request: NextRequest) {
     try {
         const user = await requireUser(request, ["teacher", "super_admin"]);
-        const [{ classes, docs }, settings, sections] = await Promise.all([
-            visibleStudents(user),
-            getAccessSettings(),
-            user.schoolId ? listSections(user.schoolId) : Promise.resolve([]),
-        ]);
+        const [settings, sections] = await Promise.all([getAccessSettings(), user.schoolId ? listSections(user.schoolId) : Promise.resolve([])]);
+        const { classes, docs } = await visibleStudents(user, sections);
         const plan = schoolPlanInfo(user.school);
         const students = docs.map((doc) => ({ uid: doc.id, data: doc.data() }));
 
@@ -117,7 +115,7 @@ export async function GET(request: NextRequest) {
         }
         results.sort((left, right) => Number(left.class) - Number(right.class) || String(left.sectionLabel ?? "").localeCompare(String(right.sectionLabel ?? "")) || String(left.name).localeCompare(String(right.name)));
 
-        const assignedSectionIds = Array.isArray(user.profile?.assignedSectionIds) ? user.profile!.assignedSectionIds.map(String) : [];
+        const rule = user.role === "teacher" ? teacherRuleFromProfile(user.profile) : null;
         return NextResponse.json({
             success: true,
             classes,
@@ -126,7 +124,8 @@ export async function GET(request: NextRequest) {
                 id: user.school.id, name: user.school.name, code: user.school.code, plan: user.school.effectivePlan,
                 trialDaysLeft: user.school.trialDaysLeft, seatsUsed: user.school.seatsUsed, seatLimit: user.school.seatLimit,
             } : null,
-            sections: assignedSectionIds.length ? sections.filter((section) => assignedSectionIds.includes(section.id)) : sections,
+            sections: sections.filter((section) => teacherCanUseSection(rule, section)),
+            rule,
         });
     } catch (error) {
         const auth = authErrorResponse(error);

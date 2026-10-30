@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { failure, ok } from "@/lib/api-response";
-import { normalizeSectionName, sectionInputSchema } from "@/lib/schools";
+import { normalizeSectionName, sectionInputSchema, teacherCanUseSection } from "@/lib/schools";
 import { createSection, deleteSection, listSections, updateSection } from "@/lib/schools-server";
 import { requireSchoolAdmin, requireSchoolStaff } from "@/lib/server-auth";
 
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     try {
         const scope = await requireSchoolStaff(request);
         const sections = await listSections(scope.schoolId);
-        return ok({ sections: scope.allowedSectionIds ? sections.filter((section) => scope.allowedSectionIds!.includes(section.id)) : sections });
+        return ok({ sections: sections.filter((section) => teacherCanUseSection(scope.rule, section)) });
     } catch (error) {
         return failure(error, "Sections could not be loaded");
     }

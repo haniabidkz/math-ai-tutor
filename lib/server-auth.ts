@@ -4,6 +4,7 @@ import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import { assertSuperAdminClaims, AuthorizationError, CROSS_TENANT_CODE, SCHOOL_SUSPENDED_CODE } from "@/lib/auth-claims";
 import { recordActivity } from "@/lib/analytics-server";
 import { isPhoneEmail } from "@/lib/phone";
+import { teacherRuleFromProfile, type TeacherScopeRule } from "@/lib/schools";
 import { getSchool } from "@/lib/schools-server";
 import type { School } from "@/types/school";
 import type { UserRole } from "@/types/user";
@@ -140,24 +141,23 @@ export async function requireSchoolAdmin(request: NextRequest): Promise<SchoolSc
 }
 
 export interface SchoolStaffScope extends SchoolScope {
-    /** Null means every section of the school; a teacher with sections sees only those. */
-    allowedSectionIds: string[] | null;
+    /** Null means the whole school; a teacher with classes or sections ticked sees only those. */
+    rule: TeacherScopeRule | null;
     isTeacher: boolean;
 }
 
 /**
- * A school admin, or a teacher who belongs to the school. Teachers are limited to their own
- * sections when the admin assigned them some.
+ * A school admin, or a teacher who belongs to the school. Teachers are limited to the classes
+ * and sections the admin ticked for them, when any.
  */
 export async function requireSchoolStaff(request: NextRequest): Promise<SchoolStaffScope> {
     const user = await requireUser(request, ["school_admin", "teacher", "super_admin"]);
     if (user.role !== "teacher") {
         const scope = await requireSchoolAdminFrom(request, user);
-        return { ...scope, allowedSectionIds: null, isTeacher: false };
+        return { ...scope, rule: null, isTeacher: false };
     }
     if (!user.schoolId || !user.school) throw new AuthorizationError(403, "Your account is not linked to a school");
-    const assigned = Array.isArray(user.profile?.assignedSectionIds) ? user.profile!.assignedSectionIds.map(String).filter(Boolean) : [];
-    return { user, schoolId: user.schoolId, school: user.school, allowedSectionIds: assigned.length ? assigned : null, isTeacher: true };
+    return { user, schoolId: user.schoolId, school: user.school, rule: teacherRuleFromProfile(user.profile), isTeacher: true };
 }
 
 async function requireSchoolAdminFrom(request: NextRequest, user: AuthenticatedUser): Promise<SchoolScope> {

@@ -44,7 +44,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
     const [preview, setPreview] = useState<{ rows: ImportPreviewRow[]; valid: number; invalid: number } | null>(null);
     const [outcomes, setOutcomes] = useState<ImportOutcome[] | null>(null);
     const [editing, setEditing] = useState<SchoolStudentRow | null>(null);
-    const [editForm, setEditForm] = useState({ name: "", classLevel: "6", sectionId: "", parentPhone: "", parentEmail: "" });
+    const [editForm, setEditForm] = useState({ name: "", phone: "", email: "", classLevel: "6", sectionId: "", parentPhone: "", parentEmail: "" });
 
     const headers = schoolId ? { "x-school-id": schoolId } : undefined;
     const api = <T,>(path: string, init?: RequestInit) => schoolApi<T>(path, { ...init, headers: { ...(init?.headers ?? {}), ...(headers ?? {}) } });
@@ -125,7 +125,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
 
     function startEdit(student: SchoolStudentRow) {
         setEditing(student);
-        setEditForm({ name: student.name, classLevel: String(student.classLevel), sectionId: student.sectionId ?? "", parentPhone: student.parentPhone ? formatPhone(student.parentPhone) : "", parentEmail: student.parentEmail ?? "" });
+        setEditForm({ name: student.name, phone: student.phone ? formatPhone(student.phone) : "", email: student.email, classLevel: String(student.classLevel), sectionId: student.sectionId ?? "", parentPhone: student.parentPhone ? formatPhone(student.parentPhone) : "", parentEmail: student.parentEmail ?? "" });
     }
 
     async function saveEdit(event: React.FormEvent) {
@@ -134,7 +134,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
         setBusy(true);
         try {
             await api("/api/school/students", jsonInit("PATCH", {
-                uid: editing.uid, name: editForm.name, classLevel: Number(editForm.classLevel), sectionId: editForm.sectionId || null,
+                uid: editing.uid, name: editForm.name, phone: editForm.phone || undefined, email: editForm.email, classLevel: Number(editForm.classLevel), sectionId: editForm.sectionId || null,
                 parentPhone: editForm.parentPhone || undefined, parentEmail: editForm.parentEmail || undefined,
             }));
             setEditing(null);
@@ -199,7 +199,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
 
             {mode === "add" ? (
                 <Card>
-                    <CardHeader><CardTitle className="text-base">Add one student</CardTitle><CardDescription>The student signs in with this phone number and password. Leave the password blank to get one made up.</CardDescription></CardHeader>
+                    <CardHeader><CardTitle className="text-base">Add one student</CardTitle><CardDescription>The student signs in with this phone number and password. Leave the password blank to get one made up. A section is optional: schools that teach a class as one group just pick the class.</CardDescription></CardHeader>
                     <CardContent>
                         <form onSubmit={addStudent} className="grid gap-3 md:grid-cols-2">
                             <div className="space-y-1"><Label htmlFor="st-name">Full name</Label><Input id="st-name" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></div>
@@ -213,7 +213,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
                             <div className="space-y-1">
                                 <Label htmlFor="st-section">Section</Label>
                                 <select id="st-section" className="h-9 w-full rounded-md border px-2 text-sm" value={form.sectionId} onChange={(event) => setForm({ ...form, sectionId: event.target.value })}>
-                                    <option value="">No section yet</option>
+                                    <option value="">No section (whole class)</option>
                                     {sectionsForClass(form.classLevel).map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
                                 </select>
                             </div>
@@ -334,6 +334,8 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
                     <CardContent>
                         <form onSubmit={saveEdit} className="grid gap-3 md:grid-cols-2">
                             <div className="space-y-1"><Label htmlFor="ed-name">Full name</Label><Input id="ed-name" required value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} /></div>
+                            <div className="space-y-1"><Label htmlFor="ed-phone">Mobile number <span className="font-normal text-muted-foreground">(sign-in; a change signs the student out everywhere)</span></Label><Input id="ed-phone" required value={editForm.phone} onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })} /></div>
+                            <div className="space-y-1"><Label htmlFor="ed-email">Email <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id="ed-email" type="email" value={editForm.email} onChange={(event) => setEditForm({ ...editForm, email: event.target.value })} /></div>
                             <div className="space-y-1">
                                 <Label htmlFor="ed-class">Class</Label>
                                 <select id="ed-class" className="h-9 w-full rounded-md border px-2 text-sm" value={editForm.classLevel} onChange={(event) => setEditForm({ ...editForm, classLevel: event.target.value, sectionId: "" })}>
@@ -343,7 +345,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
                             <div className="space-y-1">
                                 <Label htmlFor="ed-section">Section</Label>
                                 <select id="ed-section" className="h-9 w-full rounded-md border px-2 text-sm" value={editForm.sectionId} onChange={(event) => setEditForm({ ...editForm, sectionId: event.target.value })}>
-                                    <option value="">No section</option>
+                                    <option value="">No section (whole class)</option>
                                     {sectionsForClass(editForm.classLevel).map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
                                 </select>
                             </div>

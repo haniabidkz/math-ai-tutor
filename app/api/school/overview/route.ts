@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
         return ok({
             ...overview,
             admins,
-            viewer: { role: scope.user.role, name: String(scope.user.profile?.name ?? scope.user.email), allowedSectionIds: scope.allowedSectionIds },
+            viewer: { role: scope.user.role, name: String(scope.user.profile?.name ?? scope.user.email), rule: scope.rule },
         });
     } catch (error) {
         return failure(error, "The school overview could not be loaded");

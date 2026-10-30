@@ -8,6 +8,7 @@ import { groupTopics, isLearningConceptForClass } from "@/lib/curriculum";
 import { adminDb } from "@/lib/firebase-admin";
 import { ALL_CLASSES, effectiveTeacherClasses, homeworkInputSchema, homeworkReachesStudent, homeworkStatus, isOverdue, sortHomework, type HomeworkAudience } from "@/lib/homework";
 import { lessonOpenFor, lessonPositions } from "@/lib/learner-metrics";
+import { teacherCanSeeStudent, teacherCanUseSection, teacherClassesFor, teacherHasWholeClass, teacherRuleFromProfile, type TeacherScopeRule } from "@/lib/schools";
 import { getAccessSettings, listSections } from "@/lib/schools-server";
 import { authErrorResponse, requireUser, type AuthenticatedUser } from "@/lib/server-auth";
 import type { StudentClassLevel } from "@/types/curriculum";
@@ -68,8 +69,8 @@ interface TeacherScope {
     classes: Array<6 | 7 | 8>;
     hasAssignedClasses: boolean;
     schoolId: string | null;
-    /** A school teacher limited to some sections; null means every section (or no school). */
-    sectionIds: string[] | null;
+    /** A school teacher's classes and sections; null means the whole school (or no school). */
+    rule: TeacherScopeRule | null;
     sections: SchoolSection[];
     plan: PlanState | null;
     /** True when the school's plan has ended: homework can be set from the free lessons only. */
@@ -82,19 +83,19 @@ interface TeacherScope {
 async function teacherScope(user: AuthenticatedUser): Promise<TeacherScope> {
     const settings = await getAccessSettings();
     if (user.role !== "teacher") {
-        return { classes: [...ALL_CLASSES], hasAssignedClasses: true, schoolId: null, sectionIds: null, sections: [], plan: null, lockedAssignments: false, freeChapterCount: settings.freeChapterCount, freeLessonsPerChapter: settings.freeLessonsPerChapter };
+        return { classes: [...ALL_CLASSES], hasAssignedClasses: true, schoolId: null, rule: null, sections: [], plan: null, lockedAssignments: false, freeChapterCount: settings.freeChapterCount, freeLessonsPerChapter: settings.freeLessonsPerChapter };
     }
     const profile = user.profile ?? {};
     const assigned = profile.assignedClasses;
-    const assignedSections = Array.isArray(profile.assignedSectionIds) ? profile.assignedSectionIds.map(String).filter(Boolean) : [];
     const sections = user.schoolId ? await listSections(user.schoolId, false) : [];
+    const rule = user.schoolId ? teacherRuleFromProfile(profile) : null;
     const plan = user.school?.effectivePlan ?? null;
     return {
-        classes: effectiveTeacherClasses(assigned),
+        classes: user.schoolId ? (teacherClassesFor(rule, sections) as Array<6 | 7 | 8>) : effectiveTeacherClasses(assigned),
         hasAssignedClasses: Boolean(user.schoolId) || (Array.isArray(assigned) && assigned.length > 0),
         schoolId: user.schoolId,
-        sectionIds: assignedSections.length ? assignedSections : null,
-        sections: assignedSections.length ? sections.filter((section) => assignedSections.includes(section.id)) : sections,
+        rule,
+        sections: sections.filter((section) => teacherCanUseSection(rule, section)),
         plan,
         lockedAssignments: Boolean(user.schoolId) && !teacherCanAssignLockedLessons(plan),
         freeChapterCount: settings.freeChapterCount,
@@ -113,7 +114,7 @@ async function classCounts(scope: TeacherScope, user: AuthenticatedUser): Promis
         for (const doc of snapshot.docs) {
             const data = doc.data();
             if (data.schoolStatus === "graduated") continue;
-            if (scope.sectionIds && !(typeof data.sectionId === "string" && scope.sectionIds.includes(data.sectionId))) continue;
+            if (!teacherCanSeeStudent(scope.rule, { classLevel: Number(data.class), sectionId: typeof data.sectionId === "string" ? data.sectionId : null })) continue;
             counts.set(Number(data.class), (counts.get(Number(data.class)) ?? 0) + 1);
         }
     } else {
@@ -201,20 +202,21 @@ export async function POST(request: NextRequest) {
             }, { status: 403 });
         }
 
-        // Inside a school, whole-class homework may be aimed at one section, and a teacher with
-        // sections must choose one of them; named students must belong to the school.
+        // Inside a school, whole-class homework may be aimed at one section; a teacher who looks
+        // after sections only (not the whole class) must choose one; named students must be theirs.
         let section: SchoolSection | null = null;
         if (scope.schoolId) {
             if (parsed.sectionId) {
                 section = scope.sections.find((item) => item.id === parsed.sectionId) ?? null;
                 if (!section) return NextResponse.json({ success: false, error: "Choose one of your own sections" }, { status: 403 });
                 if (section.classLevel !== parsed.classLevel) return NextResponse.json({ success: false, error: `${section.label} is a Class ${section.classLevel} section` }, { status: 400 });
-            } else if (parsed.allStudents && scope.sectionIds) {
+            } else if (parsed.allStudents && !teacherHasWholeClass(scope.rule, parsed.classLevel)) {
                 return NextResponse.json({ success: false, error: "Choose a section for whole-class homework" }, { status: 400 });
             }
             if (!parsed.allStudents && parsed.studentUids.length) {
                 const docs = await adminDb.getAll(...parsed.studentUids.map((uid) => adminDb.collection("students").doc(uid)));
-                const outsider = docs.find((doc) => doc.data()?.schoolId !== scope.schoolId || (scope.sectionIds && !scope.sectionIds.includes(String(doc.data()?.sectionId ?? ""))));
+                const outsider = docs.find((doc) => doc.data()?.schoolId !== scope.schoolId
+                    || !teacherCanSeeStudent(scope.rule, { classLevel: Number(doc.data()?.class), sectionId: typeof doc.data()?.sectionId === "string" ? doc.data()!.sectionId : null }));
                 if (outsider) return NextResponse.json({ success: false, error: "One of the chosen students is not in your school or sections", code: "FORBIDDEN_CROSS_TENANT" }, { status: 403 });
             }
         }

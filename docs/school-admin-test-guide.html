@@ -35,7 +35,7 @@
 <body>
 
 <h1>LearnAI Tutor – School Platform Test Guide</h1>
-<p class="sub">How to try every new feature: schools, school admin panel, phone sign-in, teachers and sections, trial and paid plans, seats, promotion, reports and the new Super Admin tabs. Written for the product owner. Version 22 October 2026.</p>
+<p class="sub">How to try every new feature: schools, school admin panel, phone sign-in, teachers and sections, trial and paid plans, seats, promotion, reports and the new Super Admin tabs. Written for the product owner. Version 30 October 2026.</p>
 
 <div class="box">
   <strong>Live site:</strong> https://learnaitutor.com &nbsp;·&nbsp; <strong>Super Admin:</strong> /super-admin &nbsp;·&nbsp; <strong>School Portal:</strong> /login?role=school &nbsp;·&nbsp; <strong>School Admin panel:</strong> /school-admin<br>
@@ -46,7 +46,7 @@
 <table>
   <tr><th style="width:22%">Who</th><th>What they can do now</th><th style="width:26%">Where</th></tr>
   <tr><td><strong>Super Admin</strong> (you)</td><td>Create schools (code, trial, seats, first admin), change a school's plan (trial / paid / expired), seat limit, demo access, suspend a school, add or reset school admins, see all accounts by school, delete a student account, mark a student Paid/Free, read platform analytics (DAU, drop-offs, free vs paid, most failed questions, misconceptions), set the free-lesson rules.</td><td>/super-admin → tabs <span class="pill">Schools</span> <span class="pill">Analytics</span> <span class="pill">Users</span> <span class="pill">Leaderboard</span></td></tr>
-  <tr><td><strong>School Admin</strong> (new role)</td><td>Own school only: overview (plan, seats, counts), classes &amp; sections (6-A, 6-B …), teachers (add, assign sections, reset password, suspend, remove), students (add one, bulk import, edit, reset password, suspend, remove), reports (Excel/CSV and print-to-PDF), one-click annual promotion, school details.</td><td>/login?role=school → /school-admin</td></tr>
+  <tr><td><strong>School Admin</strong> (new role)</td><td>Own school only: overview (plan, seats, counts), classes &amp; optional sections (6-A, 6-B …), teachers (add, edit name/phone/email, give them whole classes and/or sections, reset password, suspend, remove), students (add one, bulk import, edit incl. phone, reset password, suspend, remove), reports (Excel/CSV and print-to-PDF), one-click annual promotion, school details.</td><td>/login?role=school → /school-admin</td></tr>
   <tr><td><strong>Teacher</strong> (school)</td><td>Same teacher pages as before, limited to their school and sections; Free/Paid badge per student; "Add students" tab; homework per section; on an expired plan, homework from the free lessons only.</td><td>/teacher-dashboard</td></tr>
   <tr><td><strong>Teacher</strong> (individual)</td><td>Unchanged: individual students in their classes.</td><td>/teacher-dashboard</td></tr>
   <tr><td><strong>Student</strong></td><td>Sign up with a mobile number (no code is sent) and optionally a school code; school students see their school's leaderboard; free/trial students see the free lessons and a clear "Paid plan" label on the rest.</td><td>/login?role=student&amp;mode=signup</td></tr>
@@ -98,14 +98,15 @@
   <h3>Scenario 3 – Add a teacher and students <span class="pill">School Admin</span></h3>
   <p class="goal">Goal: accounts created by the school, with passwords shown once.</p>
   <ol>
-    <li><strong>Teachers</strong> tab → Add teacher: name, mobile, leave password blank, tick <em>6-A</em>. Add.</li>
+    <li><strong>Teachers</strong> tab → Add teacher: name, mobile, leave password blank, tick the whole class <em>Class 6</em> or just the section <em>6-A</em> (sections are optional; nothing ticked = whole school). Add.</li>
+    <li>Click the pencil on the teacher: change the name, mobile number or email, or the classes/sections. Save. The teacher now signs in with the new number.</li>
     <li><strong>Students</strong> tab → Add student: name, mobile, Class 6, section 6-A. Add.</li>
     <li>Students → <strong>Bulk import</strong>. Paste three lines, one per student: <code>Name, Phone, Class, Section</code> for example:<br>
       <code>Ali Ahmed, 03000000111, 6, A</code><br><code>Sara Malik, 03000000112, 7, A, Sara2026</code><br><code>Bad Row, 0300, 6, A</code><br>
       Click <strong>Check rows</strong>, then <strong>Create 2 accounts</strong>.</li>
     <li>Click <strong>Download logins</strong>.</li>
   </ol>
-  <div class="expect"><strong>You should see:</strong> each new account's phone and generated password in a blue box; the check marks the third row "Phone number is not valid"; the import creates 2 and fails 1; a CSV with the logins downloads; the Students list shows every student with class-section, <em>Free</em> badge, "Not yet" for the diagnostic and <em>Active</em>. The Overview seat bar now says 3 of 5.</div>
+  <div class="expect"><strong>You should see:</strong> each new account's phone and generated password in a blue box; the check marks the third row "Phone number is not valid"; the import creates 2 and fails 1; a CSV with the logins downloads; the Students list shows every student with class-section (or just the class when the school uses no sections), <em>Free</em> badge, "Not yet" for the diagnostic and <em>Active</em>. The teacher row shows "Class 6 (all)" or "6-A". The Overview seat bar now says 3 of 5.</div>
 </div>
 
 <div class="scenario">
@@ -161,7 +162,7 @@
     <li>Open <strong>Homework</strong>: pick Class 6, a lesson, "Whole class" and the section <em>6-A only</em>. Assign.</li>
     <li>Sign in as a 6-A student and as a Class 6 student without a section.</li>
   </ol>
-  <div class="expect"><strong>You should see:</strong> the header shows the school name and plan badge; only 6-A students are listed, each with a section and a Free/Paid badge; the homework appears for the 6-A student but not for the Class 6 student without a section; the teacher cannot see or touch students outside their sections. A teacher with no sections ticked sees the whole school.</div>
+  <div class="expect"><strong>You should see:</strong> the header shows the school name and plan badge; a teacher with only <em>6-A</em> ticked sees 6-A students only and must pick a section for whole-class homework; a teacher with the whole <em>Class 6</em> ticked sees every Class 6 student (with or without a section) and can assign to the whole class without choosing a section; the homework reaches exactly those students. Nothing ticked = the whole school.</div>
 </div>
 
 <div class="scenario">
@@ -242,7 +243,8 @@
   <tr><td>Your school's account is suspended.</td><td>The school is suspended by the super admin.</td></tr>
   <tr><td>This account is deactivated.</td><td>The person is suspended or removed.</td></tr>
   <tr><td>Your school's trial includes … / plan has ended …</td><td>The lesson is outside the free lessons; a paid plan or an individual Paid tick opens it.</td></tr>
-  <tr><td>Choose a section for whole-class homework</td><td>A teacher with assigned sections must pick one of them.</td></tr>
+  <tr><td>Choose a section for whole-class homework</td><td>A teacher who looks after sections only (not the whole class) must pick one of them.</td></tr>
+  <tr><td>Signed in as a different account</td><td>Another sign-in in the same browser (another tab) replaced the school admin's session; sign in again as the school admin.</td></tr>
   <tr><td>Type the school code … to confirm</td><td>Promotion needs the exact code typed in.</td></tr>
   <tr><td>This school was promoted on … tick "I understand"</td><td>Promotion ran less than six months ago.</td></tr>
 </table>
@@ -252,13 +254,14 @@
   <li><strong>Classes 6, 7 and 8</strong> only, because the curriculum and diagnostics exist for those. Promotion graduates Class 8. Adding Class 9 later needs content first.</li>
   <li><strong>Free rule:</strong> first chapter(s) of each class, optionally only the first N lessons of each. With one chapter per class live today, use the lesson limit to restrict trials.</li>
   <li><strong>Individual (old) students</strong> stay on the full curriculum unless you untick Paid for them in Users. Unticking also removes them from weekly rewards, as before.</li>
-  <li><strong>Password reset</strong> for phone accounts is done by the school admin, teacher (own sections) or super admin; there is no email reset link for phone accounts.</li>
+  <li><strong>Password reset</strong> for phone accounts is done by the school admin, teacher (own classes/sections) or super admin; there is no email reset link for phone accounts.</li>
+  <li><strong>One sign-in per browser:</strong> signing in as a student or teacher in another tab signs the school admin out of this browser; the panel then shows a clear "Signed in as a different account" notice instead of failing. Use a second browser or a private window to test two roles at once.</li>
   <li><strong>Individual teachers</strong> who signed up themselves and have no classes ticked still see every individual student (unchanged from before). Tick their classes in Users to limit them.</li>
   <li><strong>School leaderboards</strong> close every Monday like the public board; rewards per school are approved in Super Admin → Leaderboard with the school selected.</li>
   <li><strong>Trial length, free lessons and default seats</strong> are in Super Admin → Schools → Access settings.</li>
 </ul>
 
-<p class="small">Everything in this guide was verified on 22 October 2026 with 83 automated checks on production plus a browser walk-through; all test schools and accounts were deleted afterwards.</p>
+<p class="small">Everything in this guide was verified on production with automated checks (83 on 22 October 2026, plus the teacher-scope and edit checks on 30 October 2026) and a browser walk-through; all test schools and accounts were deleted afterwards.</p>
 
 </body>
 </html>

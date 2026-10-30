@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
         if (!text.trim()) return NextResponse.json({ success: false, error: "Paste at least one student row" }, { status: 400 });
         const parsed = parseStudentImport(text);
         if (body.preview === true) return ok({ rows: parsed.rows, valid: parsed.valid, invalid: parsed.invalid, truncated: parsed.truncated });
-        const outcomes = await importStudents(scope.schoolId, parsed.rows, scope.user, scope.allowedSectionIds ? new Set(scope.allowedSectionIds) : null);
+        const outcomes = await importStudents(scope.schoolId, parsed.rows, scope.user, scope.rule);
         return ok({
             outcomes,
             created: outcomes.filter((item) => item.status === "created").length,

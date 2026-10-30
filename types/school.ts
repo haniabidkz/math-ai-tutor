@@ -65,7 +65,10 @@ export interface SchoolTeacherRow {
     email: string;
     phone: string | null;
     contact: string;
+    /** Whole classes the teacher looks after. */
+    assignedClassLevels: number[];
     assignedSectionIds: string[];
+    /** Classes in use, from both of the above; kept for the class-based rules. */
     assignedClasses: number[];
     disabled: boolean;
     createdAt: number | null;

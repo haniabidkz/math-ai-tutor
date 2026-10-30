@@ -9,8 +9,8 @@ import {
 import { boardId, leaderboardWeekKey } from "@/lib/leaderboard";
 import { displayContact, isPhoneEmail, phoneToEmail } from "@/lib/phone";
 import {
-    generatePassword, isSchoolClass, planPromotion, schoolCodeFor, sectionLabel,
-    type ImportedStudentRow, type ManagedStudentInput, type ManagedTeacherInput, type SchoolInput, type SchoolUpdate, type SignupInput,
+    generatePassword, isSchoolClass, planPromotion, schoolCodeFor, sectionLabel, teacherCanSeeStudent, teacherCanUseSection, teacherClassesFor, teacherHasWholeClass,
+    type ImportedStudentRow, type ManagedStudentInput, type ManagedTeacherInput, type SchoolInput, type SchoolUpdate, type SignupInput, type StudentUpdate, type TeacherScopeRule, type TeacherUpdate,
 } from "@/lib/schools";
 import type { ImportOutcome, School, SchoolAdminRow, SchoolSection, SchoolStudentRow, SchoolTeacherRow } from "@/types/school";
 
@@ -421,7 +421,21 @@ export async function signUp(input: SignupInput): Promise<{ uid: string; role: M
     return { uid: created.uid, role: input.role, schoolId: null, schoolName: null };
 }
 
-export async function importStudents(schoolId: string, rows: ImportedStudentRow[], actor: Actor, allowedSectionIds: Set<string> | null): Promise<ImportOutcome[]> {
+/** Changes the number an account signs in with; the sign-in email follows the phone. */
+async function changePhone(uid: string, phone: string): Promise<void> {
+    try {
+        await adminAuth.updateUser(uid, { phoneNumber: phone, email: phoneToEmail(phone) });
+    } catch (error) {
+        const code = String((error as { code?: string }).code ?? "");
+        if (code === "auth/phone-number-already-exists" || code === "auth/email-already-exists") {
+            throw new SchoolError(409, "This phone number already has an account. Use another number.", PHONE_IN_USE_CODE);
+        }
+        if (code === "auth/invalid-phone-number") throw new SchoolError(400, "Enter a valid mobile number, like 03001234567");
+        throw error;
+    }
+}
+
+export async function importStudents(schoolId: string, rows: ImportedStudentRow[], actor: Actor, rule: TeacherScopeRule | null): Promise<ImportOutcome[]> {
     const sections = await listSections(schoolId, false);
     const byKey = new Map(sections.map((section) => [`${section.classLevel}-${section.name}`, section]));
     const outcomes: ImportOutcome[] = [];
@@ -431,11 +445,13 @@ export async function importStudents(schoolId: string, rows: ImportedStudentRow[
         try {
             let section = row.section ? byKey.get(`${row.classLevel}-${row.section}`) ?? null : null;
             if (row.section && !section) {
-                if (allowedSectionIds) throw new SchoolError(404, `Section ${base.sectionLabel} does not exist; ask the school admin to create it`);
+                // A teacher may create a missing section only inside a class they look after as a whole.
+                if (!teacherHasWholeClass(rule, row.classLevel)) throw new SchoolError(404, `Section ${base.sectionLabel} does not exist; ask the school admin to create it`);
                 section = await createSection(schoolId, { classLevel: row.classLevel as 6 | 7 | 8, name: row.section }, actor);
                 byKey.set(`${section.classLevel}-${section.name}`, section);
             }
-            if (section && allowedSectionIds && !allowedSectionIds.has(section.id)) throw new SchoolError(403, `You are not assigned to ${section.label}`);
+            if (section && !teacherCanUseSection(rule, section)) throw new SchoolError(403, `You are not assigned to ${section.label}`);
+            if (!section && !teacherHasWholeClass(rule, row.classLevel)) throw new SchoolError(403, `You are not assigned to Class ${row.classLevel}; add a section you look after`);
             const result = await enrollStudent({
                 schoolId, source: "import", name: row.name, phone: row.phone, email: row.email, password: row.password,
                 classLevel: row.classLevel as 6 | 7 | 8, sectionId: section?.id ?? null, parentPhone: row.parentPhone, parentEmail: null,
@@ -483,7 +499,7 @@ function studentRow(uid: string, data: DocumentData, disabled: boolean, access: 
     };
 }
 
-export async function listSchoolStudents(schoolId: string, filter?: { sectionIds?: string[] | null; classes?: number[] | null }): Promise<SchoolStudentRow[]> {
+export async function listSchoolStudents(schoolId: string, filter?: { rule?: TeacherScopeRule | null; classes?: number[] | null }): Promise<SchoolStudentRow[]> {
     const [snapshot, school, settings] = await Promise.all([
         adminDb.collection("students").where("schoolId", "==", schoolId).get(),
         getSchool(schoolId),
@@ -491,7 +507,7 @@ export async function listSchoolStudents(schoolId: string, filter?: { sectionIds
     ]);
     const docs = snapshot.docs.filter((doc) => {
         const data = doc.data();
-        if (filter?.sectionIds && !(data.sectionId && filter.sectionIds.includes(String(data.sectionId)))) return false;
+        if (filter?.rule && !teacherCanSeeStudent(filter.rule, { classLevel: Number(data.class), sectionId: typeof data.sectionId === "string" ? data.sectionId : null })) return false;
         if (filter?.classes && !filter.classes.includes(Number(data.class))) return false;
         return true;
     });
@@ -515,6 +531,7 @@ export async function listSchoolTeachers(schoolId: string): Promise<SchoolTeache
             email: isPhoneEmail(data.email) ? "" : String(data.email ?? ""),
             phone: typeof data.phone === "string" ? data.phone : null,
             contact: displayContact(data),
+            assignedClassLevels: Array.isArray(data.assignedClassLevels) ? data.assignedClassLevels.map(Number) : [],
             assignedSectionIds: Array.isArray(data.assignedSectionIds) ? data.assignedSectionIds.map(String) : [],
             assignedClasses: Array.isArray(data.assignedClasses) ? data.assignedClasses.map(Number) : [],
             disabled: flags.get(doc.id)?.disabled === true,
@@ -549,11 +566,13 @@ export async function memberInSchool(collection: "students" | "teachers" | "scho
     return { ref, data };
 }
 
-export async function updateStudentInSchool(schoolId: string, uid: string, update: { name?: string; classLevel?: number; sectionId?: string | null; parentPhone?: string | null; parentEmail?: string | null }, actor: Actor): Promise<void> {
+export async function updateStudentInSchool(schoolId: string, uid: string, update: StudentUpdate, actor: Actor): Promise<void> {
     const { ref, data } = await memberInSchool("students", schoolId, uid);
     const patch: DocumentData = { updatedAt: FieldValue.serverTimestamp() };
     const classLevel = update.classLevel ?? Number(data.class);
     if (update.name !== undefined) patch.name = update.name;
+    if (update.phone !== undefined && update.phone !== data.phone) { await changePhone(uid, update.phone); patch.phone = update.phone; }
+    if (update.email !== undefined) patch.email = update.email ?? "";
     if (update.classLevel !== undefined) patch.class = update.classLevel;
     if (update.sectionId !== undefined) {
         const section = update.sectionId ? await sectionOrThrow(schoolId, update.sectionId, classLevel) : null;
@@ -571,31 +590,42 @@ export async function updateStudentInSchool(schoolId: string, uid: string, updat
     await writeAuditLog({ actorUid: actor.uid, actorEmail: actor.email, action: "school.student.update", targetType: "student", targetId: uid, summary: JSON.stringify({ ...update }) });
 }
 
-export async function updateTeacherInSchool(schoolId: string, uid: string, update: { name?: string; sectionIds?: string[] }, actor: Actor): Promise<void> {
-    const { ref } = await memberInSchool("teachers", schoolId, uid);
+/** The teacher's scope fields: ticked classes, ticked sections, and the class list the class-based rules read. */
+async function teacherScopeFields(schoolId: string, classes: number[], sectionIds: string[]): Promise<{ assignedClassLevels: number[]; assignedSectionIds: string[]; assignedClasses: number[]; summary: string }> {
+    const sections = await listSections(schoolId, false);
+    const chosen = sections.filter((section) => sectionIds.includes(section.id));
+    if (chosen.length !== new Set(sectionIds).size) throw new SchoolError(400, "One of the sections does not exist in this school");
+    const assignedClassLevels = [...new Set(classes)].filter(isSchoolClass).sort();
+    const assignedSectionIds = chosen.map((section) => section.id);
+    const rule: TeacherScopeRule | null = assignedClassLevels.length || assignedSectionIds.length ? { classes: assignedClassLevels, sectionIds: assignedSectionIds } : null;
+    const assignedClasses = rule ? teacherClassesFor(rule, sections) : [];
+    const summary = [...assignedClassLevels.map((level) => `Class ${level}`), ...chosen.map((section) => section.label)].join(", ") || "whole school";
+    return { assignedClassLevels, assignedSectionIds, assignedClasses, summary };
+}
+
+export async function updateTeacherInSchool(schoolId: string, uid: string, update: TeacherUpdate, actor: Actor): Promise<void> {
+    const { ref, data } = await memberInSchool("teachers", schoolId, uid);
     const patch: DocumentData = { updatedAt: FieldValue.serverTimestamp() };
     if (update.name !== undefined) { patch.name = update.name; await adminAuth.updateUser(uid, { displayName: update.name }).catch(() => undefined); }
-    if (update.sectionIds !== undefined) {
-        const sections = await listSections(schoolId, false);
-        const chosen = sections.filter((section) => update.sectionIds!.includes(section.id));
-        if (chosen.length !== new Set(update.sectionIds).size) throw new SchoolError(400, "One of the sections does not exist in this school");
-        patch.assignedSectionIds = chosen.map((section) => section.id);
-        // The class list keeps the existing class-based rules working for school teachers.
-        patch.assignedClasses = [...new Set(chosen.map((section) => section.classLevel))].sort();
+    if (update.phone !== undefined && update.phone !== data.phone) { await changePhone(uid, update.phone); patch.phone = update.phone; }
+    if (update.email !== undefined) patch.email = update.email ?? "";
+    if (update.classes !== undefined || update.sectionIds !== undefined) {
+        const classes = update.classes ?? (Array.isArray(data.assignedClassLevels) ? data.assignedClassLevels.map(Number) : []);
+        const sectionIds = update.sectionIds ?? (Array.isArray(data.assignedSectionIds) ? data.assignedSectionIds.map(String) : []);
+        const fields = await teacherScopeFields(schoolId, classes, sectionIds);
+        Object.assign(patch, { assignedClassLevels: fields.assignedClassLevels, assignedSectionIds: fields.assignedSectionIds, assignedClasses: fields.assignedClasses });
     }
     await ref.set(patch, { merge: true });
     await writeAuditLog({ actorUid: actor.uid, actorEmail: actor.email, action: "school.teacher.update", targetType: "teacher", targetId: uid, summary: JSON.stringify(update) });
 }
 
 export async function addTeacher(schoolId: string, input: ManagedTeacherInput, actor: Actor): Promise<{ uid: string; password: string | null }> {
-    const sections = await listSections(schoolId, false);
-    const chosen = sections.filter((section) => input.sectionIds.includes(section.id));
-    if (chosen.length !== new Set(input.sectionIds).size) throw new SchoolError(400, "One of the sections does not exist in this school");
+    const fields = await teacherScopeFields(schoolId, input.classes, input.sectionIds);
     const created = await createManagedUser({
         role: "teacher", schoolId, name: input.name, phone: input.phone, email: input.email, password: input.password,
-        profile: { assignedSectionIds: chosen.map((section) => section.id), assignedClasses: [...new Set(chosen.map((section) => section.classLevel))].sort() },
+        profile: { assignedClassLevels: fields.assignedClassLevels, assignedSectionIds: fields.assignedSectionIds, assignedClasses: fields.assignedClasses },
     });
-    await writeAuditLog({ actorUid: actor.uid, actorEmail: actor.email, action: "school.teacher.add", targetType: "teacher", targetId: created.uid, summary: `Added teacher ${input.name} to school ${schoolId} (${chosen.map((section) => section.label).join(", ") || "no sections"})` });
+    await writeAuditLog({ actorUid: actor.uid, actorEmail: actor.email, action: "school.teacher.add", targetType: "teacher", targetId: created.uid, summary: `Added teacher ${input.name} to school ${schoolId} (${fields.summary})` });
     return { uid: created.uid, password: created.password };
 }
 
@@ -639,7 +669,7 @@ export async function memberAction(input: {
             await adminAuth.setCustomUserClaims(uid, claims);
             if (data.schoolStatus !== "graduated") await releaseSeat(schoolId);
         } else if (collection === "teachers") {
-            await ref.set({ schoolId: null, assignedSectionIds: [], assignedClasses: [], leftSchoolAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+            await ref.set({ schoolId: null, assignedClassLevels: [], assignedSectionIds: [], assignedClasses: [], leftSchoolAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
             await adminAuth.setCustomUserClaims(uid, claims);
             await adminAuth.updateUser(uid, { disabled: true });
         } else {
