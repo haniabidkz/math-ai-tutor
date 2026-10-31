@@ -67,6 +67,14 @@ export function formatPhone(e164: string | null | undefined): string {
     return `+${digits}`;
 }
 
+/** "a***@gmail.com": enough to recognise the address a reset link went to, no more. */
+export function maskEmail(email: string): string {
+    const [local, domain] = email.split("@");
+    if (!domain) return "***";
+    const visible = local.length > 1 ? local.slice(0, 1) : "";
+    return `${visible}***@${domain}`;
+}
+
 /** What to show for a user: their real email, else their phone, never the synthetic email. */
 export function displayContact(profile: { email?: string | null; phone?: string | null }): string {
     const email = String(profile.email ?? "").trim();

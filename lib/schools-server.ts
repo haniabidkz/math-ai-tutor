@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { UserRecord } from "firebase-admin/auth";
 import { FieldValue, Timestamp, type DocumentData, type DocumentReference } from "firebase-admin/firestore";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
 import { writeAuditLog } from "@/lib/admin-audit";
@@ -7,7 +8,7 @@ import {
     type AccessSettings, type PlanState, type SchoolPlanInfo, type StudentAccess,
 } from "@/lib/access";
 import { boardId, leaderboardWeekKey } from "@/lib/leaderboard";
-import { displayContact, isPhoneEmail, phoneToEmail } from "@/lib/phone";
+import { displayContact, isPhoneEmail, phoneToEmail, signInEmailFor } from "@/lib/phone";
 import {
     generatePassword, isSchoolClass, planPromotion, schoolCodeFor, sectionLabel, teacherCanSeeStudent, teacherCanUseSection, teacherClassesFor, teacherHasWholeClass,
     type ImportedStudentRow, type ManagedStudentInput, type ManagedTeacherInput, type SchoolInput, type SchoolUpdate, type SignupInput, type StudentUpdate, type TeacherScopeRule, type TeacherUpdate,
@@ -35,6 +36,7 @@ export class SchoolError extends Error {
 
 export const SEAT_LIMIT_CODE = "SEAT_LIMIT_REACHED";
 export const PHONE_IN_USE_CODE = "PHONE_IN_USE";
+export const EMAIL_IN_USE_CODE = "EMAIL_IN_USE";
 /** A school is promoted once a year; a second run inside this window needs `force`. */
 const PROMOTION_COOLDOWN_MS = 180 * 86_400_000;
 const CACHE_MS = 15_000;
@@ -280,26 +282,47 @@ export interface CreateUserInput {
     profile?: DocumentData;
 }
 
+function authCreateError(error: unknown): never {
+    const code = String((error as { code?: string }).code ?? "");
+    if (code === "auth/phone-number-already-exists") {
+        throw new SchoolError(409, "This phone number already has an account. Sign in instead, or use another number.", PHONE_IN_USE_CODE);
+    }
+    if (code === "auth/email-already-exists") throw new SchoolError(409, "This email already belongs to another account.", EMAIL_IN_USE_CODE);
+    if (code === "auth/invalid-phone-number") throw new SchoolError(400, "Enter a valid mobile number, like 03001234567");
+    if (code === "auth/invalid-password") throw new SchoolError(400, "The password must be at least 6 characters");
+    if (code === "auth/invalid-email") throw new SchoolError(400, "Enter a valid email address");
+    throw error;
+}
+
 /**
- * One account: Firebase Auth (phone sign-in email + password, the phone itself kept unique by
- * Firebase), the role claim and the role document. Returns the password only when it was generated.
+ * The Firebase Auth account. A real email becomes the account's email, so "Forgot password"
+ * can reach it; without one (or when that email is already taken) the phone's own sign-in
+ * email stands in. The phone itself is kept unique by Firebase.
+ */
+async function createAuthUser(input: CreateUserInput, password: string): Promise<{ uid: string; signInEmail: string }> {
+    const base = { phoneNumber: input.phone, password, displayName: input.name, emailVerified: false };
+    const fallback = phoneToEmail(input.phone);
+    if (input.email) {
+        try {
+            return { uid: (await adminAuth.createUser({ ...base, email: input.email })).uid, signInEmail: input.email };
+        } catch (error) {
+            if (String((error as { code?: string }).code ?? "") !== "auth/email-already-exists") authCreateError(error);
+        }
+    }
+    try {
+        return { uid: (await adminAuth.createUser({ ...base, email: fallback })).uid, signInEmail: fallback };
+    } catch (error) {
+        authCreateError(error);
+    }
+}
+
+/**
+ * One account: Firebase Auth (phone + password, with the email when there is one), the role
+ * claim and the role document. Returns the password only when it was generated.
  */
 export async function createManagedUser(input: CreateUserInput): Promise<{ uid: string; password: string | null; signInEmail: string }> {
     const password = input.password ?? generatePassword();
-    const signInEmail = phoneToEmail(input.phone);
-    let uid: string;
-    try {
-        const record = await adminAuth.createUser({ email: signInEmail, phoneNumber: input.phone, password, displayName: input.name, emailVerified: false });
-        uid = record.uid;
-    } catch (error) {
-        const code = String((error as { code?: string }).code ?? "");
-        if (code === "auth/phone-number-already-exists" || code === "auth/email-already-exists") {
-            throw new SchoolError(409, "This phone number already has an account. Sign in instead, or use another number.", PHONE_IN_USE_CODE);
-        }
-        if (code === "auth/invalid-phone-number") throw new SchoolError(400, "Enter a valid mobile number, like 03001234567");
-        if (code === "auth/invalid-password") throw new SchoolError(400, "The password must be at least 6 characters");
-        throw error;
-    }
+    const { uid, signInEmail } = await createAuthUser(input, password);
     await adminAuth.setCustomUserClaims(uid, { role: input.role, ...(input.schoolId ? { schoolId: input.schoolId } : {}) });
     await adminDb.collection(ROLE_COLLECTION[input.role]).doc(uid).set({
         uid,
@@ -362,7 +385,7 @@ export interface EnrollInput extends ManagedStudentInput {
 }
 
 /** A new student account inside a school: takes a seat, then creates the account; a failure gives the seat back. */
-export async function enrollStudent(input: EnrollInput, actor: Actor | null): Promise<{ uid: string; password: string | null; sectionLabel: string | null }> {
+export async function enrollStudent(input: EnrollInput, actor: Actor | null): Promise<{ uid: string; password: string | null; sectionLabel: string | null; signInEmail: string }> {
     const section = input.sectionId ? await sectionOrThrow(input.schoolId, input.sectionId, input.classLevel) : null;
     await reserveSeat(input.schoolId);
     let created: Awaited<ReturnType<typeof createManagedUser>>;
@@ -393,11 +416,11 @@ export async function enrollStudent(input: EnrollInput, actor: Actor | null): Pr
     if (actor) {
         await writeAuditLog({ actorUid: actor.uid, actorEmail: actor.email, action: "school.student.add", targetType: "student", targetId: created.uid, summary: `Added ${input.name} to Class ${input.classLevel}${section ? ` (${section.label})` : ""} in school ${input.schoolId} (${input.source})` });
     }
-    return { uid: created.uid, password: created.password, sectionLabel: section?.label ?? null };
+    return { uid: created.uid, password: created.password, sectionLabel: section?.label ?? null, signInEmail: created.signInEmail };
 }
 
 /** Public sign-up for students, parents and teachers; a school code enrols the student. */
-export async function signUp(input: SignupInput): Promise<{ uid: string; role: ManagedRole; schoolId: string | null; schoolName: string | null }> {
+export async function signUp(input: SignupInput): Promise<{ uid: string; role: ManagedRole; schoolId: string | null; schoolName: string | null; signInEmail: string }> {
     if (input.role === "student") {
         if (input.schoolCode) {
             const school = await getSchoolByCode(input.schoolCode);
@@ -406,31 +429,58 @@ export async function signUp(input: SignupInput): Promise<{ uid: string; role: M
                 schoolId: school.id, source: "code", name: input.name, phone: input.phone, email: input.email, password: input.password,
                 classLevel: input.classLevel as 6 | 7 | 8, sectionId: null, parentEmail: input.parentEmail, parentPhone: input.parentPhone,
             }, null);
-            return { uid: result.uid, role: "student", schoolId: school.id, schoolName: school.name };
+            return { uid: result.uid, role: "student", schoolId: school.id, schoolName: school.name, signInEmail: result.signInEmail };
         }
         const created = await createManagedUser({
             role: "student", schoolId: null, name: input.name, phone: input.phone, email: input.email, password: input.password,
             profile: { class: input.classLevel, parentEmail: input.parentEmail ?? null, parentPhone: input.parentPhone ?? null },
         });
-        return { uid: created.uid, role: "student", schoolId: null, schoolName: null };
+        return { uid: created.uid, role: "student", schoolId: null, schoolName: null, signInEmail: created.signInEmail };
     }
     const created = await createManagedUser({
         role: input.role, schoolId: null, name: input.name, phone: input.phone, email: input.email, password: input.password,
         profile: input.role === "teacher" ? { assignedClasses: [] } : { linkedStudents: [] },
     });
-    return { uid: created.uid, role: input.role, schoolId: null, schoolName: null };
+    return { uid: created.uid, role: input.role, schoolId: null, schoolName: null, signInEmail: created.signInEmail };
 }
 
-/** Changes the number an account signs in with; the sign-in email follows the phone. */
-async function changePhone(uid: string, phone: string): Promise<void> {
+/** The Firebase Auth account behind a phone number or an email typed at sign-in; null when there is none. */
+export async function authUserFor(identifier: string): Promise<UserRecord | null> {
+    const target = signInEmailFor(identifier);
+    if ("error" in target) throw new SchoolError(400, target.error);
     try {
-        await adminAuth.updateUser(uid, { phoneNumber: phone, email: phoneToEmail(phone) });
+        return target.phone ? await adminAuth.getUserByPhoneNumber(target.phone) : await adminAuth.getUserByEmail(target.email);
     } catch (error) {
-        const code = String((error as { code?: string }).code ?? "");
-        if (code === "auth/phone-number-already-exists" || code === "auth/email-already-exists") {
-            throw new SchoolError(409, "This phone number already has an account. Use another number.", PHONE_IN_USE_CODE);
+        if (String((error as { code?: string }).code ?? "") === "auth/user-not-found") return null;
+        throw error;
+    }
+}
+
+/** Changes the number an account signs in with; an account that signs in through its phone-made email follows the number. */
+async function changePhone(uid: string, phone: string): Promise<void> {
+    const record = await adminAuth.getUser(uid);
+    try {
+        await adminAuth.updateUser(uid, { phoneNumber: phone, ...(isPhoneEmail(record.email) ? { email: phoneToEmail(phone) } : {}) });
+    } catch (error) {
+        authCreateError(error);
+    }
+}
+
+/**
+ * Keeps the Auth email in step with the profile's email, so a reset link can reach a real
+ * address and a removed address can no longer be used to reset the password.
+ */
+async function syncAuthEmail(uid: string, email: string | null): Promise<void> {
+    const record = await adminAuth.getUser(uid);
+    const target = email ?? (record.phoneNumber ? phoneToEmail(record.phoneNumber) : record.email);
+    if (!target || target === record.email) return;
+    try {
+        await adminAuth.updateUser(uid, { email: target });
+    } catch (error) {
+        if (String((error as { code?: string }).code ?? "") === "auth/email-already-exists") {
+            if (email) throw new SchoolError(409, "This email already belongs to another account.", EMAIL_IN_USE_CODE);
+            return;
         }
-        if (code === "auth/invalid-phone-number") throw new SchoolError(400, "Enter a valid mobile number, like 03001234567");
         throw error;
     }
 }
@@ -464,7 +514,7 @@ export async function importStudents(schoolId: string, rows: ImportedStudentRow[
     return outcomes;
 }
 
-async function authFlags(uids: string[]): Promise<Map<string, { disabled: boolean }>> {
+export async function authFlags(uids: string[]): Promise<Map<string, { disabled: boolean }>> {
     const flags = new Map<string, { disabled: boolean }>();
     for (let start = 0; start < uids.length; start += AUTH_LOOKUP_CHUNK) {
         const chunk = uids.slice(start, start + AUTH_LOOKUP_CHUNK);
@@ -499,7 +549,14 @@ function studentRow(uid: string, data: DocumentData, disabled: boolean, access: 
     };
 }
 
-export async function listSchoolStudents(schoolId: string, filter?: { rule?: TeacherScopeRule | null; classes?: number[] | null }): Promise<SchoolStudentRow[]> {
+/** A suspended student's profile and activity stay out of the school's view; only enough to reactivate. */
+function suspendedRow(row: SchoolStudentRow): SchoolStudentRow {
+    return { ...row, email: "", phone: null, contact: "", paid: false, premium: false, diagnosticCompleted: false, xp: 0, quizzesCompleted: 0, lessonsCompleted: 0, lastActiveAt: null, parentEmail: null, parentPhone: null, createdAt: null };
+}
+
+export type SuspendedFilter = "exclude" | "only" | "include";
+
+export async function listSchoolStudents(schoolId: string, filter?: { rule?: TeacherScopeRule | null; classes?: number[] | null; suspended?: SuspendedFilter }): Promise<SchoolStudentRow[]> {
     const [snapshot, school, settings] = await Promise.all([
         adminDb.collection("students").where("schoolId", "==", schoolId).get(),
         getSchool(schoolId),
@@ -513,10 +570,14 @@ export async function listSchoolStudents(schoolId: string, filter?: { rule?: Tea
     });
     const flags = await authFlags(docs.map((doc) => doc.id));
     const plan = schoolPlanInfo(school);
-    return docs.map((doc) => {
+    const mode = filter?.suspended ?? "exclude";
+    return docs.flatMap((doc) => {
         const data = doc.data();
+        const disabled = flags.get(doc.id)?.disabled === true;
+        if ((mode === "exclude" && disabled) || (mode === "only" && !disabled)) return [];
         const access = resolveStudentAccess({ membershipPaid: data.membership?.paid, schoolId, school: plan, settings });
-        return studentRow(doc.id, data, flags.get(doc.id)?.disabled === true, access);
+        const row = studentRow(doc.id, data, disabled, access);
+        return [disabled ? suspendedRow(row) : row];
     }).sort((left, right) => left.classLevel - right.classLevel || (left.sectionLabel ?? "").localeCompare(right.sectionLabel ?? "") || left.name.localeCompare(right.name));
 }
 
@@ -572,7 +633,7 @@ export async function updateStudentInSchool(schoolId: string, uid: string, updat
     const classLevel = update.classLevel ?? Number(data.class);
     if (update.name !== undefined) patch.name = update.name;
     if (update.phone !== undefined && update.phone !== data.phone) { await changePhone(uid, update.phone); patch.phone = update.phone; }
-    if (update.email !== undefined) patch.email = update.email ?? "";
+    if (update.email !== undefined && update.email !== (data.email || null)) { await syncAuthEmail(uid, update.email); patch.email = update.email ?? ""; }
     if (update.classLevel !== undefined) patch.class = update.classLevel;
     if (update.sectionId !== undefined) {
         const section = update.sectionId ? await sectionOrThrow(schoolId, update.sectionId, classLevel) : null;
@@ -608,7 +669,7 @@ export async function updateTeacherInSchool(schoolId: string, uid: string, updat
     const patch: DocumentData = { updatedAt: FieldValue.serverTimestamp() };
     if (update.name !== undefined) { patch.name = update.name; await adminAuth.updateUser(uid, { displayName: update.name }).catch(() => undefined); }
     if (update.phone !== undefined && update.phone !== data.phone) { await changePhone(uid, update.phone); patch.phone = update.phone; }
-    if (update.email !== undefined) patch.email = update.email ?? "";
+    if (update.email !== undefined && update.email !== (data.email || null)) { await syncAuthEmail(uid, update.email); patch.email = update.email ?? ""; }
     if (update.classes !== undefined || update.sectionIds !== undefined) {
         const classes = update.classes ?? (Array.isArray(data.assignedClassLevels) ? data.assignedClassLevels.map(Number) : []);
         const sectionIds = update.sectionIds ?? (Array.isArray(data.assignedSectionIds) ? data.assignedSectionIds.map(String) : []);
@@ -639,8 +700,9 @@ export type MemberAction = "suspend" | "unsuspend" | "resetPassword" | "remove";
 
 /**
  * Suspend (cannot sign in), reset the password, or remove from the school. A removed student
- * keeps the account and all their work as an individual student; a removed teacher's account is
- * deactivated, so nobody keeps a teacher view of other people's children by accident.
+ * keeps the account and all their work as an individual student; a removed teacher or admin
+ * has no learning data of their own, so the account is deleted outright, which also frees the
+ * phone number to be added again.
  */
 export async function memberAction(input: {
     collection: "students" | "teachers" | "schoolAdmins";
@@ -668,23 +730,77 @@ export async function memberAction(input: {
             await ref.set({ schoolId: null, sectionId: null, sectionLabel: null, schoolStatus: FieldValue.delete(), leftSchoolAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
             await adminAuth.setCustomUserClaims(uid, claims);
             if (data.schoolStatus !== "graduated") await releaseSeat(schoolId);
-        } else if (collection === "teachers") {
-            await ref.set({ schoolId: null, assignedClassLevels: [], assignedSectionIds: [], assignedClasses: [], leftSchoolAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-            await adminAuth.setCustomUserClaims(uid, claims);
-            await adminAuth.updateUser(uid, { disabled: true });
         } else {
-            await ref.delete();
-            await adminAuth.setCustomUserClaims(uid, claims);
-            await adminAuth.updateUser(uid, { disabled: true });
+            void claims;
+            await deleteStaffAccount(uid, ref);
         }
-        await adminAuth.revokeRefreshTokens(uid);
+        if (collection === "students") await adminAuth.revokeRefreshTokens(uid);
     }
     await writeAuditLog({ actorUid: actor.uid, actorEmail: actor.email, action: `school.member.${action}`, targetType: collection, targetId: uid, summary: `${action} ${String(data.name ?? uid)} (school ${schoolId})` });
     return { password };
 }
 
+/** A teacher's or admin's account and profile; nothing of theirs is kept but the audit trail. */
+async function deleteStaffAccount(uid: string, ref: DocumentReference): Promise<void> {
+    await adminDb.recursiveDelete(ref);
+    await adminAuth.deleteUser(uid).catch((error: { code?: string }) => { if (error.code !== "auth/user-not-found") throw error; });
+}
+
+async function deleteWhere(collection: string, field: string, value: string): Promise<number> {
+    let removed = 0;
+    for (;;) {
+        const snapshot = await adminDb.collection(collection).where(field, "==", value).limit(BATCH_LIMIT).get();
+        if (snapshot.empty) return removed;
+        const batch = adminDb.batch();
+        for (const doc of snapshot.docs) batch.delete(doc.ref);
+        await batch.commit();
+        removed += snapshot.size;
+        if (snapshot.size < BATCH_LIMIT) return removed;
+    }
+}
+
+export interface SchoolDeletion {
+    students: number;
+    studentsDeleted: boolean;
+    teachers: number;
+    admins: number;
+    homework: number;
+}
+
+/**
+ * The super admin's delete of a whole school: its sections, code, boards, homework and activity
+ * go; teacher and admin accounts are deleted; students either become individual learners with
+ * all their work kept, or are deleted too when the super admin says so.
+ */
+export async function deleteSchool(id: string, options: { deleteStudents: boolean }, actor: Actor): Promise<SchoolDeletion> {
+    const school = await requireSchool(id, true);
+    const [students, teachers, admins] = await Promise.all(["students", "teachers", "schoolAdmins"].map((collection) =>
+        adminDb.collection(collection).where("schoolId", "==", id).select().get()));
+    for (const doc of students.docs) {
+        if (options.deleteStudents) {
+            await deleteStudentAccount(doc.id, actor, true);
+        } else {
+            const record = await adminAuth.getUser(doc.id).catch(() => null);
+            const { schoolId: _dropped, ...claims } = record?.customClaims ?? {};
+            await doc.ref.set({ schoolId: null, sectionId: null, sectionLabel: null, schoolStatus: FieldValue.delete(), leftSchoolAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+            if (record) await adminAuth.setCustomUserClaims(doc.id, claims);
+        }
+    }
+    for (const doc of [...teachers.docs, ...admins.docs]) await deleteStaffAccount(doc.id, doc.ref);
+    const homework = await deleteWhere("homework", "schoolId", id);
+    for (const board of (await adminDb.collection("leaderboards").where("schoolId", "==", id).select().get()).docs) await adminDb.recursiveDelete(board.ref);
+    await deleteWhere("weeklyRewards", "schoolId", id);
+    await deleteWhere("activityLog", "schoolId", id);
+    await adminDb.collection("schoolCodes").doc(school.code).delete().catch(() => undefined);
+    await adminDb.recursiveDelete(adminDb.collection("schools").doc(id));
+    forgetSchool(id);
+    const result = { students: students.size, studentsDeleted: options.deleteStudents, teachers: teachers.size, admins: admins.size, homework };
+    await writeAuditLog({ actorUid: actor.uid, actorEmail: actor.email, action: "school.delete", targetType: "school", targetId: id, summary: `Deleted ${school.name} (${school.code}): ${result.students} students ${options.deleteStudents ? "deleted" : "kept as individuals"}, ${result.teachers} teachers and ${result.admins} admins removed, ${homework} homework` });
+    return result;
+}
+
 /** The super admin's full delete: the account, the profile with every subcollection, and this week's board row. */
-export async function deleteStudentAccount(uid: string, actor: Actor): Promise<void> {
+export async function deleteStudentAccount(uid: string, actor: Actor, partOfSchoolDeletion = false): Promise<void> {
     if (!uid || uid.includes("/")) throw new SchoolError(404, "Student not found");
     const ref = adminDb.collection("students").doc(uid);
     const snapshot = await ref.get();
@@ -698,7 +814,7 @@ export async function deleteStudentAccount(uid: string, actor: Actor): Promise<v
         await adminDb.collection("leaderboards").doc(boardId(weekKey, classLevel, schoolId)).collection("entries").doc(uid).delete().catch(() => undefined);
     }
     await adminAuth.deleteUser(uid).catch((error: { code?: string }) => { if (error.code !== "auth/user-not-found") throw error; });
-    if (schoolId && data.schoolStatus !== "graduated") await releaseSeat(schoolId).catch(() => undefined);
+    if (schoolId && data.schoolStatus !== "graduated" && !partOfSchoolDeletion) await releaseSeat(schoolId).catch(() => undefined);
     await writeAuditLog({ actorUid: actor.uid, actorEmail: actor.email, action: "student.delete", targetType: "student", targetId: uid, summary: `Deleted student ${String(data.name ?? uid)}${schoolId ? ` of school ${schoolId}` : ""}` });
 }
 
@@ -854,7 +970,7 @@ export async function promoteSchool(schoolId: string, options: { askDiagnosticAg
 
 export interface SchoolOverview {
     school: School;
-    students: { total: number; active: number; graduated: number; premium: number; free: number; paid: number; diagnosticCompleted: number; activeToday: number; active7d: number };
+    students: { total: number; active: number; graduated: number; suspended: number; premium: number; free: number; paid: number; diagnosticCompleted: number; activeToday: number; active7d: number };
     teachers: number;
     sections: SchoolSection[];
     admins: number;
@@ -863,7 +979,7 @@ export interface SchoolOverview {
 export async function schoolOverview(schoolId: string): Promise<SchoolOverview> {
     const [school, students, sections, teachers, admins] = await Promise.all([
         requireSchool(schoolId, true),
-        listSchoolStudents(schoolId),
+        listSchoolStudents(schoolId, { suspended: "include" }),
         listSections(schoolId),
         adminDb.collection("teachers").where("schoolId", "==", schoolId).count().get(),
         adminDb.collection("schoolAdmins").where("schoolId", "==", schoolId).count().get(),
@@ -871,13 +987,14 @@ export async function schoolOverview(schoolId: string): Promise<SchoolOverview> 
     const now = Date.now();
     const dayStart = now - 86_400_000;
     const weekStart = now - 7 * 86_400_000;
-    const active = students.filter((student) => student.schoolStatus === "active");
+    const active = students.filter((student) => student.schoolStatus === "active" && !student.disabled);
     return {
         school,
         students: {
             total: students.length,
             active: active.length,
-            graduated: students.length - active.length,
+            graduated: students.filter((student) => student.schoolStatus === "graduated").length,
+            suspended: students.filter((student) => student.disabled).length,
             premium: active.filter((student) => student.premium).length,
             free: active.filter((student) => !student.premium).length,
             paid: active.filter((student) => student.paid).length,

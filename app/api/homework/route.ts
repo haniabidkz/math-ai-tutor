@@ -9,7 +9,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { ALL_CLASSES, effectiveTeacherClasses, homeworkInputSchema, homeworkReachesStudent, homeworkStatus, isOverdue, sortHomework, type HomeworkAudience } from "@/lib/homework";
 import { lessonOpenFor, lessonPositions } from "@/lib/learner-metrics";
 import { teacherCanSeeStudent, teacherCanUseSection, teacherClassesFor, teacherHasWholeClass, teacherRuleFromProfile, type TeacherScopeRule } from "@/lib/schools";
-import { getAccessSettings, listSections } from "@/lib/schools-server";
+import { getAccessSettings, listSchoolStudents, listSections } from "@/lib/schools-server";
 import { authErrorResponse, requireUser, type AuthenticatedUser } from "@/lib/server-auth";
 import type { StudentClassLevel } from "@/types/curriculum";
 import type { HomeworkAssignment, StudentHomework } from "@/types/homework";
@@ -110,12 +110,10 @@ const basicAccess = (scope: TeacherScope) => ({ curriculum: "basic" as const, fr
 async function classCounts(scope: TeacherScope, user: AuthenticatedUser): Promise<Array<{ classLevel: 6 | 7 | 8; students: number }>> {
     const counts = new Map<number, number>();
     if (scope.schoolId) {
-        const snapshot = await adminDb.collection("students").where("schoolId", "==", scope.schoolId).select("class", "sectionId", "schoolStatus").get();
-        for (const doc of snapshot.docs) {
-            const data = doc.data();
-            if (data.schoolStatus === "graduated") continue;
-            if (!teacherCanSeeStudent(scope.rule, { classLevel: Number(data.class), sectionId: typeof data.sectionId === "string" ? data.sectionId : null })) continue;
-            counts.set(Number(data.class), (counts.get(Number(data.class)) ?? 0) + 1);
+        // Current students in the teacher's scope; suspended and graduated ones are not counted.
+        for (const student of await listSchoolStudents(scope.schoolId, { rule: scope.rule })) {
+            if (student.schoolStatus !== "active") continue;
+            counts.set(student.classLevel, (counts.get(student.classLevel) ?? 0) + 1);
         }
     } else {
         // Individual teachers count individual students only; the super admin counts everyone.

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { failure, ok } from "@/lib/api-response";
 import { memberActionSchema, schoolAdminInputSchema, schoolUpdateSchema } from "@/lib/schools";
-import { addSchoolAdmin, listSchoolAdmins, memberAction, recountSeats, schoolOverview, updateSchool } from "@/lib/schools-server";
+import { addSchoolAdmin, deleteSchool, listSchoolAdmins, memberAction, recountSeats, requireSchool, schoolOverview, updateSchool } from "@/lib/schools-server";
 import { requireSuperAdmin } from "@/lib/server-auth";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +49,14 @@ export async function POST(request: NextRequest, context: Params) {
             return ok({ password: result.password, admins: await listSchoolAdmins(id) });
         }
         if (body.action === "recountSeats") return ok({ seatsUsed: await recountSeats(id) });
+        if (body.action === "delete") {
+            const school = await requireSchool(id, true);
+            if (String(body.confirmCode ?? "").trim().toUpperCase() !== school.code) {
+                return NextResponse.json({ success: false, error: `Type the school code ${school.code} to confirm` }, { status: 400 });
+            }
+            const result = await deleteSchool(id, { deleteStudents: body.students === "delete" }, admin);
+            return ok({ result });
+        }
         return NextResponse.json({ success: false, error: "Unknown action" }, { status: 400 });
     } catch (error) {
         return failure(error, "The action failed");

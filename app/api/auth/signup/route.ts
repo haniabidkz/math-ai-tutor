@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { failure, ok } from "@/lib/api-response";
-import { phoneToEmail } from "@/lib/phone";
 import { signupSchema } from "@/lib/schools";
 import { signUp } from "@/lib/schools-server";
 
@@ -32,7 +31,7 @@ export async function POST(request: NextRequest) {
         if (tooMany(address)) return NextResponse.json({ success: false, error: "Too many sign-ups from this connection. Please try again in a few minutes." }, { status: 429 });
         const input = signupSchema.parse(await request.json());
         const result = await signUp(input);
-        return ok({ uid: result.uid, role: result.role, signInEmail: phoneToEmail(input.phone), schoolId: result.schoolId, schoolName: result.schoolName }, 201);
+        return ok({ uid: result.uid, role: result.role, signInEmail: result.signInEmail, schoolId: result.schoolId, schoolName: result.schoolName }, 201);
     } catch (error) {
         return failure(error, "The account could not be created. Please try again.");
     }

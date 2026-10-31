@@ -35,7 +35,8 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
     const [notice, setNotice] = useState("");
     const [search, setSearch] = useState("");
     const [sectionFilter, setSectionFilter] = useState("all");
-    const [statusFilter, setStatusFilter] = useState<"active" | "graduated">("active");
+    const [statusFilter, setStatusFilter] = useState<"active" | "graduated" | "suspended">("active");
+    const [suspendedRows, setSuspendedRows] = useState<SchoolStudentRow[] | null>(null);
     const [mode, setMode] = useState<"list" | "add" | "import">("list");
     const [form, setForm] = useState(EMPTY_FORM);
     const [busy, setBusy] = useState(false);
@@ -57,6 +58,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
         try {
             const data = await api<{ students: SchoolStudentRow[] }>("/api/school/students");
             setStudents(data.students);
+            if (canManage) setSuspendedRows((await api<{ students: SchoolStudentRow[] }>("/api/school/students?suspended=only")).students);
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : "Students could not be loaded");
         } finally {
@@ -72,13 +74,13 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
 
     const fail = (caught: unknown, fallback: string) => { setNotice(""); setError(caught instanceof Error ? caught.message : fallback); };
 
-    const visible = useMemo(() => students.filter((student) => {
-        if (student.schoolStatus !== statusFilter) return false;
+    const visible = useMemo(() => (statusFilter === "suspended" ? (suspendedRows ?? []) : students).filter((student) => {
+        if (statusFilter !== "suspended" && student.schoolStatus !== statusFilter) return false;
         if (sectionFilter === "none" && student.sectionId) return false;
         if (sectionFilter !== "all" && sectionFilter !== "none" && student.sectionId !== sectionFilter) return false;
         const text = `${student.name} ${student.contact} ${student.phone ?? ""} ${student.sectionLabel ?? ""}`.toLowerCase();
         return text.includes(search.trim().toLowerCase());
-    }), [students, statusFilter, sectionFilter, search]);
+    }), [students, suspendedRows, statusFilter, sectionFilter, search]);
 
     const sectionsForClass = (classLevel: string) => sections.filter((section) => section.active && String(section.classLevel) === classLevel);
 
@@ -147,8 +149,8 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
 
     async function act(student: SchoolStudentRow, action: "suspend" | "unsuspend" | "resetPassword" | "remove") {
         const prompts: Record<typeof action, string> = {
-            suspend: `Suspend ${student.name}? They will not be able to sign in.`,
-            unsuspend: `Let ${student.name} sign in again?`,
+            suspend: `Suspend ${student.name}? They cannot sign in, and their profile and activity leave the school's view until reactivated.`,
+            unsuspend: `Reactivate ${student.name}? They can sign in again and appear in the lists.`,
             resetPassword: `Give ${student.name} a new password? The old one stops working.`,
             remove: `Remove ${student.name} from the school? Their account and progress stay, as an individual student, and the seat is freed.`,
         };
@@ -288,15 +290,40 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
                                 <option value="none">No section</option>
                                 {sections.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
                             </select>
-                            {graduated ? (
-                                <select className="h-9 rounded-md border px-2 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "active" | "graduated")}>
+                            {graduated || canManage ? (
+                                <select className="h-9 rounded-md border px-2 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "active" | "graduated" | "suspended")}>
                                     <option value="active">Current students</option>
-                                    <option value="graduated">Graduated ({graduated})</option>
+                                    {graduated ? <option value="graduated">Graduated ({graduated})</option> : null}
+                                    {canManage ? <option value="suspended">Suspended ({suspendedRows?.length ?? 0})</option> : null}
                                 </select>
                             ) : null}
                             <span className="text-xs text-muted-foreground">{visible.length} shown</span>
                         </div>
-                        {loading ? <p className="p-6 text-sm text-muted-foreground">Loading students…</p> : visible.length === 0 ? <p className="p-6 text-sm text-muted-foreground">No students here yet. Use Add student or Bulk import.</p> : (
+                        {loading ? <p className="p-6 text-sm text-muted-foreground">Loading students…</p> : statusFilter === "suspended" ? (
+                            visible.length === 0 ? <p className="p-6 text-sm text-muted-foreground">No suspended students.</p> : (
+                                <div className="overflow-auto">
+                                    <p className="px-4 pt-3 text-xs text-muted-foreground">A suspended student cannot sign in, and their profile and activity are hidden from the school until reactivated.</p>
+                                    <table className="w-full min-w-[560px] text-left text-sm">
+                                        <thead className="bg-slate-50 text-xs uppercase text-muted-foreground"><tr><th className="p-3">Student</th><th className="p-3">Class</th><th className="p-3">Status</th><th className="p-3">Actions</th></tr></thead>
+                                        <tbody className="divide-y">
+                                            {visible.map((student) => (
+                                                <tr key={student.uid} className="text-muted-foreground">
+                                                    <td className="p-3"><strong>{student.name}</strong></td>
+                                                    <td className="p-3">{student.sectionLabel ?? `Class ${student.classLevel}`}</td>
+                                                    <td className="p-3"><Badge variant="destructive">Suspended</Badge></td>
+                                                    <td className="p-3">
+                                                        <div className="flex flex-wrap gap-1">
+                                                            <Button size="sm" variant="outline" onClick={() => act(student, "unsuspend")}>Reactivate</Button>
+                                                            <Button size="sm" variant="ghost" title="Remove from school" onClick={() => act(student, "remove")}><UserMinus className="h-4 w-4 text-red-600" /></Button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )
+                        ) : visible.length === 0 ? <p className="p-6 text-sm text-muted-foreground">No students here yet. Use Add student or Bulk import.</p> : (
                             <div className="overflow-auto">
                                 <table className="w-full min-w-[900px] text-left text-sm">
                                     <thead className="bg-slate-50 text-xs uppercase text-muted-foreground"><tr><th className="p-3">Student</th><th className="p-3">Class</th><th className="p-3">Plan</th><th className="p-3">Diagnostic</th><th className="p-3">XP</th><th className="p-3">Last active</th><th className="p-3">Status</th><th className="p-3">Actions</th></tr></thead>

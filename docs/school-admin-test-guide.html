@@ -35,7 +35,7 @@
 <body>
 
 <h1>LearnAI Tutor – School Platform Test Guide</h1>
-<p class="sub">How to try every new feature: schools, school admin panel, phone sign-in, teachers and sections, trial and paid plans, seats, promotion, reports and the new Super Admin tabs. Written for the product owner. Version 30 October 2026.</p>
+<p class="sub">How to try every new feature: schools, school admin panel, phone sign-in, forgot password, teachers and sections, trial and paid plans, seats, promotion, reports, school deletion and the new Super Admin tabs. Written for the product owner. Version 30 October 2026 (round 3).</p>
 
 <div class="box">
   <strong>Live site:</strong> https://learnaitutor.com &nbsp;·&nbsp; <strong>Super Admin:</strong> /super-admin &nbsp;·&nbsp; <strong>School Portal:</strong> /login?role=school &nbsp;·&nbsp; <strong>School Admin panel:</strong> /school-admin<br>
@@ -191,7 +191,7 @@
     <li>Teachers → <em>Remove from school</em> on the teacher. Try the teacher sign-in.</li>
     <li>As super admin, Users → filter by the school → trash icon on a student → type DELETE.</li>
   </ol>
-  <div class="expect"><strong>You should see:</strong> the removed student keeps the account and progress as an individual student and a seat is freed; the removed teacher is deactivated ("This account is deactivated"); the deleted student disappears from Users and cannot sign in; the seat is freed.</div>
+  <div class="expect"><strong>You should see:</strong> the removed student keeps the account and progress as an individual student and a seat is freed; the removed teacher's account is deleted, so the number can be added again (use <em>Suspend</em> for a temporary block); the deleted student disappears from Users and cannot sign in; the seat is freed.</div>
 </div>
 
 <div class="scenario">
@@ -233,6 +233,36 @@
   <div class="expect"><strong>You should see:</strong> Active today (DAU), active 7/30 days, regular students (3+ days), signed-up vs diagnostic completed vs drop-offs vs one-lesson completers, paid vs free, school vs individual, a bar per day, most failed questions with their wrong rate, top misconceptions with the lessons they appear in, and a schools table. Users shows School, Class, Plan columns and the new actions. The leaderboard shows the chosen school's board and its reward decision.</div>
 </div>
 
+<div class="scenario">
+  <h3>Scenario 16 – Forgot password <span class="pill">All roles</span></h3>
+  <ol>
+    <li>On the sign-in page click <strong>Forgot password?</strong>, enter the phone number or email of an account that has an email, and click <em>Send reset link</em>.</li>
+    <li>Open the email, choose a new password on the page it opens, then sign in again.</li>
+    <li>Try it with a phone-only account (no email given at sign-up or by the admin).</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> "A reset link was sent to a***@…"; the link sets a new password and the old one stops working; a phone-only account is told it has no email and that the school admin (school accounts) or LearnAI Tutor support (individual accounts) must set a new password. Admins can add an email to a student or teacher later (edit), which switches "Forgot password" on for them. Accounts that already existed with an email work straight away.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 17 – Suspended students disappear from the school's view <span class="pill">School Admin</span> <span class="pill">Teacher</span></h3>
+  <ol>
+    <li>Students → suspend a student. Look at the Students list, the Reports tab and the teacher's pages.</li>
+    <li>Switch the Students list filter to <em>Suspended</em>.</li>
+    <li>Click <em>Reactivate</em>.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> the suspended student is gone from every list and report, cannot sign in, and cannot be edited; the Suspended filter shows only their name and class with Reactivate and Remove; after reactivating they are back with full details.</div>
+</div>
+
+<div class="scenario">
+  <h3>Scenario 18 – Delete a school <span class="pill">Super Admin</span></h3>
+  <ol>
+    <li>Schools → Manage → scroll to <strong>Delete this school</strong>. Choose <em>Keep the students</em> or <em>Delete the students too</em>.</li>
+    <li>Type the school code and click <em>Delete school</em>; confirm the browser question.</li>
+    <li>Sign in as one of its former students (if kept) and as its former admin.</li>
+  </ol>
+  <div class="expect"><strong>You should see:</strong> the school leaves the list; its code can be issued again; teacher and admin accounts are gone (their numbers can be used again); kept students sign in as individual learners with all their progress, deleted students cannot sign in; its homework and leaderboards are gone. The wrong code is refused.</div>
+</div>
+
 <h2>4. Messages you may see and what they mean</h2>
 <table>
   <tr><th style="width:42%">Message</th><th>Meaning</th></tr>
@@ -241,7 +271,10 @@
   <tr><td>That school code was not found.</td><td>Typo in the code, or the school does not exist.</td></tr>
   <tr><td>You can only manage your own school / That record belongs to another school</td><td>Cross-school attempt refused (HTTP 403).</td></tr>
   <tr><td>Your school's account is suspended.</td><td>The school is suspended by the super admin.</td></tr>
-  <tr><td>This account is deactivated.</td><td>The person is suspended or removed.</td></tr>
+  <tr><td>This account is deactivated.</td><td>The person is suspended.</td></tr>
+  <tr><td>This account has no email address, so a reset link cannot be sent.</td><td>Phone-only account; an admin sets a new password, or adds an email first.</td></tr>
+  <tr><td>This email already belongs to another account.</td><td>An email can be the sign-in email of one account only.</td></tr>
+  <tr><td>This student is suspended. Reactivate the account before changing it.</td><td>Suspended students are hidden and frozen until reactivated.</td></tr>
   <tr><td>Your school's trial includes … / plan has ended …</td><td>The lesson is outside the free lessons; a paid plan or an individual Paid tick opens it.</td></tr>
   <tr><td>Choose a section for whole-class homework</td><td>A teacher who looks after sections only (not the whole class) must pick one of them.</td></tr>
   <tr><td>Signed in as a different account</td><td>Another sign-in in the same browser (another tab) replaced the school admin's session; sign in again as the school admin.</td></tr>
@@ -254,7 +287,8 @@
   <li><strong>Classes 6, 7 and 8</strong> only, because the curriculum and diagnostics exist for those. Promotion graduates Class 8. Adding Class 9 later needs content first.</li>
   <li><strong>Free rule:</strong> first chapter(s) of each class, optionally only the first N lessons of each. With one chapter per class live today, use the lesson limit to restrict trials.</li>
   <li><strong>Individual (old) students</strong> stay on the full curriculum unless you untick Paid for them in Users. Unticking also removes them from weekly rewards, as before.</li>
-  <li><strong>Password reset</strong> for phone accounts is done by the school admin, teacher (own classes/sections) or super admin; there is no email reset link for phone accounts.</li>
+  <li><strong>Password reset:</strong> any account with an email can use "Forgot password" (Firebase emails the link). Phone-only accounts are reset by the school admin, teacher (own classes/sections) or super admin, or get an email added first.</li>
+  <li><strong>Removing</strong> a teacher or school admin deletes that account (nothing of theirs is kept except the audit trail), so the phone number can be used again; removing a student only takes them out of the school.</li>
   <li><strong>One sign-in per browser:</strong> signing in as a student or teacher in another tab signs the school admin out of this browser; the panel then shows a clear "Signed in as a different account" notice instead of failing. Use a second browser or a private window to test two roles at once.</li>
   <li><strong>Individual teachers</strong> who signed up themselves and have no classes ticked still see every individual student (unchanged from before). Tick their classes in Users to limit them.</li>
   <li><strong>School leaderboards</strong> close every Monday like the public board; rewards per school are approved in Super Admin → Leaderboard with the school selected.</li>

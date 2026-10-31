@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayContact, formatPhone, isPhoneEmail, looksLikePhone, normalizePhone, phoneFromEmail, phoneToEmail, signInEmailFor } from "@/lib/phone";
+import { displayContact, formatPhone, isPhoneEmail, looksLikePhone, maskEmail, normalizePhone, phoneFromEmail, phoneToEmail, signInEmailFor } from "@/lib/phone";
 
 describe("phone numbers", () => {
     it("normalises the ways Pakistani numbers are written", () => {
@@ -38,6 +38,12 @@ describe("phone numbers", () => {
         expect(signInEmailFor("Ali@Gmail.com")).toEqual({ email: "ali@gmail.com", phone: null });
         expect(signInEmailFor("0300")).toEqual({ error: "Enter a valid mobile number, like 03001234567" });
         expect(signInEmailFor("not an email")).toEqual({ error: "Enter a valid email address or mobile number" });
+    });
+
+    it("masks an email for the reset message", () => {
+        expect(maskEmail("ali@gmail.com")).toBe("a***@gmail.com");
+        expect(maskEmail("a@x.pk")).toBe("***@x.pk");
+        expect(maskEmail("nonsense")).toBe("***");
     });
 
     it("shows a readable contact, never the synthetic email", () => {

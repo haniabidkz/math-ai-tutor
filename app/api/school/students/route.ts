@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { failure, ok } from "@/lib/api-response";
 import { managedStudentSchema, memberActionSchema, studentUpdateSchema, teacherCanSeeStudent, teacherCanUseSection, teacherHasWholeClass } from "@/lib/schools";
-import { enrollStudent, listSchoolStudents, listSections, memberAction, memberInSchool, SchoolError, updateStudentInSchool } from "@/lib/schools-server";
+import { authFlags, enrollStudent, listSchoolStudents, listSections, memberAction, memberInSchool, SchoolError, updateStudentInSchool } from "@/lib/schools-server";
 import { requireSchoolStaff, type SchoolStaffScope } from "@/lib/server-auth";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +26,9 @@ async function placementAllowed(scope: SchoolStaffScope, classLevel: number, sec
 export async function GET(request: NextRequest) {
     try {
         const scope = await requireSchoolStaff(request);
-        const students = await listSchoolStudents(scope.schoolId, { rule: scope.rule });
+        // Suspended students are kept out of the school's view; the admin can list them to reactivate.
+        const suspended = request.nextUrl.searchParams.get("suspended") === "only" && !scope.isTeacher ? "only" : "exclude";
+        const students = await listSchoolStudents(scope.schoolId, { rule: scope.rule, suspended });
         return ok({ students, rule: scope.rule });
     } catch (error) {
         return failure(error, "Students could not be loaded");
@@ -67,6 +69,9 @@ export async function PATCH(request: NextRequest) {
         }
 
         const update = studentUpdateSchema.parse(body);
+        if ((await authFlags([uid])).get(uid)?.disabled) {
+            return NextResponse.json({ success: false, error: "This student is suspended. Reactivate the account before changing it." }, { status: 409 });
+        }
         if (scope.rule && (update.classLevel !== undefined || update.sectionId !== undefined)) {
             const { data } = await memberInSchool("students", scope.schoolId, uid);
             const classLevel = update.classLevel ?? Number(data.class);

@@ -125,7 +125,7 @@ export function TeacherManager({ schoolId, sections, onChanged }: { schoolId?: s
             suspend: `Suspend ${teacher.name}? They will not be able to sign in.`,
             unsuspend: `Let ${teacher.name} sign in again?`,
             resetPassword: `Give ${teacher.name} a new password?`,
-            remove: `Remove ${teacher.name} from the school? Their account is deactivated so they no longer see your students.`,
+            remove: `Remove ${teacher.name} from the school? The account is deleted, so they no longer see your students, and the phone number can be used again.`,
         };
         if (!window.confirm(prompts[action])) return;
         try {
@@ -180,7 +180,7 @@ export function TeacherManager({ schoolId, sections, onChanged }: { schoolId?: s
 
             {editing ? (
                 <Card className="border-indigo-200">
-                    <CardHeader><CardTitle className="text-base">Edit {editing.name}</CardTitle><CardDescription>Changing the mobile number changes what the teacher signs in with and signs them out of every device; they sign in again with the new number and the same password.</CardDescription></CardHeader>
+                    <CardHeader><CardTitle className="text-base">Edit {editing.name}</CardTitle><CardDescription>Changing the mobile number or email changes what the teacher signs in with and signs them out of every device; they sign in again with the same password. An email also lets them use "Forgot password".</CardDescription></CardHeader>
                     <CardContent>
                         <form onSubmit={saveEdit} className="grid gap-3 md:grid-cols-2">
                             {fields(editForm, setEditForm, "ed-te", false)}

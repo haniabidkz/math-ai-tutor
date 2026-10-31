@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Building2, ExternalLink, KeyRound, Loader2, Plus, RefreshCw, Save } from "lucide-react";
+import { Building2, ExternalLink, KeyRound, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { PlanBadge } from "@/components/school/plan-badge";
 import { formatDate, prettyPhone } from "@/components/school/school-api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -35,6 +35,8 @@ export function SchoolsAdmin() {
     const [edit, setEdit] = useState({ plan: "trial", trialEndsAt: "", paidUntil: "", seatLimit: "", trialFullAccess: false, status: "active", notes: "" });
     const [newAdmin, setNewAdmin] = useState({ name: "", phone: "", email: "", password: "" });
     const [secret, setSecret] = useState<{ who: string; phone: string; password: string } | null>(null);
+    const [deleteStudents, setDeleteStudents] = useState(false);
+    const [deleteCode, setDeleteCode] = useState("");
 
     useEffect(() => { void load(); }, []);
 
@@ -112,7 +114,10 @@ export function SchoolsAdmin() {
 
     async function adminAction(admin: SchoolAdminRow, action: "suspend" | "unsuspend" | "resetPassword" | "remove") {
         if (!selected) return;
-        if (!window.confirm(`${action === "resetPassword" ? "Reset the password of" : action === "remove" ? "Remove" : action === "suspend" ? "Suspend" : "Reactivate"} ${admin.name}?`)) return;
+        const question = action === "resetPassword" ? `Reset the password of ${admin.name}?`
+            : action === "remove" ? `Remove ${admin.name}? The account is deleted and the phone number can be used again.`
+                : action === "suspend" ? `Suspend ${admin.name}?` : `Reactivate ${admin.name}?`;
+        if (!window.confirm(question)) return;
         try {
             const data = await adminApi<{ password: string | null }>(`/api/schools/${selected.school.id}`, jsonInit("POST", { action: "adminAction", memberAction: action, uid: admin.uid }));
             if (data.password) setSecret({ who: admin.name, phone: admin.phone ?? "", password: data.password });
@@ -129,6 +134,26 @@ export function SchoolsAdmin() {
             await load();
             await open(selected.school);
         } catch (caught) { fail(caught, "The recount failed"); }
+    }
+
+    async function removeSchool() {
+        if (!selected) return;
+        const { school, students } = selected;
+        const what = deleteStudents
+            ? `delete the ${students.active + students.graduated} student accounts with all their work`
+            : `keep the ${students.active + students.graduated} students as individual learners`;
+        if (!window.confirm(`Delete ${school.name} (${school.code}) for good? This will ${what}, delete its ${selected.teachers} teacher and ${selected.admins.length} admin accounts, its sections, homework and leaderboards. This cannot be undone.`)) return;
+        setBusy(true);
+        try {
+            const data = await adminApi<{ result: { students: number; studentsDeleted: boolean; teachers: number; admins: number; homework: number } }>(`/api/schools/${school.id}`, jsonInit("POST", { action: "delete", confirmCode: deleteCode, students: deleteStudents ? "delete" : "keep" }));
+            const r = data.result;
+            setSelected(null);
+            setDeleteCode("");
+            setDeleteStudents(false);
+            say(`${school.name} deleted: ${r.students} students ${r.studentsDeleted ? "deleted" : "kept as individual learners"}, ${r.teachers} teachers and ${r.admins} admins removed, ${r.homework} homework removed.`);
+            await load();
+        } catch (caught) { fail(caught, "The school could not be deleted"); }
+        finally { setBusy(false); }
     }
 
     async function saveSettings() {
@@ -257,6 +282,22 @@ export function SchoolsAdmin() {
                                 <Input required minLength={6} placeholder="Password" value={newAdmin.password} onChange={(event) => setNewAdmin({ ...newAdmin, password: event.target.value })} />
                                 <Button type="submit" size="sm" disabled={busy} className="sm:col-span-2"><Plus className="mr-1 h-4 w-4" />Add admin</Button>
                             </form>
+                        </CardContent>
+                    </Card>
+                    <Card className="border-red-200 lg:col-span-2">
+                        <CardHeader><CardTitle className="flex items-center gap-2 text-base text-red-700"><Trash2 className="h-4 w-4" />Delete this school</CardTitle><CardDescription>Removes the school, its code, sections, homework, leaderboards, and every teacher and admin account. Choose what happens to the students, then type the school code to confirm.</CardDescription></CardHeader>
+                        <CardContent className="space-y-3">
+                            <div className="grid gap-2 text-sm sm:grid-cols-2">
+                                <label className="flex items-start gap-2 rounded-md border p-3"><input type="radio" name="delete-students" checked={!deleteStudents} onChange={() => setDeleteStudents(false)} /><span><strong>Keep the students</strong> as individual learners. Their sign-ins, progress and points stay; they simply leave the school.</span></label>
+                                <label className="flex items-start gap-2 rounded-md border border-red-200 p-3"><input type="radio" name="delete-students" checked={deleteStudents} onChange={() => setDeleteStudents(true)} /><span><strong>Delete the students too.</strong> Their accounts, progress and history are removed for good.</span></label>
+                            </div>
+                            <div className="flex flex-wrap items-end gap-3">
+                                <div className="space-y-1">
+                                    <Label htmlFor="delete-code">Type the school code <strong>{selected.school.code}</strong></Label>
+                                    <Input id="delete-code" value={deleteCode} onChange={(event) => setDeleteCode(event.target.value)} placeholder={selected.school.code} />
+                                </div>
+                                <Button variant="destructive" disabled={busy || deleteCode.trim().toUpperCase() !== selected.school.code} onClick={removeSchool}><Trash2 className="mr-2 h-4 w-4" />Delete school</Button>
+                            </div>
                         </CardContent>
                     </Card>
                 </section>

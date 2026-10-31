@@ -5,7 +5,7 @@ import { toDiagnosticSummary } from "@/lib/diagnostic-summary";
 import { effectiveTeacherClasses } from "@/lib/homework";
 import { displayContact } from "@/lib/phone";
 import { teacherCanSeeStudent, teacherCanUseSection, teacherClassesFor, teacherRuleFromProfile } from "@/lib/schools";
-import { getAccessSettings, listSections, schoolPlanInfo } from "@/lib/schools-server";
+import { authFlags, getAccessSettings, listSections, schoolPlanInfo } from "@/lib/schools-server";
 import { authErrorResponse, requireUser, type AuthenticatedUser } from "@/lib/server-auth";
 
 export const dynamic = "force-dynamic";
@@ -31,11 +31,14 @@ async function visibleStudents(user: AuthenticatedUser, schoolSections: Array<{ 
         const rule = teacherRuleFromProfile(profile);
         const classes = teacherClassesFor(rule, schoolSections);
         const snapshot = await adminDb.collection("students").where("schoolId", "==", user.schoolId).get();
-        const docs = snapshot.docs.filter((doc) => {
+        const inScope = snapshot.docs.filter((doc) => {
             const data = doc.data();
             if (data.schoolStatus === "graduated") return false;
             return teacherCanSeeStudent(rule, { classLevel: Number(data.class), sectionId: typeof data.sectionId === "string" ? data.sectionId : null });
         });
+        // Suspended students are out of the school's view until an admin reactivates them.
+        const flags = await authFlags(inScope.map((doc) => doc.id));
+        const docs = inScope.filter((doc) => flags.get(doc.id)?.disabled !== true);
         return { classes, docs };
     }
     const classes = user.role === "teacher" ? effectiveTeacherClasses(profile.assignedClasses) : [6, 7, 8];

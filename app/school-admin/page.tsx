@@ -28,7 +28,7 @@ import type { School as SchoolRecord, SchoolAdminRow, SchoolSection } from "@/ty
 
 interface Overview {
     school: SchoolRecord;
-    students: { total: number; active: number; graduated: number; premium: number; free: number; paid: number; diagnosticCompleted: number; activeToday: number; active7d: number };
+    students: { total: number; active: number; graduated: number; suspended: number; premium: number; free: number; paid: number; diagnosticCompleted: number; activeToday: number; active7d: number };
     teachers: number;
     sections: SchoolSection[];
     admins: SchoolAdminRow[];
@@ -199,7 +199,7 @@ function SchoolAdminContent() {
                         </Alert>
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                             {[
-                                { label: "Students", value: students.active, note: students.graduated ? `${students.graduated} graduated` : "current students" },
+                                { label: "Students", value: students.active, note: [students.suspended ? `${students.suspended} suspended` : "", students.graduated ? `${students.graduated} graduated` : ""].filter(Boolean).join(" · ") || "current students" },
                                 { label: "Teachers", value: overview.teachers, note: `${overview.sections.length} sections` },
                                 { label: "Paid plan / Free", value: `${students.premium} / ${students.free}`, note: `${students.paid} paid individually` },
                                 { label: "Active this week", value: students.active7d, note: `${students.activeToday} today` },

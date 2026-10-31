@@ -3,7 +3,7 @@
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithCustomToken, signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { signInEmailFor } from "@/lib/phone";
 import { UserRole } from "@/types/user";
@@ -52,6 +52,9 @@ function LoginContent() {
     const [isSignUp, setIsSignUp] = useState(searchParams.get("mode") === "signup" && role !== "school");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    /** The "Forgot password" form in place of sign-in. */
+    const [forgot, setForgot] = useState(false);
+    const [forgotNotice, setForgotNotice] = useState("");
 
     // Form fields
     const [identifier, setIdentifier] = useState("");
@@ -69,6 +72,25 @@ function LoginContent() {
         setError("");
 
         try {
+            if (forgot) {
+                const response = await fetch("/api/auth/forgot", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ identifier: identifier.trim(), role }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "The reset email could not be sent");
+                if (data.sent) {
+                    setForgotNotice(data.maskedEmail
+                        ? `A reset link was sent to ${data.maskedEmail}. Open it, choose a new password, then sign in here.`
+                        : "If an account exists for this email, a reset link has been sent to it. Open it, choose a new password, then sign in here.");
+                } else if (data.reason === "disabled") {
+                    throw new Error("This account is deactivated. Please contact your school or support.");
+                } else {
+                    throw new Error("This account has no email address, so a reset link cannot be sent. Ask your school admin (school accounts) or LearnAI Tutor support (individual accounts) to set a new password.");
+                }
+                return;
+            }
             if (isSignUp) {
                 // The server creates the account, so the school code, seats and field rules are checked there.
                 const parentIsEmail = parentContact.includes("@");
@@ -96,7 +118,20 @@ function LoginContent() {
             } else {
                 const target = signInEmailFor(identifier);
                 if ("error" in target) throw new Error(target.error);
-                const credential = await signInWithEmailAndPassword(auth, target.email, password);
+                let credential;
+                if (target.phone) {
+                    // A phone signs in through the server, which knows the account behind the number.
+                    const response = await fetch("/api/auth/signin", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ identifier: identifier.trim(), password }),
+                    });
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Sign-in failed. Please try again.");
+                    credential = await signInWithCustomToken(auth, data.customToken);
+                } else {
+                    credential = await signInWithEmailAndPassword(auth, target.email, password);
+                }
                 const token = await credential.user.getIdTokenResult(true);
                 router.push(homeFor(token.claims as Record<string, unknown>, role));
             }
@@ -202,12 +237,14 @@ function LoginContent() {
                         <div className={`h-2 w-full bg-gradient-to-r ${config.gradient}`} />
                         <CardHeader className="space-y-2 pt-8 pb-4 text-center px-8">
                             <CardTitle className="text-3xl font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-br from-slate-900 to-slate-500 dark:from-white dark:to-slate-400">
-                                {isSignUp ? "Create Account" : "Welcome Back"}
+                                {forgot ? "Reset Password" : isSignUp ? "Create Account" : "Welcome Back"}
                             </CardTitle>
                             <CardDescription className="text-base">
-                                {isSignUp
-                                    ? "Enter your details to get started"
-                                    : role === "school" ? "Sign in with your school admin phone number" : "Enter your phone number or email to login"}
+                                {forgot
+                                    ? "Enter your phone number or email. If the account has an email, a reset link is sent to it."
+                                    : isSignUp
+                                        ? "Enter your details to get started"
+                                        : role === "school" ? "Sign in with your school admin phone number" : "Enter your phone number or email to login"}
                             </CardDescription>
 
                             {/* Role Switcher */}
@@ -247,6 +284,12 @@ function LoginContent() {
                         </CardHeader>
                         <CardContent className="px-8 pb-8">
                             <form onSubmit={handleSubmit} className="space-y-4 pt-4">
+                                {forgotNotice ? (
+                                    <Alert className="border-emerald-300 bg-emerald-50 rounded-xl">
+                                        <KeyRound className="h-4 w-4" />
+                                        <AlertDescription className="font-medium">{forgotNotice}</AlertDescription>
+                                    </Alert>
+                                ) : null}
                                 <AnimatePresence mode="popLayout">
                                     {error && (
                                         <motion.div
@@ -306,24 +349,32 @@ function LoginContent() {
                                         </div>
                                     )}
 
-                                    <div className="space-y-1.5">
-                                        <Label htmlFor="password" className={labelClass}>Password</Label>
-                                        <div className="relative group">
-                                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
-                                            <Input
-                                                id="password"
-                                                type="password"
-                                                placeholder={isSignUp ? "At least 6 characters" : "Enter your password"}
-                                                value={password}
-                                                onChange={(e) => setPassword(e.target.value)}
-                                                required
-                                                minLength={6}
-                                                autoComplete={isSignUp ? "new-password" : "current-password"}
-                                                className={fieldClass}
-                                            />
+                                    {!forgot ? (
+                                        <div className="space-y-1.5">
+                                            <div className="flex items-center justify-between">
+                                                <Label htmlFor="password" className={labelClass}>Password</Label>
+                                                {!isSignUp ? (
+                                                    <button type="button" className="text-xs font-semibold text-primary hover:text-primary/80 transition-colors" onClick={() => { setForgot(true); setError(""); setForgotNotice(""); }}>
+                                                        Forgot password?
+                                                    </button>
+                                                ) : null}
+                                            </div>
+                                            <div className="relative group">
+                                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
+                                                <Input
+                                                    id="password"
+                                                    type="password"
+                                                    placeholder={isSignUp ? "At least 6 characters" : "Enter your password"}
+                                                    value={password}
+                                                    onChange={(e) => setPassword(e.target.value)}
+                                                    required
+                                                    minLength={6}
+                                                    autoComplete={isSignUp ? "new-password" : "current-password"}
+                                                    className={fieldClass}
+                                                />
+                                            </div>
                                         </div>
-                                        {!isSignUp ? <p className="ml-1 text-[11px] text-muted-foreground"><KeyRound className="mr-1 inline h-3 w-3" />Forgot it? Your school or LearnAI Tutor support can reset it.</p> : null}
-                                    </div>
+                                    ) : null}
 
                                     {isSignUp && signupRole === "student" && (
                                         <motion.div
@@ -386,6 +437,8 @@ function LoginContent() {
                                                     <Loader2 className="h-5 w-5 animate-spin" />
                                                     Processing...
                                                 </>
+                                            ) : forgot ? (
+                                                <>Send reset link <ArrowRight className="h-4 w-4" /></>
                                             ) : isSignUp ? (
                                                 <>Create Account <ArrowRight className="h-4 w-4" /></>
                                             ) : (
@@ -397,7 +450,12 @@ function LoginContent() {
                             </form>
 
                             <div className="mt-8 text-center">
-                                {role === "school" ? (
+                                {forgot ? (
+                                    <p className="text-sm text-muted-foreground">
+                                        Remembered it?
+                                        <button type="button" onClick={() => { setForgot(false); setError(""); setForgotNotice(""); }} className="ml-2 font-bold text-foreground hover:text-primary transition-colors decoration-2 hover:underline underline-offset-4 focus:outline-none">Back to sign in</button>
+                                    </p>
+                                ) : role === "school" ? (
                                     <p className="text-sm text-muted-foreground">
                                         School admin accounts are created by LearnAI Tutor.
                                         <Link href="/login?role=student" className="ml-2 font-bold text-foreground hover:text-primary transition-colors decoration-2 hover:underline underline-offset-4">Student sign in</Link>
