@@ -11,6 +11,7 @@ import { AiStudio } from "@/components/admin/ai-studio";
 import { AnalyticsAdmin } from "@/components/admin/analytics-admin";
 import { SchoolsAdmin } from "@/components/admin/schools-admin";
 import { ConceptEditor, type ConceptPayload } from "@/components/admin/concept-editor";
+import { CurriculumSequence } from "@/components/admin/curriculum-sequence";
 import { LeaderboardAdmin } from "@/components/admin/leaderboard-admin";
 import { QuestionEditor, type QuestionPayload } from "@/components/admin/question-editor";
 import { QuestionList } from "@/components/admin/question-list";
@@ -388,6 +389,7 @@ export default function SuperAdminPage() {
                                 onClear={() => { setEditingConcept(null); setConceptEditorKey((key) => key + 1); }}
                             />
                         </section>
+                        <CurriculumSequence concepts={concepts} onApplied={loadAll} />
                         <section className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
                             {concepts.map((concept) => (
                                 <Card key={concept.microTag} className="rounded-md">

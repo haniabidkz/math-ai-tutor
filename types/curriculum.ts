@@ -34,6 +34,10 @@ export interface MicroConcept {
     order: number;
     /** The chapter's place in its class; lessons unlock chapter by chapter in this order. */
     topicOrder?: number;
+    /** The sub-topic's place inside its chapter; lessons of one sub-topic share it. */
+    subTopicOrder?: number;
+    /** How the lesson's place in the textbook order was decided, and whether it still needs confirming. */
+    sequence?: { source: "ai" | "manual" | "unknown"; textbook?: string; note?: string; updatedAt?: unknown };
     foundationOnly?: boolean;
     status: ContentStatus;
 }
@@ -76,10 +80,14 @@ export interface QuestionBankItem {
     question: LocalizedText;
     options: LocalizedOption[];
     correctOptionId: LocalizedOption["id"];
+    /** Empty for sub-topic and main-topic pool questions, which give no hint. */
     hint: LocalizedText;
+    /** Empty for sub-topic and main-topic pool questions, which give no worked solution. */
     explanation: LocalizedText;
-    /** Per-distractor mistake type and explanation; derived at runtime when absent. */
+    /** Per-distractor mistake type and explanation; derived at runtime when absent (micro-topic questions only). */
     optionAnalysis?: QuestionOptionAnalysis;
+    /** The pool the question was written for; micro-topic questions explain themselves, the others only mark. */
+    level?: "micro" | "sub" | "main";
     source: "sindh" | "oxford";
     status: ContentStatus;
     version: number;

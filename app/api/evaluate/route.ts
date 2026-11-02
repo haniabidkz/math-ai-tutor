@@ -8,6 +8,7 @@ import {
     getRuntimeConcepts,
     selectQuizQuestions,
     toClientQuestion,
+    questionExplains,
 } from "@/lib/assessment-content";
 import { currentQuizQuestion as activeQuestion, quizTotal, sessionXp, type StoredAnswer, type StoredQuizSession } from "@/lib/assessment-session";
 import { getConcept } from "@/lib/curriculum";
@@ -138,6 +139,10 @@ function answerPayload(question: QuestionBankItem, optionId: string): Evaluation
     return { selected: option(optionId), correct: option(question.correctOptionId) };
 }
 
+/** Sub-topic and main-topic pool questions only mark: no worked solution and no mistake analysis. */
+const explanationFor = (question: QuestionBankItem) => (questionExplains(question) ? question.explanation : undefined);
+const analysisFor = (question: QuestionBankItem, optionId: Parameters<typeof getOptionAnalysis>[1]) => (questionExplains(question) ? getOptionAnalysis(question, optionId) : null);
+
 function mistakePayload(analysis: OptionAnalysis): MistakePayload {
     return {
         type: analysis.mistakeType,
@@ -234,7 +239,7 @@ export async function POST(request: NextRequest) {
             && targetQuestion
             && body.optionId !== targetQuestion.correctOptionId;
         const pendingAnalysis = wrongOnMain && targetQuestion
-            ? getOptionAnalysis(targetQuestion, body.optionId)
+            ? analysisFor(targetQuestion, body.optionId)
             : null;
         // Exclude the main questions and anything already answered, so a repeated
         // misconception gets fresh practice rather than the same pair again.
@@ -332,6 +337,7 @@ export async function POST(request: NextRequest) {
             if (action === "hint") {
                 if (session.status !== "active" && session.status !== "misconception_practice" && session.status !== "foundation_practice") throw new Error("REMEDIATION_REQUIRED");
                 if (!question) throw new Error("STALE_QUESTION");
+                if (!questionExplains(question)) throw new Error("NO_HINT");
                 const alreadyUsed = session.hintedQuestionIds?.includes(question.id) ?? false;
                 const delta = session.status === "active" ? scoreDelta("hint", alreadyUsed) : 0;
                 const score = session.score + delta;
@@ -425,7 +431,7 @@ export async function POST(request: NextRequest) {
                 const round = session.foundation;
                 const source = session.foundationSource;
                 if (!round || !source) throw new Error("STALE_QUESTION");
-                const analysis = correct ? null : getOptionAnalysis(question, body.optionId);
+                const analysis = correct ? null : analysisFor(question, body.optionId);
                 // Round answers never move the score: they are practice from the class before.
                 const answers = [...(session.answers ?? []), {
                     eventId,
@@ -450,7 +456,7 @@ export async function POST(request: NextRequest) {
                         success: true,
                         action,
                         isCorrect: correct,
-                        explanation: question.explanation,
+                        explanation: explanationFor(question),
                         score: session.score,
                         scoreDelta: 0,
                         status: "foundation_practice",
@@ -469,7 +475,7 @@ export async function POST(request: NextRequest) {
                 const moved = advanceMain({ ...session, eventIds, foundation: step.round, misconception: null, practiceQueue: [], practiceIndex: 0 }, answers);
                 transaction.update(sessionRef, { eventIds, ...moved.update, foundation: step.round, misconception: null, practiceQueue: [], practiceIndex: 0, updatedAt: FieldValue.serverTimestamp() });
                 outcome = {
-                    ...completeOrContinue(transaction, moved.next, user.uid, student, award, config, 0, action, correct, question.explanation),
+                    ...completeOrContinue(transaction, moved.next, user.uid, student, award, config, 0, action, correct, explanationFor(question)),
                     foundationResult: { outcome: step.round.outcome ?? "not_passed", title: source.title, classLevel: source.classLevel },
                     mistake: analysis ? mistakePayload(analysis) : undefined,
                     answer: answerPayload(question, body.optionId),
@@ -493,11 +499,11 @@ export async function POST(request: NextRequest) {
                     answeredAt: new Date(),
                     hintUsed,
                     practice: true,
-                    mistakeType: correct ? null : getOptionAnalysis(question, body.optionId)?.mistakeType ?? null,
-                    misconceptionTag: correct ? null : getOptionAnalysis(question, body.optionId)?.misconceptionTag ?? null,
+                    mistakeType: correct ? null : analysisFor(question, body.optionId)?.mistakeType ?? null,
+                    misconceptionTag: correct ? null : analysisFor(question, body.optionId)?.misconceptionTag ?? null,
                 } satisfies StoredAnswer];
 
-                const analysis = correct ? null : getOptionAnalysis(question, body.optionId);
+                const analysis = correct ? null : analysisFor(question, body.optionId);
                 const finished = index + 1 >= queue.length;
 
                 if (!finished) {
@@ -511,7 +517,7 @@ export async function POST(request: NextRequest) {
                         success: true,
                         action,
                         isCorrect: correct,
-                        explanation: question.explanation,
+                        explanation: explanationFor(question),
                         score: session.score,
                         scoreDelta: 0,
                         status: "misconception_practice",
@@ -536,7 +542,7 @@ export async function POST(request: NextRequest) {
                 }
                 const moved = advanceMain({ ...session, eventIds, practiceQueue: [], practiceIndex: 0, misconception: null }, answers);
                 transaction.update(sessionRef, { eventIds, ...moved.update, practiceQueue: [], practiceIndex: 0, misconception: null, updatedAt: FieldValue.serverTimestamp() });
-                outcome = completeOrContinue(transaction, moved.next, user.uid, student, award, config, 0, action, correct, question.explanation);
+                outcome = completeOrContinue(transaction, moved.next, user.uid, student, award, config, 0, action, correct, explanationFor(question));
                 return;
             }
 
@@ -544,7 +550,7 @@ export async function POST(request: NextRequest) {
             if (session.status !== "active") throw new Error("REMEDIATION_REQUIRED");
             const delta = scoreDelta(correct ? "correct" : "incorrect");
             const score = session.score + delta;
-            const analysis = correct ? null : getOptionAnalysis(question, body.optionId);
+            const analysis = correct ? null : analysisFor(question, body.optionId);
             const answer: StoredAnswer = {
                 eventId,
                 questionId: question.id,
@@ -561,7 +567,8 @@ export async function POST(request: NextRequest) {
             };
             const answers = [...(session.answers ?? []), answer];
 
-            if (!correct) {
+            // Only a micro-topic question explains a miss; the other pools simply mark it and move on.
+            if (!correct && questionExplains(question)) {
                 const resolved = analysis ?? pendingAnalysis;
                 const misconceptionTag: MisconceptionTag = resolved?.misconceptionTag ?? "arithmetic-slip";
                 const mistakeType: MistakeType = resolved?.mistakeType ?? MISCONCEPTIONS[misconceptionTag].mistakeType;
@@ -611,7 +618,7 @@ export async function POST(request: NextRequest) {
                     success: true,
                     action,
                     isCorrect: false,
-                    explanation: question.explanation,
+                    explanation: explanationFor(question),
                     score,
                     scoreDelta: delta,
                     status: "remedial_required",
@@ -640,21 +647,14 @@ export async function POST(request: NextRequest) {
                 return;
             }
 
-            const lastMainResult = { difficulty: question.difficulty, correct: true };
+            const lastMainResult = { difficulty: question.difficulty, correct };
             const moved = advanceMain({ ...session, eventIds, score, lastMainResult }, answers);
             transaction.update(sessionRef, { ...swapUpdate, eventIds, ...moved.update, score, lastMainResult, updatedAt: FieldValue.serverTimestamp() });
-            outcome = completeOrContinue(
-                transaction,
-                moved.next,
-                user.uid,
-                student,
-                award,
-                config,
-                delta,
-                action,
-                true,
-                question.explanation,
-            );
+            outcome = {
+                ...completeOrContinue(transaction, moved.next, user.uid, student, award, config, delta, action, correct, explanationFor(question)),
+                // A miss on a sub-topic or main-topic question shows the right answer and nothing more.
+                ...(correct ? {} : { answer: answerPayload(question, body.optionId) }),
+            };
         });
 
         // Platform-wide question and misconception counts, outside the transaction and never fatal.
@@ -663,7 +663,7 @@ export async function POST(request: NextRequest) {
             const correct = body.optionId === answered.correctOptionId;
             await recordAnswerStats({
                 questionId: answered.id, microTag: answered.microTag, classLevel: answered.classLevel, isCorrect: correct,
-                misconceptionTag: correct ? null : getOptionAnalysis(answered, body.optionId)?.misconceptionTag ?? null,
+                misconceptionTag: correct ? null : analysisFor(answered, body.optionId)?.misconceptionTag ?? null,
             });
         }
 
@@ -673,6 +673,7 @@ export async function POST(request: NextRequest) {
         const auth = authErrorResponse(error);
         const message = error instanceof Error ? error.message : "";
         const conflict = ["REMEDIATION_REQUIRED", "NO_REMEDIATION_PENDING", "STALE_QUESTION"].includes(message);
+        if (message === "NO_HINT") return NextResponse.json({ success: false, error: "This question has no hint." }, { status: 400 });
         return auth
             ? NextResponse.json(auth.body, { status: auth.status })
             : NextResponse.json({ success: false, error: conflict ? "Complete the current remediation step first" : "Failed to evaluate answer" }, { status: conflict ? 409 : 500 });

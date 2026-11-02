@@ -321,7 +321,7 @@ function QuizContent() {
 
             // Next main question, the next practice item, or the next question of a foundation round.
             setLastAnswer(action === "answer" && typeof data.isCorrect === "boolean"
-                ? { isCorrect: data.isCorrect, explanation: data.explanation, mistake: data.mistake, answer: data.answer, xp: data.isCorrect && !hint && onMainQuestion }
+                ? { isCorrect: data.isCorrect, explanation: data.explanation?.english ? data.explanation : undefined, mistake: data.mistake, answer: data.answer, xp: data.isCorrect && !hint && onMainQuestion }
                 : null);
             setPractice(data.status === "misconception_practice" ? data.practice ?? null : null);
             setFoundation(data.status === "foundation_practice" ? data.foundation ?? null : null);
@@ -673,8 +673,14 @@ function QuizContent() {
                                         </>
                                     ) : null}
                                 </InsightBlock>
-                            ) : lastAnswer.mistake || lastAnswer.answer ? (
+                            ) : lastAnswer.mistake ? (
                                 <MistakeBox language={language} mistake={lastAnswer.mistake} answer={lastAnswer.answer} explanation={lastAnswer.explanation} className="mb-4" />
+                            ) : lastAnswer.answer ? (
+                                // Sub-topic and main-topic questions only mark: the right answer, no reasons.
+                                <InsightBlock tone="wrong" className="mb-4" icon={<XCircle className="h-4 w-4" />} title={"Not quite"}>
+                                    <span className="block">{`Your answer: ${lastAnswer.answer.selected.id}. ${lastAnswer.answer.selected.text}`}</span>
+                                    <span className="block font-bold">{`Correct answer: ${lastAnswer.answer.correct.id}. ${lastAnswer.answer.correct.text}`}</span>
+                                </InsightBlock>
                             ) : null
                         ) : null}
 
@@ -702,9 +708,11 @@ function QuizContent() {
                                         </InsightBlock>
                                     ) : null}
                                     <div className="mt-6 flex flex-wrap gap-3">
-                                        <Button variant="outline" size="lg" className="h-14 rounded-2xl px-5 text-base font-extrabold" onClick={() => evaluate("hint")} disabled={loading || !!hint}>
-                                            <Lightbulb className="mr-2 h-5 w-5" />Hint
-                                        </Button>
+                                        {(question.level ?? "micro") === "micro" ? (
+                                            <Button variant="outline" size="lg" className="h-14 rounded-2xl px-5 text-base font-extrabold" onClick={() => evaluate("hint")} disabled={loading || !!hint}>
+                                                <Lightbulb className="mr-2 h-5 w-5" />Hint
+                                            </Button>
+                                        ) : null}
                                         <Button size="lg" className="h-14 flex-1 rounded-2xl text-base font-extrabold" onClick={() => evaluate("answer")} disabled={!selected || loading}>
                                             Check answer<CheckCircle2 className="ml-2 h-5 w-5" />
                                         </Button>

@@ -37,6 +37,8 @@ interface AnalysisForm {
     auto: boolean;
 }
 
+type QuestionLevel = NonNullable<QuestionBankItem["level"]>;
+
 interface QuestionForm {
     id: string;
     microTag: string;
@@ -45,6 +47,8 @@ interface QuestionForm {
     status: ContentStatus;
     source: "sindh" | "oxford";
     version: number;
+    /** Sub-topic and main-topic questions only mark right or wrong: no hint, explanation or reasons. */
+    level: QuestionLevel;
     questionEnglish: string;
     questionRomanUrdu: string;
     options: Record<OptionId, { english: string; romanUrdu: string }>;
@@ -60,7 +64,7 @@ export type QuestionPayload = Omit<QuestionBankItem, "id" | "prerequisiteTag"> &
 
 function blankForm(): QuestionForm {
     return {
-        id: "", microTag: "", classLevel: 6, difficulty: "easy", status: "draft", source: "sindh", version: 1,
+        id: "", microTag: "", classLevel: 6, difficulty: "easy", status: "draft", source: "sindh", version: 1, level: "micro",
         questionEnglish: "", questionRomanUrdu: "",
         options: { A: { english: "", romanUrdu: "" }, B: { english: "", romanUrdu: "" }, C: { english: "", romanUrdu: "" }, D: { english: "", romanUrdu: "" } },
         correctOptionId: "A",
@@ -85,6 +89,7 @@ function asQuestion(form: QuestionForm): QuestionBankItem {
         source: form.source,
         status: form.status,
         version: form.version,
+        level: form.level,
     };
 }
 
@@ -128,6 +133,7 @@ function fromQuestion(question: QuestionBankItem): QuestionForm {
         status: question.status,
         source: question.source,
         version: question.version,
+        level: question.level ?? "micro",
         questionEnglish: question.question.english,
         questionRomanUrdu: question.question.romanUrdu,
         options,
@@ -224,6 +230,7 @@ export function QuestionEditor({
             source: form.source,
             status: form.status,
             version: form.version,
+            level: form.level,
         };
         setSaving(true);
         try {
@@ -248,7 +255,13 @@ export function QuestionEditor({
                 <div className="md:col-span-2"><Field label="Question (English)" value={form.questionEnglish} onChange={(value) => update({ questionEnglish: value })} /></div>
                 <div className="md:col-span-2"><Field label="Question (Roman Urdu, optional)" value={form.questionRomanUrdu} onChange={(value) => update({ questionRomanUrdu: value })} /></div>
                 <SelectField label="Source" value={form.source} options={[["sindh", "Sindh"], ["oxford", "Oxford"]]} onChange={(value) => update({ source: value as "sindh" | "oxford" })} />
+                <SelectField label="Pool level" value={form.level}
+                    options={[["micro", "Micro-topic (hint, explanation, reasons)"], ["sub", "Sub-topic (right or wrong only)"], ["main", "Main topic (right or wrong only)"]]}
+                    onChange={(value) => update({ level: value as QuestionLevel })} />
             </div>
+            {form.level !== "micro" ? (
+                <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Students only see right or wrong on this question: no hint, no explanation and no reasons for the wrong options.</p>
+            ) : null}
 
             <section className="space-y-3">
                 <h3 className="text-sm font-semibold">Options</h3>
@@ -271,6 +284,7 @@ export function QuestionEditor({
                 </div>
             </section>
 
+            {form.level === "micro" ? (
             <section className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
@@ -304,13 +318,16 @@ export function QuestionEditor({
                     })}
                 </div>
             </section>
+            ) : null}
 
-            <section className="grid gap-3 md:grid-cols-2">
-                <TextArea label="Hint (English)" value={form.hintEnglish} onChange={(value) => update({ hintEnglish: value })} />
-                <TextArea label="Hint (Roman Urdu, optional)" value={form.hintRomanUrdu} onChange={(value) => update({ hintRomanUrdu: value })} />
-                <TextArea label="Explanation of the correct answer (English)" value={form.explanationEnglish} onChange={(value) => update({ explanationEnglish: value })} />
-                <TextArea label="Explanation (Roman Urdu, optional)" value={form.explanationRomanUrdu} onChange={(value) => update({ explanationRomanUrdu: value })} />
-            </section>
+            {form.level === "micro" ? (
+                <section className="grid gap-3 md:grid-cols-2">
+                    <TextArea label="Hint (English)" value={form.hintEnglish} onChange={(value) => update({ hintEnglish: value })} />
+                    <TextArea label="Hint (Roman Urdu, optional)" value={form.hintRomanUrdu} onChange={(value) => update({ hintRomanUrdu: value })} />
+                    <TextArea label="Explanation of the correct answer (English)" value={form.explanationEnglish} onChange={(value) => update({ explanationEnglish: value })} />
+                    <TextArea label="Explanation (Roman Urdu, optional)" value={form.explanationRomanUrdu} onChange={(value) => update({ explanationRomanUrdu: value })} />
+                </section>
+            ) : null}
 
             <div className="flex gap-2">
                 <Button onClick={submit} disabled={saving || !form.microTag}><Save className="mr-2 h-4 w-4" />{form.id ? "Update question" : "Save question"}</Button>

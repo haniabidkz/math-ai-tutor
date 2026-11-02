@@ -58,11 +58,11 @@ export function LessonPractice({ item, language, eyebrow, note, onResult, childr
             {checked ? (
                 correct ? (
                     <InsightBlock tone="correct" className="mt-4" icon={<CheckCircle2 className="h-4 w-4" />} title={"Correct!"}>
-                        <BilingualText text={item.explanation} switcher={false} />
+                        {item.explanation.english ? <BilingualText text={item.explanation} switcher={false} /> : null}
                     </InsightBlock>
                 ) : (
                     <InsightBlock tone="wrong" className="mt-4" icon={<XCircle className="h-4 w-4" />} title={"Not yet"}>
-                        {wrongReason ? <BilingualText text={wrongReason} switcher={false} /> : <BilingualText text={item.hint} switcher={false} />}
+                        {wrongReason ? <BilingualText text={wrongReason} switcher={false} /> : item.hint.english ? <BilingualText text={item.hint} switcher={false} /> : null}
                         <Button type="button" variant="outline" size="sm" className="mt-3 font-bold" onClick={tryAgain}><RotateCcw className="mr-2 h-4 w-4" />{"Try again"}</Button>
                     </InsightBlock>
                 )

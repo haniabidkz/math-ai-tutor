@@ -1,4 +1,7 @@
+import { compareChapters, compareLessons } from "@/lib/curriculum-order";
 import type { ConceptFamily, LocalizedText, MicroConcept } from "@/types/curriculum";
+
+export { compareChapters };
 
 /**
  * Everything in the curriculum form that can be worked out from the class, topic and title,
@@ -121,28 +124,6 @@ export interface TopicOption {
     count: number;
 }
 
-const createdMillis = (concept: MicroConcept) => {
-    const createdAt = (concept as { createdAt?: { toMillis?: () => number } | number }).createdAt;
-    if (typeof createdAt === "number") return createdAt;
-    return typeof createdAt?.toMillis === "function" ? createdAt.toMillis() : Infinity;
-};
-
-/**
- * Chapters in teaching order: the chapter order the admin set, else the order the chapters were
- * created in, else the id. Within a chapter, lessons follow their own order.
- */
-export function compareChapters(concepts: MicroConcept[]): (left: string, right: string) => number {
-    const rank = new Map<string, [number, number]>();
-    for (const concept of concepts) {
-        const current = rank.get(concept.topicId) ?? [Infinity, Infinity];
-        const explicit = typeof concept.topicOrder === "number" ? concept.topicOrder : Infinity;
-        rank.set(concept.topicId, [Math.min(current[0], explicit), Math.min(current[1], createdMillis(concept))]);
-    }
-    const value = (topicId: string, index: 0 | 1) => rank.get(topicId)?.[index] ?? Infinity;
-    const diff = (left: number, right: number) => (left === right ? 0 : left < right ? -1 : 1);
-    return (left, right) => diff(value(left, 0), value(right, 0)) || diff(value(left, 1), value(right, 1)) || left.localeCompare(right);
-}
-
 /** The topics already used by a class, in teaching order, with what a new concept in each would inherit. */
 export function topicsForClass(concepts: MicroConcept[], classLevel: number): TopicOption[] {
     const byTopic = new Map<string, MicroConcept[]>();
@@ -152,7 +133,7 @@ export function topicsForClass(concepts: MicroConcept[], classLevel: number): To
     }
     const compare = compareChapters(concepts.filter((concept) => concept.classLevel === classLevel));
     return [...byTopic.entries()].map(([topicId, items]) => {
-        const ordered = [...items].sort((left, right) => left.order - right.order);
+        const ordered = [...items].sort(compareLessons);
         const last = ordered[ordered.length - 1];
         const orders = ordered.map((item) => item.topicOrder).filter((value): value is number => typeof value === "number");
         return {

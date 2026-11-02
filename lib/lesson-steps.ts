@@ -116,9 +116,12 @@ const LEVELS: Difficulty[] = ["easy", "medium", "hard"];
  * with no questions yet gives none, and the screen says so instead of failing.
  */
 export function pickPractice(questions: QuestionBankItem[], count = 2, random: () => number = Math.random): LessonPracticeItem[] {
+    // The lesson teaches, so it prefers micro-topic questions, which explain themselves.
+    const explaining = questions.filter((question) => (question.level ?? "micro") === "micro");
+    const source = explaining.length ? explaining : questions;
     const chosen: QuestionBankItem[] = [];
     for (const level of LEVELS) {
-        const pool = questions.filter((question) => question.difficulty === level && !chosen.includes(question));
+        const pool = source.filter((question) => question.difficulty === level && !chosen.includes(question));
         for (let index = pool.length - 1; index > 0; index--) {
             const swap = Math.floor(random() * (index + 1));
             [pool[index], pool[swap]] = [pool[swap], pool[index]];

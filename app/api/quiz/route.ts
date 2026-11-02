@@ -9,6 +9,7 @@ import {
     selectQuestion,
     selectQuizQuestions,
     toClientQuestion,
+    questionExplains,
 } from "@/lib/assessment-content";
 import { currentQuizQuestion, type StoredQuizSession } from "@/lib/assessment-session";
 import { findPreviousClassTopic, foundationProgress, type FoundationSource } from "@/lib/foundation-fallback";
@@ -303,7 +304,7 @@ async function describeSession(session: StoredQuizSession, locale: Locale, resum
     // The review screen, rebuilt from the answer that opened it.
     const last = [...(session.answers ?? [])].reverse().find((answer) => !answer.practice);
     const question = last ? everyQuestion.find((item) => item.id === last.questionId) : undefined;
-    const analysis = question && last ? getOptionAnalysis(question, last.optionId as LocalizedOption["id"]) : null;
+    const analysis = question && last && questionExplains(question) ? getOptionAnalysis(question, last.optionId as LocalizedOption["id"]) : null;
     let remedialConcept = session.remedialTag ? await getPublishedConcept(session.remedialTag) : undefined;
     if (!remedialConcept) remedialConcept = await getPublishedConcept(question?.microTag ?? session.microTag);
     const option = (id: string) => ({ id, text: cleanMathText(question?.options.find((item) => item.id === id)?.english ?? "") });
@@ -312,7 +313,7 @@ async function describeSession(session: StoredQuizSession, locale: Locale, resum
         review: {
             remedial: remedialConcept ? { microTag: remedialConcept.microTag, title: remedialConcept.title, concept: remedialConcept.concept, visualKind: remedialConcept.visualKind, imageUrl: remedialConcept.imageUrl } : undefined,
             mistake: analysis ? { type: analysis.mistakeType, tag: analysis.misconceptionTag, label: MISCONCEPTIONS[analysis.misconceptionTag]?.label.english ?? "", whyWrong: analysis.whyWrong } : undefined,
-            explanation: question?.explanation,
+            explanation: question && questionExplains(question) ? question.explanation : undefined,
             answer: question && last ? { selected: option(last.optionId), correct: option(question.correctOptionId) } : undefined,
             foundation: session.foundation && session.foundationSource && !session.foundation.outcome && session.foundation.index === 0
                 ? foundationProgress(session.foundationSource, session.foundation)

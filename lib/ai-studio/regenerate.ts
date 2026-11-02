@@ -6,7 +6,7 @@ import { normalizeQuestionBatch, questionBatchSchema, verificationSchema } from 
 import { findNearCopy, questionSignature } from "@/lib/ai-studio/similarity";
 import { chapterConcepts } from "@/lib/ai-studio/target";
 import { questionRomanUrduProblems } from "@/lib/ai-studio/urdu-check";
-import type { DraftConcept, DraftQuestion, GenerationDraft, RewriteReason } from "@/lib/ai-studio/types";
+import { withHelp, type DraftConcept, type DraftQuestion, type GenerationDraft, type GenerationLevel, type RewriteReason } from "@/lib/ai-studio/types";
 import { brevityIssues, normalizeText } from "@/lib/ai-studio/validate";
 import type { MicroConcept, QuestionBankItem, StudentClassLevel } from "@/types/curriculum";
 
@@ -94,7 +94,7 @@ export async function rewriteQuestion(input: RewriteInput, now: () => number = D
         attempts += 1;
         const prompt = rewritePrompt(context, { original, reason: input.reason, note: input.note, avoid, feedback });
         const reply = await completeJson<unknown>({
-            role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema([tag], skills),
+            role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema([tag], skills, withHelp(context.level)),
             temperature: 0.7, maxOutputTokens: 16_000, timeoutMs: 100_000,
             budgetMs: Math.max(30_000, remaining() - CHECK_RESERVE_MS),
             reasoningEffort: REASONING_BY_DIFFICULTY[original.difficulty],
@@ -103,7 +103,7 @@ export async function rewriteQuestion(input: RewriteInput, now: () => number = D
         usage.inputTokens += reply.usage.inputTokens;
         usage.outputTokens += reply.usage.outputTokens;
 
-        const { questions, problems } = normalizeQuestionBatch(reply.data, { difficulty: original.difficulty, count: 1, allowedTags: [tag], skills });
+        const { questions, problems } = normalizeQuestionBatch(reply.data, { difficulty: original.difficulty, count: 1, allowedTags: [tag], skills, withHelp: withHelp(context.level) });
         const candidate = questions[0];
         if (candidate) problems.push(...ruleProblems(candidate, seen, signatures, avoid));
         if (!candidate || problems.length) {
@@ -140,12 +140,12 @@ export async function rewriteQuestion(input: RewriteInput, now: () => number = D
  * micro-topics out of scope. A question that came from a micro-topic pool also keeps that
  * pool's written boundary (covered skills and excluded ideas).
  */
-export function liveRewriteContext(concept: MicroConcept, concepts: MicroConcept[], poolConcept: DraftConcept | null = null): RewriteContext {
+export function liveRewriteContext(concept: MicroConcept, concepts: MicroConcept[], poolConcept: DraftConcept | null = null, level: GenerationLevel = "micro"): RewriteContext {
     const outside = chapterConcepts(concepts, concept.classLevel, concept.topicId)
         .filter((item) => item.microTag !== concept.microTag)
         .map((item) => ({ title: item.title.english, summary: item.concept.english }));
     return {
-        level: "micro",
+        level,
         concept: poolConcept,
         target: {
             classLevel: concept.classLevel as StudentClassLevel,

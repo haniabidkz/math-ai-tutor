@@ -5,6 +5,12 @@ export const localizedInputSchema = z.object({
     romanUrdu: z.string().trim().min(1),
 });
 
+/** Text that may stay empty: sub-topic and main-topic questions carry no hint or explanation. */
+export const localizedOptionalSchema = z.object({
+    english: z.string().trim(),
+    romanUrdu: z.string().trim(),
+});
+
 export const mistakeTypeSchema = z.enum(["concept", "calculation", "sign", "operation", "carelessness"]);
 
 export const misconceptionTagSchema = z.enum([
@@ -37,9 +43,11 @@ export const questionInputSchema = z.object({
         romanUrdu: z.string().trim().min(1),
     })).length(4),
     correctOptionId: z.enum(["A", "B", "C", "D"]),
-    hint: localizedInputSchema,
-    explanation: localizedInputSchema,
+    hint: localizedOptionalSchema,
+    explanation: localizedOptionalSchema,
     optionAnalysis: z.record(z.enum(["A", "B", "C", "D"]), optionAnalysisSchema).optional(),
+    /** The pool the question was written for; sub-topic and main-topic questions only mark right or wrong. */
+    level: z.enum(["micro", "sub", "main"]).optional(),
     source: z.enum(["sindh", "oxford"]),
     status: z.enum(["draft", "published", "archived"]).default("draft"),
     version: z.number().int().positive().default(1),
@@ -55,6 +63,10 @@ export const questionInputSchema = z.object({
     }
     if (question.optionAnalysis?.[question.correctOptionId]) {
         context.addIssue({ code: "custom", message: "The correct option cannot carry mistake analysis", path: ["optionAnalysis"] });
+    }
+    if ((question.level ?? "micro") === "micro") {
+        if (!question.hint.english || !question.hint.romanUrdu) context.addIssue({ code: "custom", message: "A micro-topic question needs a hint in English and Roman Urdu", path: ["hint"] });
+        if (!question.explanation.english || !question.explanation.romanUrdu) context.addIssue({ code: "custom", message: "A micro-topic question needs an explanation in English and Roman Urdu", path: ["explanation"] });
     }
 });
 
@@ -73,6 +85,8 @@ export const conceptInputSchema = z.object({
     subTopic: localizedInputSchema.optional(),
     order: z.number().int().min(0),
     topicOrder: z.number().int().min(0).optional(),
+    /** The sub-topic's place inside the chapter; lessons without one come after those with one. */
+    subTopicOrder: z.number().int().min(0).optional(),
     foundationOnly: z.boolean().optional(),
     status: z.enum(["draft", "published", "archived"]),
 });

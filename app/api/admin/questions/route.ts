@@ -39,8 +39,11 @@ function cleanQuestion(item: ParsedQuestion): ParsedQuestion {
 
 function withOptionAnalysis(raw: ParsedQuestion) {
     const item = cleanQuestion(raw);
-    const optionAnalysis = buildOptionAnalysis(item as unknown as QuestionBankItem);
-    return { ...item, prerequisiteTag: item.prerequisiteTag ?? null, optionAnalysis };
+    // Sub-topic and main-topic questions only mark, so they carry no reasons, hint or solution.
+    const explains = (item.level ?? "micro") === "micro";
+    const optionAnalysis = explains ? buildOptionAnalysis(item as unknown as QuestionBankItem) : {};
+    const empty = { english: "", romanUrdu: "" };
+    return { ...item, prerequisiteTag: item.prerequisiteTag ?? null, ...(explains ? {} : { hint: empty, explanation: empty }), optionAnalysis };
 }
 
 async function requireMatchingConceptClasses(items: ParsedQuestion[]) {

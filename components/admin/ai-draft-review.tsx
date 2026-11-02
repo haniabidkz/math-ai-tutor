@@ -15,6 +15,7 @@ import { DIFFICULTIES, LEVEL_LABELS } from "@/lib/ai-studio/quotas";
 import {
     NEW_MICRO_TAG, OPTION_LETTERS, REWRITE_REASON_KEYS, REWRITE_REASONS,
     type DraftConcept, type DraftQuestion, type GenerationDraft, type GenerationStep, type OptionLetter, type RewriteReason,
+    withHelp,
 } from "@/lib/ai-studio/types";
 import { blockingIssues, normalizeText, validateDraft, type DraftIssue } from "@/lib/ai-studio/validate";
 import { MISCONCEPTION_TAGS, MISCONCEPTIONS } from "@/lib/mistake-analysis";
@@ -512,10 +513,12 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                             {value === "all" ? `All (${ordered.length})` : value === "problems" ? `With problems (${withProblems})` : `${capital(value)} (${countFor(value)})`}
                         </Button>
                     ))}
-                    <label className="ml-auto flex items-center gap-2 text-sm">
-                        <input type="checkbox" checked={showDetails} onChange={(event) => setShowDetails(event.target.checked)} />
-                        Show hints, solutions and reasons
-                    </label>
+                    {withHelp(draft.level) ? (
+                        <label className="ml-auto flex items-center gap-2 text-sm">
+                            <input type="checkbox" checked={showDetails} onChange={(event) => setShowDetails(event.target.checked)} />
+                            Show hints, solutions and reasons
+                        </label>
+                    ) : <p className="ml-auto text-xs text-muted-foreground">No hints, solutions or reasons: this pool only marks right or wrong.</p>}
                 </div>
                 {!live ? (
                     <div className="flex flex-wrap gap-2">
@@ -538,7 +541,8 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                         issues={issuesByKey.get(question.key) ?? []}
                         readOnly={live}
                         busy={busy}
-                        showDetails={showDetails}
+                        showDetails={showDetails && withHelp(draft.level)}
+                        help={withHelp(draft.level)}
                         startEditing={question.key === newKey}
                         onEdit={edit}
                         onRegenerate={regenerate}
@@ -631,9 +635,9 @@ function ConceptCard({ concept, level, issues, readOnly, onSave, onOpenChange }:
         <section className="space-y-3 bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                    <h3 className="font-semibold">Concept explanation</h3>
+                    <h3 className="font-semibold">{withHelp(level) ? "Concept explanation" : "Pool boundary"}</h3>
                     <p className="text-xs text-muted-foreground">
-                        {level === "micro" ? "Shown to students as the lesson for this micro-topic." : "Kept with this pool as its summary."}
+                        {withHelp(level) ? "Shown to students as the lesson for this micro-topic." : "Students get no lesson, hint or solution for this pool: its questions only mark right or wrong. The boundary keeps every question inside the topic."}
                     </p>
                 </div>
                 {!readOnly && !editing ? <Button size="sm" variant="outline" onClick={() => open(true)}><Pencil className="mr-2 h-4 w-4" />{concept ? "Edit" : "Write it"}</Button> : null}
@@ -641,8 +645,12 @@ function ConceptCard({ concept, level, issues, readOnly, onSave, onOpenChange }:
             {editing ? (
                 <div className="space-y-3">
                     <TextField label="Title" value={form.title} onChange={(title) => setForm({ ...form, title })} />
-                    <PairEditor label="Explanation" value={form.explanation} rows={5} onChange={(explanation) => setForm({ ...form, explanation })} />
-                    <PairEditor label="Real-life local example" value={form.example} rows={3} onChange={(example) => setForm({ ...form, example })} />
+                    {withHelp(level) ? (
+                        <>
+                            <PairEditor label="Explanation" value={form.explanation} rows={5} onChange={(explanation) => setForm({ ...form, explanation })} />
+                            <PairEditor label="Real-life local example" value={form.example} rows={3} onChange={(example) => setForm({ ...form, example })} />
+                        </>
+                    ) : null}
                     <div className="flex gap-2">
                         <Button onClick={save} disabled={saving}>{saving ? "Saving..." : "Save explanation"}</Button>
                         <Button variant="outline" onClick={() => open(false)}>Cancel</Button>
@@ -651,8 +659,12 @@ function ConceptCard({ concept, level, issues, readOnly, onSave, onOpenChange }:
             ) : concept ? (
                 <div className="space-y-3">
                     <p className="text-base font-semibold">{concept.title}</p>
-                    <PairView label="Explanation" text={concept.explanation} />
-                    <PairView label="Local example" text={concept.example} />
+                    {withHelp(level) ? (
+                        <>
+                            <PairView label="Explanation" text={concept.explanation} />
+                            <PairView label="Local example" text={concept.example} />
+                        </>
+                    ) : null}
                     {concept.scope ? (
                         <div className="grid gap-3 rounded-md border bg-slate-50 p-3 text-sm md:grid-cols-2">
                             <div>
@@ -681,7 +693,7 @@ function VerificationBadge({ question }: { question: DraftQuestion }) {
     return <Badge variant="outline">Not checked yet</Badge>;
 }
 
-function QuestionCard({ question, number, topicTitles, issues, readOnly, busy, showDetails, startEditing, onEdit, onRegenerate, onOpenChange }: {
+function QuestionCard({ question, number, topicTitles, issues, readOnly, busy, showDetails, help, startEditing, onEdit, onRegenerate, onOpenChange }: {
     question: DraftQuestion;
     number: number;
     topicTitles: Map<string, string>;
@@ -690,6 +702,8 @@ function QuestionCard({ question, number, topicTitles, issues, readOnly, busy, s
     /** Generation or checking is running for the whole draft. */
     busy: boolean;
     showDetails: boolean;
+    /** Whether this pool's questions carry a hint, solution and reasons (micro-topic pools only). */
+    help: boolean;
     startEditing: boolean;
     onEdit: (body: Record<string, unknown>) => Promise<boolean>;
     onRegenerate: (key: string, reason: RewriteReason, note: string) => Promise<RewriteResult>;
@@ -846,6 +860,8 @@ function QuestionCard({ question, number, topicTitles, issues, readOnly, busy, s
                                 onChange={(microTag) => setForm({ ...form, microTag })} />
                         ) : null}
                     </div>
+                    {help ? (
+                        <>
                     <PairEditor label="Hint" value={form.hint} rows={2} onChange={(hint) => setForm({ ...form, hint })} />
                     <PairEditor label="Step-by-step solution" value={form.solution} rows={5} onChange={(solution) => setForm({ ...form, solution })} />
                     <div className="grid gap-3 lg:grid-cols-3">
@@ -863,6 +879,8 @@ function QuestionCard({ question, number, topicTitles, issues, readOnly, busy, s
                             );
                         })}
                     </div>
+                        </>
+                    ) : null}
                     <p className="text-xs text-muted-foreground">Changing the question, the options or the correct answer sends it for a new answer check.</p>
                     <div className="flex gap-2">
                         <Button onClick={save} disabled={saving}>{saving ? "Saving..." : "Save question"}</Button>

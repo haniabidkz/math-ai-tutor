@@ -1,3 +1,4 @@
+import { questionLevel, type QuestionLevel } from "@/lib/question-level";
 import { adminDb } from "@/lib/firebase-admin";
 import { MICRO_CONCEPTS, builtInCurriculumEnabled, getConcept } from "@/lib/curriculum";
 import { getBuiltInDiagnosticQuestion } from "@/lib/diagnostic-questions";
@@ -13,10 +14,14 @@ import type {
     QuestionBankItem,
 } from "@/types/curriculum";
 
+export { questionExplains, questionLevel, type QuestionLevel } from "@/lib/question-level";
+
 export interface ClientQuestion {
     id: string;
     microTag: string;
     difficulty: Difficulty;
+    /** Sub-topic and main-topic questions offer no hint and only mark right or wrong. */
+    level?: QuestionLevel;
     question: string;
     options: Array<{ id: "A" | "B" | "C" | "D"; text: string }>;
 }
@@ -30,6 +35,7 @@ export function toClientQuestion(question: QuestionBankItem, locale: Locale): Cl
         id: question.id,
         microTag: question.microTag,
         difficulty: question.difficulty,
+        level: questionLevel(question),
         // Students see clean text even when an older record still carries stray formatting.
         question: cleanMathText(localized(question.question, locale)),
         options: question.options.map((option) => ({ id: option.id, text: cleanMathText(localized(option, locale)) })),

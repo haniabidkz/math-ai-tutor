@@ -162,10 +162,14 @@ function QuestionPreview({ title, item, details = false }: { title: string; item
             </ol>
             {details ? (
                 <div className="space-y-1 border-t pt-2 text-sm">
-                    <p><span className="font-semibold">Hint:</span> {item.hint.english}</p>
-                    <p className="text-muted-foreground">{item.hint.romanUrdu}</p>
-                    <p className="whitespace-pre-line"><span className="font-semibold">Solution:</span> {item.explanation.english}</p>
-                    <p className="whitespace-pre-line text-muted-foreground">{item.explanation.romanUrdu}</p>
+                    {item.hint.english || item.explanation.english ? (
+                        <>
+                            <p><span className="font-semibold">Hint:</span> {item.hint.english}</p>
+                            <p className="text-muted-foreground">{item.hint.romanUrdu}</p>
+                            <p className="whitespace-pre-line"><span className="font-semibold">Solution:</span> {item.explanation.english}</p>
+                            <p className="whitespace-pre-line text-muted-foreground">{item.explanation.romanUrdu}</p>
+                        </>
+                    ) : <p className="text-muted-foreground">No hint or solution: this pool only marks right or wrong.</p>}
                 </div>
             ) : null}
         </section>

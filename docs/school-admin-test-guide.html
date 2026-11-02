@@ -35,7 +35,7 @@
 <body>
 
 <h1>LearnAI Tutor – School Platform Test Guide</h1>
-<p class="sub">How to try every new feature: schools, school admin panel, phone sign-in, forgot password, teachers and sections, trial and paid plans, seats, promotion, reports, school deletion and the new Super Admin tabs. Written for the product owner. Version 30 October 2026 (round 3).</p>
+<p class="sub">How to try every new feature: schools, school admin panel, phone sign-in, forgot password, teachers and sections, trial and paid plans, seats, promotion, reports, school deletion and the new Super Admin tabs. Written for the product owner. Version 2 November 2026 (round 3, plus the content system in section 6).</p>
 
 <div class="box">
   <strong>Live site:</strong> https://learnaitutor.com &nbsp;·&nbsp; <strong>Super Admin:</strong> /super-admin &nbsp;·&nbsp; <strong>School Portal:</strong> /login?role=school &nbsp;·&nbsp; <strong>School Admin panel:</strong> /school-admin<br>
@@ -295,7 +295,26 @@
   <li><strong>Trial length, free lessons and default seats</strong> are in Super Admin → Schools → Access settings.</li>
 </ul>
 
-<p class="small">Everything in this guide was verified on production with automated checks (83 on 22 October 2026, plus the teacher-scope and edit checks on 30 October 2026) and a browser walk-through; all test schools and accounts were deleted afterwards.</p>
+<h2>6. Content system: levels and textbook order (2 November 2026)</h2>
+<p>Two rules from the Content System Requirements document now apply everywhere.</p>
+<ul>
+  <li><strong>Only micro-topic questions teach.</strong> A micro-topic question keeps its hint, step-by-step solution and the reason for every wrong option. A sub-topic or main-topic question only marks right or wrong: the student sees no Hint button, and a wrong answer shows just "Not quite" with the correct answer, without the common-mistake cards or a remedial lesson.</li>
+  <li><strong>The textbook decides the order.</strong> Chapters, sub-topics and lessons are shown in the Oxford Countdown / Sindh Textbook Board order on every screen (student path, Learn page, Super Admin Curriculum tab), never in the order they were generated. When an AI draft creates a new micro-topic, it is placed where the textbook teaches it; if the place could not be confirmed, it goes to the end of its chapter with an "Order unconfirmed" badge.</li>
+</ul>
+<table>
+  <thead><tr><th>#</th><th>What to do</th><th>What you should see</th></tr></thead>
+  <tbody>
+    <tr><td>19</td><td>Super Admin → AI Studio: generate a <strong>Sub-topic</strong> or <strong>Main topic</strong> pool and open its review.</td><td>The first card is "Pool boundary" (title, covered skills, out of scope) with no explanation or local example. Question cards show no hint, solution or reasons, and the "Show hints, solutions and reasons" box is replaced by a note. Approving works with those fields empty.</td></tr>
+    <tr><td>20</td><td>Super Admin → AI Studio: generate a <strong>Micro-topic</strong> pool.</td><td>Unchanged: explanation, local example, hints, solutions and wrong-option reasons are all written and checked, exactly as before.</td></tr>
+    <tr><td>21</td><td>As a student, take a quiz that contains a sub-topic or main-topic question (Questions tab shows the pool level of each question).</td><td>On that question there is no Hint button. A wrong answer shows "Not quite" with your answer and the correct answer, then the next question; no mistake cards, no remedial lesson. A micro-topic question still behaves as before.</td></tr>
+    <tr><td>22</td><td>Super Admin → Questions: edit a question and change "Pool level".</td><td>Sub-topic or Main topic hides the hint, explanation and "why wrong" sections and saves with them empty. Micro-topic requires a hint and explanation again.</td></tr>
+    <tr><td>23</td><td>Super Admin → Curriculum: look at "Curriculum order", choose a class and press <strong>Order by textbook (AI)</strong>.</td><td>A side-by-side preview: the current order and the textbook order, with moved lessons marked and a note from the model. Nothing changes until you press "Apply this order". After applying, the lesson cards below, the student path and the Learn page all follow that order.</td></tr>
+    <tr><td>24</td><td>Super Admin → AI Studio: create a <strong>new micro-topic</strong> in an existing chapter (e.g. a lesson that belongs in the middle of Sets) and approve it.</td><td>The approval message says where it was placed. The Curriculum tab shows the lesson at its textbook position, not at the end; the lessons after it moved down one place. If the model could not decide, the lesson is last in the chapter and carries an "Order unconfirmed" badge, which "Order by textbook (AI)" clears.</td></tr>
+    <tr><td>25</td><td>Super Admin → Curriculum: edit a lesson and set "Sub-topic order in chapter".</td><td>Lessons with a sub-topic order come first, in that order; lessons without one come after them. Within a sub-topic, "Order in topic" decides; equal values fall back to creation time, so the order is always the same.</td></tr>
+  </tbody>
+</table>
+
+<p class="small">Everything in this guide was verified on production with automated checks (83 on 22 October 2026, plus the teacher-scope and edit checks on 30 October 2026) and a browser walk-through; all test schools and accounts were deleted afterwards. The content-system checks of 2 November 2026 ran on production with a throwaway student that was deleted afterwards.</p>
 
 </body>
 </html>

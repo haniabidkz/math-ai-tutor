@@ -1,6 +1,6 @@
 import { MISCONCEPTIONS, MISCONCEPTION_TAGS } from "@/lib/mistake-analysis";
 import {
-    CURRICULUM_NAME, NEW_MICRO_TAG, REWRITE_REASONS,
+    CURRICULUM_NAME, NEW_MICRO_TAG, REWRITE_REASONS, withHelp,
     type DraftConcept, type DraftQuestion, type GenerationDraft, type GenerationLevel, type RewriteReason,
 } from "@/lib/ai-studio/types";
 import type { Difficulty } from "@/types/curriculum";
@@ -176,11 +176,14 @@ ${target.microTopics.map((topic) => topicLine(topic)).join("\n")}
 
 ${focus}${siblings}
 
-Write the concept explanation for this ${LEVEL_WORDS[draft.level]}, and fix its boundary so that every practice question stays inside it:
+${withHelp(draft.level)
+    ? `Write the concept explanation for this ${LEVEL_WORDS[draft.level]}, and fix its boundary so that every practice question stays inside it:
 - title: a short title.
 - english: a very simple explanation in 3 to 5 short sentences, with one tiny worked example.
 - roman_urdu: the same explanation in warm, conversational Roman Urdu.
-- real_life_example: one short, relatable local word problem from Pakistani daily life, in English and in Roman Urdu.
+- real_life_example: one short, relatable local word problem from Pakistani daily life, in English and in Roman Urdu.`
+    : `Students never see a lesson, hint or solution for this ${LEVEL_WORDS[draft.level]}: its questions only mark right or wrong. Write no explanation. Fix only its boundary so that every practice question stays inside it:
+- title: a short title.`}
 ${boundaryAsk}${rejected}`,
     };
 }
@@ -225,10 +228,12 @@ For every question:
 - question_text: the question in simple English, at most 30 words.
 - options: exactly 4 different short answers, in order A, B, C, D. Write only the answer itself; never start an option with its letter (write "-3", not "A. -3").
 - correct_option: the letter of the one correct answer.
-- hint: a one-sentence nudge that does not give the answer away, in English and in Roman Urdu.
+${withHelp(draft.level)
+    ? `- hint: a one-sentence nudge that does not give the answer away, in English and in Roman Urdu.
 - step_by_step_explanation: the worked solution in 2 to 4 short steps, in English and in Roman Urdu.
 - wrong_option_analysis: one entry for each of the 3 wrong options (never the correct one), one short sentence on why it is wrong, in English and in Roman Urdu, with the misconception_tag that best describes the mistake:
-${TAG_GUIDE}
+${TAG_GUIDE}`
+    : `- No hint, solution or wrong-option reasons: students in this pool only learn whether they were right or wrong, so every question must be clear enough to answer on its own.`}
 
 Before you finish, solve every question again from the start. Exactly one option must equal your answer, and no two options may be equal. If a question fails this check, rewrite its numbers or options until it passes; never hand in a question whose solution says no option is correct.${avoid}${feedback}`,
     };

@@ -1,7 +1,7 @@
 import { findForeignContext } from "@/lib/ai-studio/context-check";
 import { DIFFICULTIES } from "@/lib/ai-studio/quotas";
 import { isNearCopy, questionSignature, wordCount } from "@/lib/ai-studio/similarity";
-import { OPTION_LETTERS, type DraftQuestion, type GenerationDraft } from "@/lib/ai-studio/types";
+import { OPTION_LETTERS, withHelp, type DraftQuestion, type GenerationDraft, type GenerationLevel } from "@/lib/ai-studio/types";
 import { questionRomanUrduIssues, romanUrduIssues } from "@/lib/ai-studio/urdu-check";
 import { findQuestionArtifacts } from "@/lib/text-clean";
 import { MISCONCEPTIONS } from "@/lib/mistake-analysis";
@@ -54,7 +54,8 @@ export function questionFingerprint(question: Pick<DraftQuestion, "questionText"
     return JSON.stringify([normalizeText(question.questionText), question.options.map(normalizeText), question.correctOption]);
 }
 
-export function questionIssues(question: DraftQuestion, allowedTags: Set<string>): DraftIssue[] {
+/** `help` is false for sub-topic and main-topic pools, whose questions carry no hint, solution or reasons. */
+export function questionIssues(question: DraftQuestion, allowedTags: Set<string>, help = true): DraftIssue[] {
     const issues: DraftIssue[] = [];
     const add = (message: string, severity: DraftIssue["severity"] = "error") => issues.push({ severity, where: question.key, message });
 
@@ -65,17 +66,19 @@ export function questionIssues(question: DraftQuestion, allowedTags: Set<string>
     if (!OPTION_LETTERS.includes(question.correctOption)) add("Choose the correct option.");
     if (!allowedTags.has(question.microTag)) add("Choose which micro-topic this question belongs to.");
 
-    if (!filled(question.hint.english) || !filled(question.hint.romanUrdu)) add("The hint is needed in both English and Roman Urdu.");
-    if (!filled(question.solution.english) || !filled(question.solution.romanUrdu)) add("The step-by-step solution is needed in both English and Roman Urdu.");
-    if (SAYS_NO_ANSWER.test(question.solution.english)) add("The solution itself says none of the options is correct. Fix the question or its options.");
+    if (help) {
+        if (!filled(question.hint.english) || !filled(question.hint.romanUrdu)) add("The hint is needed in both English and Roman Urdu.");
+        if (!filled(question.solution.english) || !filled(question.solution.romanUrdu)) add("The step-by-step solution is needed in both English and Roman Urdu.");
+        if (SAYS_NO_ANSWER.test(question.solution.english)) add("The solution itself says none of the options is correct. Fix the question or its options.");
 
-    for (const letter of OPTION_LETTERS) {
-        if (letter === question.correctOption) continue;
-        const reason = question.wrongReasons[letter];
-        if (!reason || !filled(reason.english) || !filled(reason.romanUrdu)) {
-            add(`Option ${letter} needs a reason why it is wrong, in both English and Roman Urdu.`);
-        } else if (!MISCONCEPTIONS[reason.misconceptionTag]) {
-            add(`Option ${letter} needs a misconception tag.`);
+        for (const letter of OPTION_LETTERS) {
+            if (letter === question.correctOption) continue;
+            const reason = question.wrongReasons[letter];
+            if (!reason || !filled(reason.english) || !filled(reason.romanUrdu)) {
+                add(`Option ${letter} needs a reason why it is wrong, in both English and Roman Urdu.`);
+            } else if (!MISCONCEPTIONS[reason.misconceptionTag]) {
+                add(`Option ${letter} needs a misconception tag.`);
+            }
         }
     }
 
@@ -108,9 +111,11 @@ export function questionIssues(question: DraftQuestion, allowedTags: Set<string>
  * complete bilingual content, reasons for every wrong option, local settings, no repeats,
  * and an independent check of every answer.
  */
-export function validateDraft(draft: Pick<GenerationDraft, "quota" | "concept" | "questions" | "target">, existingQuestionTexts: Set<string> = new Set()): DraftIssue[] {
+export function validateDraft(draft: Pick<GenerationDraft, "quota" | "concept" | "questions" | "target"> & { level?: GenerationLevel }, existingQuestionTexts: Set<string> = new Set()): DraftIssue[] {
     const issues: DraftIssue[] = [];
     const allowedTags = new Set(draft.target.microTopics.map((topic) => topic.microTag));
+    // A sub-topic or main-topic pool has a title and a boundary, but no lesson text and no help on its questions.
+    const help = withHelp(draft.level ?? "micro");
 
     // Exact per-difficulty counts also fix the total, so the total needs no check of its own.
     for (const difficulty of DIFFICULTIES) {
@@ -124,16 +129,18 @@ export function validateDraft(draft: Pick<GenerationDraft, "quota" | "concept" |
         issues.push({ severity: "error", where: "concept", message: "The concept explanation has not been written yet." });
     } else {
         if (!filled(concept.title)) issues.push({ severity: "error", where: "concept", message: "The concept needs a title." });
-        if (!filled(concept.explanation.english) || !filled(concept.explanation.romanUrdu)) {
-            issues.push({ severity: "error", where: "concept", message: "The explanation is needed in both English and Roman Urdu." });
-        }
-        if (!filled(concept.example.english) || !filled(concept.example.romanUrdu)) {
-            issues.push({ severity: "error", where: "concept", message: "The real-life example is needed in both English and Roman Urdu." });
-        }
-        const foreign = findForeignContext(concept.explanation.english, concept.example.english);
-        if (foreign.length) issues.push({ severity: "error", where: "concept", message: `Uses a foreign setting (${foreign.join(", ")}). Rewrite it with a local example.` });
-        for (const message of [...romanUrduIssues("The explanation", concept.explanation), ...romanUrduIssues("The real-life example", concept.example)]) {
-            issues.push({ severity: "warning", where: "concept", message });
+        if (help) {
+            if (!filled(concept.explanation.english) || !filled(concept.explanation.romanUrdu)) {
+                issues.push({ severity: "error", where: "concept", message: "The explanation is needed in both English and Roman Urdu." });
+            }
+            if (!filled(concept.example.english) || !filled(concept.example.romanUrdu)) {
+                issues.push({ severity: "error", where: "concept", message: "The real-life example is needed in both English and Roman Urdu." });
+            }
+            const foreign = findForeignContext(concept.explanation.english, concept.example.english);
+            if (foreign.length) issues.push({ severity: "error", where: "concept", message: `Uses a foreign setting (${foreign.join(", ")}). Rewrite it with a local example.` });
+            for (const message of [...romanUrduIssues("The explanation", concept.explanation), ...romanUrduIssues("The real-life example", concept.example)]) {
+                issues.push({ severity: "warning", where: "concept", message });
+            }
         }
     }
 
@@ -141,7 +148,7 @@ export function validateDraft(draft: Pick<GenerationDraft, "quota" | "concept" |
     const earlier: Array<{ text: string; signature: ReturnType<typeof questionSignature> }> = [];
     const live = [...existingQuestionTexts].map((text) => questionSignature(text));
     for (const question of draft.questions) {
-        issues.push(...questionIssues(question, allowedTags));
+        issues.push(...questionIssues(question, allowedTags, help));
         const text = normalizeText(question.questionText);
         if (!text) continue;
         const signature = questionSignature(text);

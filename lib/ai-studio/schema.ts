@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { MISCONCEPTION_TAGS } from "@/lib/mistake-analysis";
-import { OPTION_LETTERS, type DraftConcept, type DraftQuestion, type OptionLetter } from "@/lib/ai-studio/types";
+import { OPTION_LETTERS, withHelp, type DraftConcept, type DraftQuestion, type GenerationLevel, type OptionLetter } from "@/lib/ai-studio/types";
 import { stripOptionLabel } from "@/lib/ai-studio/validate";
 import { cleanMathText, findQuestionArtifacts } from "@/lib/text-clean";
 import type { Difficulty, MisconceptionTag } from "@/types/curriculum";
@@ -32,12 +32,45 @@ export const conceptSchema = {
     },
 };
 
+/** A sub-topic or main-topic pool has no explanation: the model writes only the title and the boundary. */
+export const scopeSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["title", "covers", "excludes"],
+    properties: {
+        title: { type: "string" },
+        covers: { type: "array", items: { type: "string" } },
+        excludes: { type: "array", items: { type: "string" } },
+    },
+};
+
+export const conceptSchemaFor = (level: GenerationLevel) => (withHelp(level) ? conceptSchema : scopeSchema);
+
 /**
  * With covered skills known, each question must name the one it tests from that exact list,
  * so a question outside the topic cannot be expressed at all.
  */
-export function questionBatchSchema(allowedTags: string[], skills: string[] = []) {
+export function questionBatchSchema(allowedTags: string[], skills: string[] = [], help = true) {
     const skillField = skills.length ? { skill: { type: "string", enum: skills } } : {};
+    // Sub-topic and main-topic pools only mark, so their questions carry no help at all.
+    const helpFields = help ? {
+        hint: bilingual,
+        step_by_step_explanation: bilingual,
+        wrong_option_analysis: {
+            type: "array",
+            items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["option", "english", "roman_urdu", "misconception_tag"],
+                properties: {
+                    option: { type: "string", enum: OPTION_LETTERS },
+                    english: { type: "string" },
+                    roman_urdu: { type: "string" },
+                    misconception_tag: { type: "string", enum: MISCONCEPTION_TAGS },
+                },
+            },
+        },
+    } : {};
     return {
         type: "object",
         additionalProperties: false,
@@ -48,29 +81,14 @@ export function questionBatchSchema(allowedTags: string[], skills: string[] = []
                 items: {
                     type: "object",
                     additionalProperties: false,
-                    required: [...(skills.length ? ["skill"] : []), "micro_tag", "question_text", "options", "correct_option", "hint", "step_by_step_explanation", "wrong_option_analysis"],
+                    required: [...(skills.length ? ["skill"] : []), "micro_tag", "question_text", "options", "correct_option", ...(help ? ["hint", "step_by_step_explanation", "wrong_option_analysis"] : [])],
                     properties: {
                         ...skillField,
                         micro_tag: { type: "string", enum: allowedTags },
                         question_text: { type: "string" },
                         options: { type: "array", items: { type: "string" } },
                         correct_option: { type: "string", enum: OPTION_LETTERS },
-                        hint: bilingual,
-                        step_by_step_explanation: bilingual,
-                        wrong_option_analysis: {
-                            type: "array",
-                            items: {
-                                type: "object",
-                                additionalProperties: false,
-                                required: ["option", "english", "roman_urdu", "misconception_tag"],
-                                properties: {
-                                    option: { type: "string", enum: OPTION_LETTERS },
-                                    english: { type: "string" },
-                                    roman_urdu: { type: "string" },
-                                    misconception_tag: { type: "string", enum: MISCONCEPTION_TAGS },
-                                },
-                            },
-                        },
+                        ...helpFields,
                     },
                 },
             },
@@ -127,7 +145,7 @@ function list(value: unknown, limit: number): string[] {
     return items.filter((item) => !seen.has(item.toLowerCase()) && seen.add(item.toLowerCase())).slice(0, limit);
 }
 
-export function normalizeConcept(raw: unknown): { concept: DraftConcept | null; problems: string[] } {
+export function normalizeConcept(raw: unknown, help = true): { concept: DraftConcept | null; problems: string[] } {
     const data = (raw ?? {}) as { title?: unknown; real_life_example?: RawBilingual; english?: unknown; roman_urdu?: unknown; covers?: unknown; excludes?: unknown };
     const concept: DraftConcept = {
         title: text(data.title),
@@ -137,8 +155,8 @@ export function normalizeConcept(raw: unknown): { concept: DraftConcept | null; 
     };
     const problems: string[] = [];
     if (!concept.title) problems.push("the concept title is empty");
-    if (!concept.explanation.english || !concept.explanation.romanUrdu) problems.push("the explanation must be in both English and Roman Urdu");
-    if (!concept.example.english || !concept.example.romanUrdu) problems.push("the real-life example must be in both English and Roman Urdu");
+    if (help && (!concept.explanation.english || !concept.explanation.romanUrdu)) problems.push("the explanation must be in both English and Roman Urdu");
+    if (help && (!concept.example.english || !concept.example.romanUrdu)) problems.push("the real-life example must be in both English and Roman Urdu");
     if (concept.scope!.covers.length < 2) problems.push("covers must list 2 to 6 specific skills this topic includes");
     if (concept.scope!.excludes.length < 2) problems.push("excludes must list 2 to 6 neighbouring ideas that belong to other lessons");
     return { concept: problems.length ? null : concept, problems };
@@ -150,7 +168,7 @@ export function normalizeConcept(raw: unknown): { concept: DraftConcept | null; 
  */
 export function normalizeQuestionBatch(
     raw: unknown,
-    expected: { difficulty: Difficulty; count: number; allowedTags: string[]; skills?: string[] },
+    expected: { difficulty: Difficulty; count: number; allowedTags: string[]; skills?: string[]; /** False for sub-topic and main-topic pools, whose questions carry no help. */ withHelp?: boolean },
     makeKey: () => string = () => randomUUID(),
 ): { questions: DraftQuestion[]; problems: string[] } {
     const items = Array.isArray((raw as { questions?: unknown })?.questions) ? (raw as { questions: RawQuestion[] }).questions : [];
@@ -173,13 +191,14 @@ export function normalizeQuestionBatch(
         const skill = text(item.skill);
         if (expected.skills?.length && !expected.skills.includes(skill)) problems.push(`${label} must test one of the covered skills`);
 
-        const hint = pair(item.hint);
-        const solution = pair(item.step_by_step_explanation);
-        if (!hint.english || !hint.romanUrdu) problems.push(`${label} needs a hint in English and Roman Urdu`);
-        if (!solution.english || !solution.romanUrdu) problems.push(`${label} needs a step-by-step solution in English and Roman Urdu`);
+        const help = expected.withHelp !== false;
+        const hint = help ? pair(item.hint) : pair(undefined);
+        const solution = help ? pair(item.step_by_step_explanation) : pair(undefined);
+        if (help && (!hint.english || !hint.romanUrdu)) problems.push(`${label} needs a hint in English and Roman Urdu`);
+        if (help && (!solution.english || !solution.romanUrdu)) problems.push(`${label} needs a step-by-step solution in English and Roman Urdu`);
 
         const wrongReasons: DraftQuestion["wrongReasons"] = {};
-        for (const reason of item.wrong_option_analysis ?? []) {
+        for (const reason of help ? item.wrong_option_analysis ?? [] : []) {
             const letter = text(reason.option) as OptionLetter;
             if (!OPTION_LETTERS.includes(letter) || letter === correct) continue;
             wrongReasons[letter] = {
@@ -191,7 +210,7 @@ export function normalizeQuestionBatch(
             };
         }
         const missing = OPTION_LETTERS.filter((letter) => letter !== correct && (!wrongReasons[letter]?.english || !wrongReasons[letter]?.romanUrdu));
-        if (OPTION_LETTERS.includes(correct) && missing.length) problems.push(`${label} is missing why option ${missing.join(", ")} is wrong`);
+        if (help && OPTION_LETTERS.includes(correct) && missing.length) problems.push(`${label} is missing why option ${missing.join(", ")} is wrong`);
 
         return {
             key: makeKey(),

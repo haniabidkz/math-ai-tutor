@@ -6,12 +6,12 @@ import { findForeignContext } from "@/lib/ai-studio/context-check";
 import { AiError, completeJson } from "@/lib/ai-studio/ai";
 import { batchFocus, conceptPrompt, questionPrompt } from "@/lib/ai-studio/prompts";
 import { findNearCopy, questionSignature } from "@/lib/ai-studio/similarity";
-import { conceptSchema, normalizeConcept, normalizeQuestionBatch, questionBatchSchema } from "@/lib/ai-studio/schema";
+import { conceptSchemaFor, normalizeConcept, normalizeQuestionBatch, questionBatchSchema } from "@/lib/ai-studio/schema";
 import {
     assertOpen, clean, draftFrom, draftsCollection, liveQuestionTexts,
     studioErrorResponse, StudioError, toClientDraft,
 } from "@/lib/ai-studio/store";
-import type { DraftConcept, DraftQuestion, GenerationDraft, GenerationStep } from "@/lib/ai-studio/types";
+import { withHelp, type DraftConcept, type DraftQuestion, type GenerationDraft, type GenerationStep } from "@/lib/ai-studio/types";
 import { questionRomanUrduProblems, romanUrduProblems } from "@/lib/ai-studio/urdu-check";
 import { brevityIssues, normalizeText } from "@/lib/ai-studio/validate";
 import { requireSuperAdmin } from "@/lib/server-auth";
@@ -42,14 +42,16 @@ type Outcome =
 
 async function runStep(draft: GenerationDraft, step: GenerationStep) {
     const tags = draft.target.microTopics.map((topic) => topic.microTag);
+    // Micro-topic pools teach; sub-topic and main-topic pools only mark, so they get no lesson, hints or solutions.
+    const help = withHelp(draft.level);
 
     if (step.kind === "concept") {
         const prompt = conceptPrompt(draft, step.feedback);
-        const reply = await completeJson<unknown>({ role: "generation", ...prompt, schemaName: "concept_explanation", schema: conceptSchema, temperature: 0.6, maxOutputTokens: 16_000, timeoutMs: PER_MODEL_MS });
-        const { concept, problems } = normalizeConcept(reply.data);
-        const foreign = concept ? findForeignContext(concept.explanation.english, concept.example.english) : [];
+        const reply = await completeJson<unknown>({ role: "generation", ...prompt, schemaName: help ? "concept_explanation" : "pool_boundary", schema: conceptSchemaFor(draft.level), temperature: 0.6, maxOutputTokens: 16_000, timeoutMs: PER_MODEL_MS });
+        const { concept, problems } = normalizeConcept(reply.data, help);
+        const foreign = concept && help ? findForeignContext(concept.explanation.english, concept.example.english) : [];
         if (foreign.length) problems.push(`the explanation uses a foreign setting (${foreign.join(", ")}); use Pakistani daily life, Rupees and kilometres`);
-        if (concept) problems.push(...romanUrduProblems("the explanation", concept.explanation.romanUrdu), ...romanUrduProblems("the real-life example", concept.example.romanUrdu));
+        if (concept && help) problems.push(...romanUrduProblems("the explanation", concept.explanation.romanUrdu), ...romanUrduProblems("the real-life example", concept.example.romanUrdu));
         const outcome: Outcome = concept && !problems.length ? { ok: true, concept } : { ok: false, problems, error: "The explanation was incomplete" };
         return { outcome, usage: reply.usage };
     }
@@ -63,10 +65,10 @@ async function runStep(draft: GenerationDraft, step: GenerationStep) {
     const skills = draft.concept?.scope?.covers ?? [];
     const prompt = questionPrompt(draft, { difficulty, count, avoid: [...live, ...inDraft], feedback: step.feedback, focus });
     const reply = await completeJson<unknown>({
-        role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags, skills),
+        role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags, skills, help),
         temperature: 0.6, maxOutputTokens: 48_000, timeoutMs: PER_MODEL_MS, reasoningEffort: REASONING_BY_DIFFICULTY[difficulty],
     });
-    const { questions, problems } = normalizeQuestionBatch(reply.data, { difficulty, count, allowedTags: tags, skills });
+    const { questions, problems } = normalizeQuestionBatch(reply.data, { difficulty, count, allowedTags: tags, skills, withHelp: help });
 
     // Rule A, short questions and no repeats: the whole batch is redone with the reasons, never patched up.
     const seen = new Set([...live, ...inDraft].map(normalizeText));

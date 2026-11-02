@@ -1,3 +1,4 @@
+import { orderConcepts } from "@/lib/curriculum-order";
 import type { ConceptFamily, LocalizedText, MicroConcept, StudentClassLevel } from "@/types/curriculum";
 
 const text = (english: string, romanUrdu: string): LocalizedText => ({ english, romanUrdu });
@@ -236,12 +237,13 @@ export function getTopicsForClass(classLevel: StudentClassLevel) {
     return groupTopics(getClassConcepts(classLevel));
 }
 
-/** Lessons grouped by chapter, each chapter in teaching order. */
+/** Lessons grouped by chapter, chapters and lessons both in curriculum order. */
 export function groupTopics(concepts: MicroConcept[]) {
-    return Array.from(new Set(concepts.map((item) => item.topicId))).map((topicId) => ({
+    const ordered = orderConcepts(concepts);
+    return Array.from(new Set(ordered.map((item) => item.topicId))).map((topicId) => ({
         topicId,
-        title: concepts.find((item) => item.topicId === topicId)!.topicTitle,
-        concepts: concepts.filter((item) => item.topicId === topicId).sort((a, b) => a.order - b.order),
+        title: ordered.find((item) => item.topicId === topicId)!.topicTitle,
+        concepts: ordered.filter((item) => item.topicId === topicId),
     }));
 }
 

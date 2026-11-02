@@ -5,6 +5,12 @@ export type GenerationLevel = "micro" | "sub" | "main";
 
 export const CURRICULUM_NAME = "Oxford Countdown";
 
+/**
+ * Only a micro-topic pool teaches: its questions carry a hint, a worked solution and a reason
+ * for every wrong option. Sub-topic and main-topic pools only mark right or wrong.
+ */
+export const withHelp = (level: GenerationLevel): boolean => level === "micro";
+
 /** Placeholder tag for questions of a micro-topic that is created only on approval. */
 export const NEW_MICRO_TAG = "__new_micro_topic__";
 

@@ -48,6 +48,8 @@ interface ConceptForm {
     order: number;
     /** The chapter's place in the class: lessons unlock chapter by chapter in this order. */
     topicOrder: number;
+    /** The sub-topic's place inside the chapter; blank means none, which sorts after the numbered ones. */
+    subTopicOrder: string;
     imageUrl: string;
     status: ContentStatus;
     /** Fields the admin changed by hand stop following the automatic value. */
@@ -57,7 +59,7 @@ interface ConceptForm {
 const blank = (): ConceptForm => ({
     classLevel: 6, topicChoice: "", newTopicEnglish: "", newTopicRomanUrdu: "",
     titleEnglish: "", titleRomanUrdu: "", summaryEnglish: "", summaryRomanUrdu: "",
-    prerequisiteTag: "", family: "algebra", visualKind: "expression", order: 0, topicOrder: 0, imageUrl: "", status: "draft",
+    prerequisiteTag: "", family: "algebra", visualKind: "expression", order: 0, topicOrder: 0, subTopicOrder: "", imageUrl: "", status: "draft",
     manual: { prerequisite: false, family: false, visual: false, order: false, chapter: false },
 });
 
@@ -75,6 +77,7 @@ function fromConcept(concept: MicroConcept): ConceptForm {
         visualKind: concept.visualKind,
         order: concept.order,
         topicOrder: concept.topicOrder ?? 0,
+        subTopicOrder: typeof concept.subTopicOrder === "number" ? String(concept.subTopicOrder) : "",
         imageUrl: concept.imageUrl ?? "",
         status: concept.status,
         // An existing concept keeps everything as it was saved.
@@ -182,6 +185,7 @@ export function ConceptEditor({
                 imageUrl: form.imageUrl,
                 order: Number(form.order),
                 topicOrder: Math.max(0, Number(form.topicOrder) || 0),
+                ...(form.subTopicOrder.trim() !== "" ? { subTopicOrder: Math.max(0, Number(form.subTopicOrder) || 0) } : {}),
                 // Class 5 concepts are foundations: used for diagnosis and repair, not taught as lessons.
                 // An existing foundation of a later class keeps that role when edited.
                 foundationOnly: form.classLevel === 5 || editing?.foundationOnly === true,
@@ -241,6 +245,8 @@ export function ConceptEditor({
                         onChange={(value) => override("order", { order: Math.max(0, Number(value) || 0) })} />
                     <Field label="Chapter order in class" badge={auto(form.manual.chapter)} type="number" value={String(form.topicOrder)}
                         onChange={(value) => override("chapter", { topicOrder: Math.max(0, Number(value) || 0) })} />
+                    <Field label="Sub-topic order in chapter (optional)" type="number" value={form.subTopicOrder}
+                        onChange={(value) => update({ subTopicOrder: value })} />
                     <SelectField label="Family" badge={auto(form.manual.family)} value={form.family} options={FAMILIES}
                         onChange={(value) => override("family", { family: value as ConceptFamily })} />
                     <SelectField label="Visual" badge={auto(form.manual.visual)} value={form.visualKind} options={VISUALS}

@@ -5,6 +5,7 @@ import { conceptInputSchema } from "@/lib/admin-schemas";
 import { writeAuditLog } from "@/lib/admin-audit";
 import { builtInCurriculumEnabled, getConcept } from "@/lib/curriculum";
 import { findSimilarChapter, normalizeTitle, topicsForClass } from "@/lib/concept-autofill";
+import { orderConcepts } from "@/lib/curriculum-order";
 import { getRuntimeConcepts } from "@/lib/assessment-content";
 import { activityDateKey } from "@/lib/gamification";
 import { contentNotification } from "@/lib/notifications";
@@ -16,9 +17,8 @@ export async function GET(request: NextRequest) {
     try {
         await requireSuperAdmin(request);
         const snapshot = await adminDb.collection("microConcepts").get();
-        const concepts = snapshot.docs
-            .map((doc) => ({ ...doc.data(), microTag: doc.id }) as MicroConcept)
-            .sort((left, right) => left.classLevel - right.classLevel || left.topicId.localeCompare(right.topicId) || left.order - right.order);
+        // Curriculum order: the Super Admin sees chapters and lessons exactly as students meet them.
+        const concepts = orderConcepts(snapshot.docs.map((doc) => ({ ...doc.data(), microTag: doc.id }) as MicroConcept));
         return NextResponse.json({ success: true, concepts });
     } catch (error) {
         const auth = authErrorResponse(error);

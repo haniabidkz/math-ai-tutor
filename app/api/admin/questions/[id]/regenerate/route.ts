@@ -7,6 +7,7 @@ import { toQuestionBankItem } from "@/lib/ai-studio/publish";
 import { asRewriteOriginal, liveRewriteContext, rewriteQuestion } from "@/lib/ai-studio/regenerate";
 import { allConcepts, clean, draftsCollection, liveQuestionTexts, studioErrorResponse, StudioError } from "@/lib/ai-studio/store";
 import { REWRITE_REASON_KEYS, REWRITE_REASONS, type DraftConcept, type GenerationDraft } from "@/lib/ai-studio/types";
+import { questionLevel } from "@/lib/assessment-content";
 import { requireSuperAdmin } from "@/lib/server-auth";
 import type { QuestionBankItem } from "@/types/curriculum";
 
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         const [poolConcept, live] = await Promise.all([poolBoundary(question.aiDraftId), liveQuestionTexts([question.microTag])]);
 
         const outcome = await rewriteQuestion({
-            context: liveRewriteContext(concept, concepts, poolConcept),
+            context: liveRewriteContext(concept, concepts, poolConcept, questionLevel(question)),
             original: asRewriteOriginal(question),
             reason,
             note,
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             microTag: question.microTag,
             prerequisiteTag: question.prerequisiteTag ?? concept.prerequisiteTag ?? null,
             classLevel: question.classLevel,
-        });
+        }, questionLevel(question));
         await rewrites().doc(id).set({
             ...clean({ questionId: id, item, verification: outcome.question.verification, passed: outcome.passed, reason, note: note ?? "" }),
             basedOnVersion: Number(question.version ?? 1),

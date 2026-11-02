@@ -1,5 +1,5 @@
 import { isLessonOpen, type StudentAccess } from "@/lib/access";
-import { compareChapters } from "@/lib/concept-autofill";
+import { compareChapters, compareLessons } from "@/lib/curriculum-order";
 import type { LocalizedText, MicroConcept } from "@/types/curriculum";
 
 /**
@@ -174,7 +174,7 @@ export function orderClassConcepts(concepts: MicroConcept[], classLevel: number)
     const inClass = concepts.filter((concept) => concept.classLevel === classLevel && !concept.foundationOnly);
     const compare = compareChapters(inClass);
     // Equal orders keep the curriculum's own sequence (the sort is stable).
-    return [...inClass].sort((left, right) => compare(left.topicId, right.topicId) || left.order - right.order);
+    return [...inClass].sort((left, right) => compare(left.topicId, right.topicId) || compareLessons(left, right));
 }
 
 /**

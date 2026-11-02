@@ -1,5 +1,6 @@
 import { NEW_MICRO_TAG, type DraftTarget, type GenerationLevel } from "@/lib/ai-studio/types";
 import { findSimilarChapter, normalizeTitle, topicsForClass } from "@/lib/concept-autofill";
+import { compareLessons } from "@/lib/curriculum-order";
 import type { MicroConcept, StudentClassLevel } from "@/types/curriculum";
 
 export interface TargetInput {
@@ -39,7 +40,7 @@ const isTaught = (concept: MicroConcept) => concept.status !== "archived" && !co
 export function chapterConcepts(concepts: MicroConcept[], classLevel: number, topicId: string): MicroConcept[] {
     return concepts
         .filter((concept) => concept.classLevel === classLevel && concept.topicId === topicId && isTaught(concept))
-        .sort((left, right) => left.order - right.order);
+        .sort(compareLessons);
 }
 
 /**

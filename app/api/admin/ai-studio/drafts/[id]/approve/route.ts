@@ -4,7 +4,8 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { writeAuditLog } from "@/lib/admin-audit";
 import { approveSchema } from "@/lib/ai-studio/input";
-import { aiQuestionId, newConceptFromDraft, toQuestionBankItem } from "@/lib/ai-studio/publish";
+import { aiQuestionId, newConceptFromDraft, placeLesson, toQuestionBankItem } from "@/lib/ai-studio/publish";
+import { placeNewLesson } from "@/lib/ai-studio/sequence";
 import {
     allConcepts, draftFrom, draftsCollection, liveQuestionTexts, loadDraft,
     replaceablePoolQuestions, studioErrorResponse, StudioError,
@@ -16,6 +17,9 @@ import { contentNotification } from "@/lib/notifications";
 import { notifyClass } from "@/lib/notifications-server";
 import { requireSuperAdmin } from "@/lib/server-auth";
 import type { MicroConcept } from "@/types/curriculum";
+
+/** Placing a new lesson asks the model where the textbook teaches it; that must fit inside the limit. */
+export const maxDuration = 120;
 
 const same = (english: string) => ({ english, romanUrdu: english });
 
@@ -39,6 +43,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         ]);
         const liveSet = new Set(liveTexts.map(normalizeText));
         const conceptByTag = new Map(concepts.map((concept) => [concept.microTag, concept]));
+        // A brand-new lesson is placed where the textbook teaches it, never simply at the end.
+        const placement = preview.status === "needs_review" && preview.level === "micro" && preview.target.microTopic && !preview.target.microTopic.microTag
+            ? await placeNewLesson({ classLevel: preview.target.classLevel, concepts, chapter: preview.target.chapter, lesson: { title: preview.target.microTopic.title, subTopic: preview.target.subTopic } })
+            : null;
 
         const result = await adminDb.runTransaction(async (transaction) => {
             const draft = draftFrom(await transaction.get(ref));
@@ -49,12 +57,15 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
             const { target } = draft;
             const creating = draft.level === "micro" && !target.microTopic?.microTag;
-            const newConcept = creating ? newConceptFromDraft(draft, concepts) : null;
+            if (creating && !placement) throw new StudioError(409, "The draft changed while it was being approved. Approve again.");
+            const placed = creating ? placeLesson(newConceptFromDraft(draft, concepts), concepts, placement!) : null;
+            const newConcept = placed?.concept ?? null;
             const tagFor = (tag: string) => (tag === NEW_MICRO_TAG ? newConcept!.microTag : tag);
 
-            // Concepts this approval changes: a new micro-topic, or an existing one's lesson or sub-topic label.
+            // Concepts this approval changes: a new micro-topic and the neighbours that move to make room,
+            // or an existing one's lesson or sub-topic label.
             const touched = newConcept
-                ? [newConcept.microTag]
+                ? [newConcept.microTag, ...placed!.shifts.keys()]
                 : draft.level === "micro" && (replaceLesson || target.subTopic) ? [target.microTopic!.microTag!]
                     : draft.level === "sub" ? tags : [];
             const snapshots = await Promise.all(touched.map((tag) => transaction.get(adminDb.collection("microConcepts").doc(tag))));
@@ -64,6 +75,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             if (newConcept) {
                 if (snapshots[0].exists) throw new StudioError(409, `A micro-topic with the tag ${newConcept.microTag} was just created. Approve again.`);
                 transaction.set(snapshots[0].ref, { ...newConcept, foundationOnly: false, aiDraftId: draft.id, createdBy: admin.uid, createdAt: FieldValue.serverTimestamp(), ...stamp });
+                // Neighbours move down so the new lesson's place is unique; bundled concepts not yet stored are written in full.
+                for (const snapshot of snapshots.slice(1)) {
+                    const base: Partial<MicroConcept> = snapshot.exists ? {} : { ...conceptByTag.get(snapshot.id) };
+                    transaction.set(snapshot.ref, { ...base, ...placed!.shifts.get(snapshot.id), ...stamp }, { merge: true });
+                }
             } else {
                 for (const snapshot of snapshots) {
                     // Bundled concepts not yet copied to Firestore are written in full, never as a fragment.
@@ -84,7 +100,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
                     : conceptByTag.get(microTag)?.prerequisiteTag ?? null;
                 const { id: questionId, ...item } = toQuestionBankItem(question, {
                     id: aiQuestionId(microTag, randomUUID()), microTag, prerequisiteTag, classLevel: target.classLevel,
-                });
+                }, draft.level);
                 ids.push(questionId);
                 transaction.set(adminDb.collection("questions").doc(questionId), {
                     ...item, aiDraftId: draft.id, createdBy: admin.uid, createdAt: FieldValue.serverTimestamp(), ...stamp,
@@ -102,6 +118,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             return {
                 ids, microTag: newConcept?.microTag ?? null, name: target.microTopic?.title ?? target.subTopic ?? target.chapter.title, level: draft.level,
                 announce: newConcept ? { microTag: newConcept.microTag, title: newConcept.title, classLevel: newConcept.classLevel } : null,
+                placedBy: newConcept?.sequence?.source ?? null,
             };
         });
 
@@ -128,9 +145,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         await writeAuditLog({
             actorUid: admin.uid, actorEmail: admin.email, action: "aiStudio.draft.approve", targetType: "generationDraft", targetId: id,
             summary: `Pushed ${result.ids.length} AI questions for ${result.name} (${result.level}-topic) to the live bank`
-                + `${result.microTag ? `, new micro-topic ${result.microTag}` : ""}${removeIds.length ? `, removed ${removeIds.length} older question(s)` : ""}`,
+                + `${result.microTag ? `, new micro-topic ${result.microTag}` : ""}${result.placedBy === "ai" ? " placed by the textbook order" : result.placedBy ? " placed at the end (order unconfirmed)" : ""}${removeIds.length ? `, removed ${removeIds.length} older question(s)` : ""}`,
         });
-        return NextResponse.json({ success: true, questionIds: result.ids, microTag: result.microTag, removed: removeIds.length });
+        return NextResponse.json({ success: true, questionIds: result.ids, microTag: result.microTag, removed: removeIds.length, placedBy: result.placedBy });
     } catch (error) {
         return studioErrorResponse(error, "The draft could not be pushed live");
     }
