@@ -45,10 +45,12 @@ export async function POST(request: NextRequest) {
             };
         });
         const proposed = classOutline(after, classLevel);
-        const changed = result.placements.filter((placement) => {
-            const current = byTag.get(placement.microTag);
-            return !current || current.order !== placement.order || current.topicOrder !== placement.topicOrder || current.subTopicOrder !== placement.subTopicOrder;
-        }).map((placement) => placement.microTag);
+        // A lesson "moves" when its place in the class or its sub-topic changes; renumbering alone does not count.
+        const flat = (outline: ReturnType<typeof classOutline>) => outline.flatMap((chapter) => chapter.subTopics.flatMap((group) => group.lessons.map((lesson) => ({ microTag: lesson.microTag, group: `${chapter.topicId}/${group.name ?? ""}` }))));
+        const was = flat(before);
+        const changed = flat(proposed)
+            .filter((item, index) => was[index]?.microTag !== item.microTag || was.find((entry) => entry.microTag === item.microTag)?.group !== item.group)
+            .map((item) => item.microTag);
 
         if (apply) {
             const stored = new Set((await adminDb.collection("microConcepts").select().get()).docs.map((doc) => doc.id));
