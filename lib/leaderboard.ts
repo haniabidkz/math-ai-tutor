@@ -133,6 +133,38 @@ export interface RankedEntry extends LeaderboardEntry {
     rank: number;
 }
 
+export interface ImprovedStudent {
+    uid: string;
+    name: string;
+    points: number;
+    previousPoints: number;
+    gain: number;
+}
+
+/**
+ * The most improved student of a board: the biggest rise in points over the week before,
+ * among students who played both weeks. Ties go to the higher score, then more correct answers.
+ */
+export function mostImproved(
+    current: Array<Pick<LeaderboardEntry, "uid" | "name" | "points" | "correctAnswers">>,
+    previous: Array<Pick<LeaderboardEntry, "uid" | "points">>,
+): ImprovedStudent | null {
+    const before = new Map(previous.map((entry) => [entry.uid, entry.points]));
+    let best: (ImprovedStudent & { correctAnswers: number }) | null = null;
+    for (const entry of current) {
+        const previousPoints = before.get(entry.uid);
+        if (previousPoints === undefined) continue;
+        const gain = entry.points - previousPoints;
+        if (gain <= 0) continue;
+        const better = !best || gain > best.gain
+            || (gain === best.gain && (entry.points > best.points || (entry.points === best.points && entry.correctAnswers > best.correctAnswers)));
+        if (better) best = { uid: entry.uid, name: entry.name, points: entry.points, previousPoints, gain, correctAnswers: entry.correctAnswers };
+    }
+    if (!best) return null;
+    const { correctAnswers: _correct, ...result } = best;
+    return result;
+}
+
 /** Higher rank key first. */
 export function compareEntries(left: Pick<LeaderboardEntry, "rankKey">, right: Pick<LeaderboardEntry, "rankKey">): number {
     return right.rankKey - left.rankKey;
@@ -250,12 +282,14 @@ export const text = (english: string, romanUrdu: string): LocalizedText => ({ en
 
 /** The rules shown to students, kept in one place so the screen and the server agree. */
 export const POINT_RULES: LocalizedText[] = [
-    text(`+${XP_FIRST_ATTEMPT_CORRECT} for every correct answer on your first try, +${XP_QUIZ_COMPLETED} for finishing a quiz. Retries and a second quiz on the same topic the same day do not count.`,
-        `Pehli koshish mein har sahi jawab par +${XP_FIRST_ATTEMPT_CORRECT}, quiz khatam karne par +${XP_QUIZ_COMPLETED}. Dobara koshish aur usi din usi topic ka doosra quiz nahi ginta.`),
+    text(`+${XP_FIRST_ATTEMPT_CORRECT} for every correct answer on your first try. +${XP_QUIZ_COMPLETED} for taking part, once a day, however many quizzes you finish. Retries and a second quiz on the same topic the same day do not count.`,
+        `Pehli koshish mein har sahi jawab par +${XP_FIRST_ATTEMPT_CORRECT}. Hissa lene par din mein sirf aik dafa +${XP_QUIZ_COMPLETED}, chahe jitne quiz karein. Dobara koshish aur usi din usi topic ka doosra quiz nahi ginta.`),
     text(`+${COMBO_POINTS} for every ${COMBO_RUN_LENGTH} correct answers in a row; a wrong answer restarts the count.`, `Lagatar ${COMBO_RUN_LENGTH} sahi jawab par +${COMBO_POINTS}; ghalat jawab par ginti dobara shuru.`),
     text(`+${TOPIC_COMPLETION_POINTS} when you master every lesson of a chapter, once per chapter.`, `Ek chapter ke sab lessons master karne par +${TOPIC_COMPLETION_POINTS}, har chapter par ek baar.`),
     text(`Homework earns up to ${HOMEWORK_MAX_POINTS} points by accuracy.`, `Homework par accuracy ke hisab se ${HOMEWORK_MAX_POINTS} tak points.`),
     text(`A topic can earn points on at most ${MAX_SCORING_ATTEMPTS_PER_WEEK} days a week.`, `Ek topic hafte mein zyada se zyada ${MAX_SCORING_ATTEMPTS_PER_WEEK} din points de sakta hai.`),
+    text("Most improved: the student whose points grew the most since last week (they must have played last week too).",
+        "Most improved: jis student ke points pichhle hafte ke muqable mein sab se zyada barhe (pichhle hafte bhi khela ho)."),
     text("Ties: more correct answers wins; then whoever got there first. The board resets every Monday; lifetime XP, badges and streaks stay.",
         "Barabar points: zyada sahi jawab wala aage; phir jo pehle pohncha. Board har Monday reset hota hai; lifetime XP, badges aur streak waise hi rehte hain."),
     text("The same rules apply to free and paid members. The board rewards steady, accurate practice, not only the top scorers.",

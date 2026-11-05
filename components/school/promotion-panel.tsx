@@ -21,6 +21,10 @@ export function PromotionPanel({ schoolId, schoolCode, onDone }: { schoolId?: st
     const [force, setForce] = useState(false);
     const [busy, setBusy] = useState(false);
     const [result, setResult] = useState<{ moved: number; graduated: number; createdSections: string[] } | null>(null);
+    /** What still stops the promotion, said in words instead of a greyed-out button. */
+    const [hint, setHint] = useState("");
+    /** The last step: a confirmation on the page itself, since some browsers block pop-up dialogs. */
+    const [confirming, setConfirming] = useState(false);
 
     const api = <T,>(path: string, init?: RequestInit) => schoolApi<T>(path, init, schoolId);
 
@@ -37,8 +41,21 @@ export function PromotionPanel({ schoolId, schoolCode, onDone }: { schoolId?: st
         finally { setLoading(false); }
     }
 
+    /** The button always answers: either what is missing, or the final confirmation. */
+    function ask() {
+        setError("");
+        setResult(null);
+        if (loading) { setHint("The preview is still loading. Press again in a moment."); return; }
+        if (!plan || total === 0) { setHint("There are no students to promote."); return; }
+        if (confirmCode.trim().toUpperCase() !== schoolCode.toUpperCase()) { setHint(`Type the school code ${schoolCode} in the box first, to confirm.`); return; }
+        if (recent && !force) { setHint("This school was promoted less than six months ago. Tick the box above to run it again."); return; }
+        setHint("");
+        setConfirming(true);
+    }
+
     async function run() {
-        if (!plan || !window.confirm(`Promote ${plan.moves.length} students and graduate ${plan.graduates.length}? This cannot be undone.`)) return;
+        if (!plan) return;
+        setConfirming(false);
         setBusy(true);
         setError("");
         try {
@@ -62,7 +79,7 @@ export function PromotionPanel({ schoolId, schoolCode, onDone }: { schoolId?: st
                     <CardDescription>Every Class 6 student becomes Class 7, Class 7 becomes Class 8, and Class 8 students graduate. Section names stay (6-A becomes 7-A). Nothing is deleted: every quiz, lesson and point is kept.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                    {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+                    {error ? <Alert variant="destructive"><AlertTitle>The promotion did not run</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
                     {result ? (
                         <Alert className="border-emerald-300 bg-emerald-50">
                             <AlertTitle>Promotion complete</AlertTitle>
@@ -87,13 +104,26 @@ export function PromotionPanel({ schoolId, schoolCode, onDone }: { schoolId?: st
                     <div className="flex flex-wrap items-end gap-3">
                         <div className="space-y-1">
                             <Label htmlFor="promo-code">Type the school code <strong>{schoolCode}</strong> to confirm</Label>
-                            <Input id="promo-code" value={confirmCode} onChange={(event) => setConfirmCode(event.target.value)} placeholder={schoolCode} />
+                            <Input id="promo-code" value={confirmCode} onChange={(event) => { setConfirmCode(event.target.value); setHint(""); setConfirming(false); }} placeholder={schoolCode} />
                         </div>
-                        <Button onClick={run} disabled={busy || loading || total === 0 || confirmCode.trim().toUpperCase() !== schoolCode || (recent && !force)}>
-                            {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowUpRight className="mr-2 h-4 w-4" />}Promote all classes
+                        <Button onClick={ask} disabled={busy}>
+                            {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowUpRight className="mr-2 h-4 w-4" />}{busy ? "Promoting…" : "Promote all classes"}
                         </Button>
                         <Button variant="ghost" onClick={() => load()} disabled={loading}><RefreshCw className="mr-1 h-4 w-4" />Refresh preview</Button>
                     </div>
+                    {hint ? <Alert className="border-amber-300 bg-amber-50"><AlertDescription>{hint}</AlertDescription></Alert> : null}
+                    {confirming && plan ? (
+                        <Alert className="border-indigo-300 bg-indigo-50">
+                            <AlertTitle>Promote {plan.moves.length} student{plan.moves.length === 1 ? "" : "s"}{plan.graduates.length ? ` and graduate ${plan.graduates.length}` : ""}?</AlertTitle>
+                            <AlertDescription className="space-y-3">
+                                <p>Every class moves up one year now. This cannot be undone.</p>
+                                <div className="flex flex-wrap gap-2">
+                                    <Button onClick={run} disabled={busy}><ArrowUpRight className="mr-2 h-4 w-4" />Yes, promote now</Button>
+                                    <Button variant="outline" onClick={() => setConfirming(false)} disabled={busy}>Cancel</Button>
+                                </div>
+                            </AlertDescription>
+                        </Alert>
+                    ) : null}
                 </CardContent>
             </Card>
         </div>

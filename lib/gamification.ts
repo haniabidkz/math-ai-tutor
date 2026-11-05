@@ -57,6 +57,11 @@ export function nextStreak(state: Partial<StreakState> | null | undefined, today
 }
 
 /** Points for a topic are earned once per day; the id makes that idempotent. */
+/** The once-a-day participation award, whatever number of quizzes the student finishes that day. */
+export function participationAwardId(dateKey: string): string {
+    return `participation__${dateKey}`;
+}
+
 export function xpAwardId(microTag: string, dateKey: string): string {
     return `${microTag}__${dateKey}`;
 }

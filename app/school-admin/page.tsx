@@ -5,9 +5,10 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
-    ArrowUpRight, BarChart3, Building2, GraduationCap, LayoutDashboard, LogOut, RefreshCw, School, Settings, ShieldCheck, Users,
+    ArrowUpRight, BarChart3, Building2, GraduationCap, LayoutDashboard, LogOut, RefreshCw, School, Settings, ShieldCheck, Trophy, Users,
 } from "lucide-react";
 import { PlanBadge } from "@/components/school/plan-badge";
+import { LeaderboardPanel } from "@/components/school/leaderboard-panel";
 import { PromotionPanel } from "@/components/school/promotion-panel";
 import { ReportPanel } from "@/components/school/report-panel";
 import { ApiError, formatDate, jsonInit, schoolApi } from "@/components/school/school-api";
@@ -189,6 +190,7 @@ function SchoolAdminContent() {
                         <TabsTrigger value="sections"><School className="mr-2 h-4 w-4" />Classes &amp; Sections</TabsTrigger>
                         <TabsTrigger value="promotion"><ArrowUpRight className="mr-2 h-4 w-4" />Promotion</TabsTrigger>
                         <TabsTrigger value="reports"><BarChart3 className="mr-2 h-4 w-4" />Reports</TabsTrigger>
+                        <TabsTrigger value="leaderboard"><Trophy className="mr-2 h-4 w-4" />Leaderboard</TabsTrigger>
                         <TabsTrigger value="settings"><Settings className="mr-2 h-4 w-4" />Settings</TabsTrigger>
                     </TabsList>
 
@@ -239,6 +241,7 @@ function SchoolAdminContent() {
                     <TabsContent value="teachers"><TeacherManager schoolId={schoolId} sections={overview.sections} onChanged={() => load()} /></TabsContent>
                     <TabsContent value="sections"><SectionManager schoolId={schoolId} sections={overview.sections} onChanged={() => load()} /></TabsContent>
                     <TabsContent value="promotion"><PromotionPanel schoolId={schoolId} schoolCode={school.code} onDone={() => load()} /></TabsContent>
+                    <TabsContent value="leaderboard"><LeaderboardPanel schoolId={schoolId} /></TabsContent>
                     <TabsContent value="reports"><ReportPanel schoolId={schoolId} /></TabsContent>
 
                     <TabsContent value="settings" className="space-y-4">

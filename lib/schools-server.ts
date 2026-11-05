@@ -275,7 +275,8 @@ export const ROLE_COLLECTION: Record<ManagedRole, "students" | "parents" | "teac
 export interface CreateUserInput {
     role: ManagedRole;
     name: string;
-    phone: string;
+    /** Null for an account that signs in with its email only. */
+    phone: string | null;
     email: string | null;
     password: string | null;
     schoolId: string | null;
@@ -300,7 +301,16 @@ function authCreateError(error: unknown): never {
  * email stands in. The phone itself is kept unique by Firebase.
  */
 async function createAuthUser(input: CreateUserInput, password: string): Promise<{ uid: string; signInEmail: string }> {
-    const base = { phoneNumber: input.phone, password, displayName: input.name, emailVerified: false };
+    const base = { ...(input.phone ? { phoneNumber: input.phone } : {}), password, displayName: input.name, emailVerified: false };
+    // Without a phone the email is the only way in, so it must be this account's own.
+    if (!input.phone) {
+        if (!input.email) throw new SchoolError(400, "Enter a mobile number or an email address");
+        try {
+            return { uid: (await adminAuth.createUser({ ...base, email: input.email })).uid, signInEmail: input.email };
+        } catch (error) {
+            authCreateError(error);
+        }
+    }
     const fallback = phoneToEmail(input.phone);
     if (input.email) {
         try {
@@ -503,7 +513,7 @@ export async function importStudents(schoolId: string, rows: ImportedStudentRow[
             if (section && !teacherCanUseSection(rule, section)) throw new SchoolError(403, `You are not assigned to ${section.label}`);
             if (!section && !teacherHasWholeClass(rule, row.classLevel)) throw new SchoolError(403, `You are not assigned to Class ${row.classLevel}; add a section you look after`);
             const result = await enrollStudent({
-                schoolId, source: "import", name: row.name, phone: row.phone, email: row.email, password: row.password,
+                schoolId, source: "import", name: row.name, phone: row.phone || null, email: row.email, password: row.password,
                 classLevel: row.classLevel as 6 | 7 | 8, sectionId: section?.id ?? null, parentPhone: row.parentPhone, parentEmail: null,
             }, actor);
             outcomes.push({ ...base, sectionLabel: section?.label ?? null, password: result.password ?? row.password, status: "created", error: null });
@@ -632,6 +642,8 @@ export async function updateStudentInSchool(schoolId: string, uid: string, updat
     const patch: DocumentData = { updatedAt: FieldValue.serverTimestamp() };
     const classLevel = update.classLevel ?? Number(data.class);
     if (update.name !== undefined) patch.name = update.name;
+    // A student needs at least one way to sign in: a number, or an email.
+    if (update.email === null && !(update.phone ?? data.phone)) throw new SchoolError(400, "Keep a mobile number or an email, so the student can still sign in");
     if (update.phone !== undefined && update.phone !== data.phone) { await changePhone(uid, update.phone); patch.phone = update.phone; }
     if (update.email !== undefined && update.email !== (data.email || null)) { await syncAuthEmail(uid, update.email); patch.email = update.email ?? ""; }
     if (update.classLevel !== undefined) patch.class = update.classLevel;

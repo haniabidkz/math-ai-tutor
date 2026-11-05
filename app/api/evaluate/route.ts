@@ -32,7 +32,7 @@ import {
     isXpBlocked,
     newlyEarnedBadges,
     nextStreak,
-    xpAwardId,
+    participationAwardId, XP_QUIZ_COMPLETED, xpAwardId,
     type StreakState,
 } from "@/lib/gamification";
 import {
@@ -92,6 +92,9 @@ type EvaluationOutcome = {
 interface CompletionAward {
     awardRef: FirebaseFirestore.DocumentReference;
     alreadyAwardedToday: boolean;
+    /** Taking part earns points once a day, whatever the number of quizzes. */
+    participationRef: FirebaseFirestore.DocumentReference;
+    participationAwardedToday: boolean;
     /** Days this week on which the topic already earned points, today excluded. */
     scoringDays: number;
     /** This week's leaderboard entry for the student, when their class has a board. */
@@ -211,6 +214,11 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ success: false, error: "This endpoint only evaluates mastery and weekly sessions" }, { status: 400 });
         }
         if (initial.eventIds?.includes(eventId)) return NextResponse.json(currentResponse(initial, true));
+        // An answer replayed from the device for a question this quiz already marked changes nothing.
+        if (action === "answer" && body.questionId !== activeQuestion(initial)?.id
+            && (initial.answers ?? []).some((answer) => answer.questionId === body.questionId && !answer.practice)) {
+            return NextResponse.json(currentResponse(initial, true));
+        }
 
         const initialQuestion = activeQuestion(initial);
         // Offline, the student answers from the local copy of the pool, so any pool question is current enough.
@@ -218,7 +226,7 @@ export async function POST(request: NextRequest) {
             ? initial.pool?.find((item) => item.id === body.questionId) ?? null
             : null;
         if (action !== "remedialComplete" && (!initialQuestion || (body.questionId !== initialQuestion.id && !fromPool))) {
-            return NextResponse.json({ success: false, error: "Question is no longer current" }, { status: 409 });
+            return NextResponse.json({ success: false, code: "stale_question", error: "Question is no longer current" }, { status: 409 });
         }
         const targetQuestion = fromPool ?? initialQuestion;
         if (action === "answer" && !["A", "B", "C", "D"].includes(body.optionId)) {
@@ -272,6 +280,7 @@ export async function POST(request: NextRequest) {
 
         // Points for one topic are awarded once per day, and never for a retry.
         const awardRef = studentRef.collection("xpAwards").doc(xpAwardId(initial.microTag, activityDateKey()));
+        const participationRef = studentRef.collection("xpAwards").doc(participationAwardId(activityDateKey()));
 
         // Leaderboard points: this week's entry, the once-only chapter and homework bonuses, and the
         // weekly cap on scoring days. The heavier lookups run only when this answer can end the quiz.
@@ -295,12 +304,15 @@ export async function POST(request: NextRequest) {
             const snapshot = await transaction.get(sessionRef);
             const student = (await transaction.get(studentRef)).data() ?? {};
             const alreadyAwardedToday = (await transaction.get(awardRef)).exists;
+            const participationAwardedToday = (await transaction.get(participationRef)).exists;
             const boardEntry = boardEntryRef ? toEntry(await transaction.get(boardEntryRef)) : null;
             const topicAwarded = topicAwardRef ? (await transaction.get(topicAwardRef)).exists : true;
             const homeworkAwarded = homeworkAwardRef ? (await transaction.get(homeworkAwardRef)).exists : true;
             const award: CompletionAward = {
                 awardRef,
                 alreadyAwardedToday,
+                participationRef,
+                participationAwardedToday,
                 scoringDays,
                 board: boardEntryRef ? { weekKey, now, entry: boardEntry, name: String(student.name ?? "Student"), schoolId: user.schoolId } : null,
                 topic: lessonConcept ? { topicId: lessonConcept.topicId, title: lessonConcept.topicTitle.english, awarded: topicAwarded, lessons: chapterLessons } : null,
@@ -673,10 +685,12 @@ export async function POST(request: NextRequest) {
         const auth = authErrorResponse(error);
         const message = error instanceof Error ? error.message : "";
         const conflict = ["REMEDIATION_REQUIRED", "NO_REMEDIATION_PENDING", "STALE_QUESTION"].includes(message);
+        // The device's answer queue keeps an answer that waits for a review, and drops one that can never apply.
+        const conflictCode = message === "REMEDIATION_REQUIRED" ? "remediation_pending" : message === "STALE_QUESTION" ? "stale_question" : message === "NO_REMEDIATION_PENDING" ? "no_remediation" : undefined;
         if (message === "NO_HINT") return NextResponse.json({ success: false, error: "This question has no hint." }, { status: 400 });
         return auth
             ? NextResponse.json(auth.body, { status: auth.status })
-            : NextResponse.json({ success: false, error: conflict ? "Complete the current remediation step first" : "Failed to evaluate answer" }, { status: conflict ? 409 : 500 });
+            : NextResponse.json({ success: false, ...(conflictCode ? { code: conflictCode } : {}), error: conflict ? "Complete the current remediation step first" : "Failed to evaluate answer" }, { status: conflict ? 409 : 500 });
     }
 }
 
@@ -741,7 +755,8 @@ function completeOrContinue(
         isRetry: Boolean(session.retryOf),
         alreadyAwardedToday: award.alreadyAwardedToday,
     }) || scoringAttemptsExhausted(award.scoringDays);
-    const baseXp = xpBlocked ? 0 : sessionXp(session);
+    const participates = !xpBlocked && !award.participationAwardedToday;
+    const baseXp = xpBlocked ? 0 : sessionXp(session, { participation: participates });
     const combo = xpBlocked ? 0 : comboBonus(session.answers ?? []);
     const topicBonus = award.topic && !award.topic.awarded && mastered && isTopicComplete(award.topic.lessons, session.microTag) ? TOPIC_COMPLETION_POINTS : 0;
     const homeworkBonus = session.homeworkId && award.homework && !award.homework.awarded ? homeworkPoints(percentage) : 0;
@@ -779,6 +794,9 @@ function completeOrContinue(
         }, { merge: true });
     }
 
+    if (participates) {
+        transaction.set(award.participationRef, { sessionId: session.id, microTag: session.microTag, points: XP_QUIZ_COMPLETED, awardedAt: FieldValue.serverTimestamp() });
+    }
     if (baseXp > 0) {
         transaction.set(award.awardRef, {
             microTag: session.microTag,

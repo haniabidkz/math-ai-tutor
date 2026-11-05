@@ -86,12 +86,16 @@ export function currentQuizQuestion(
     return session.questions[session.currentQuestionIndex];
 }
 
-/** XP is derived from the stored answers so replays and retries stay idempotent. */
-export function sessionXp(session: Pick<StoredQuizSession, "answers">): number {
+/**
+ * XP is derived from the stored answers so replays and retries stay idempotent. The points for
+ * finishing (taking part) are given at most once a day, so `participation` is false once a
+ * quiz has already earned them today.
+ */
+export function sessionXp(session: Pick<StoredQuizSession, "answers">, options: { participation?: boolean } = {}): number {
     const unaidedCorrect = (session.answers ?? []).filter(
         (answer) => answer.isCorrect && !answer.hintUsed && !answer.practice,
     ).length;
-    return XP_QUIZ_COMPLETED + unaidedCorrect * XP_FIRST_ATTEMPT_CORRECT;
+    return (options.participation === false ? 0 : XP_QUIZ_COMPLETED) + unaidedCorrect * XP_FIRST_ATTEMPT_CORRECT;
 }
 
 /**

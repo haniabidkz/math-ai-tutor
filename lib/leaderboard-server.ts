@@ -2,8 +2,8 @@ import { FieldValue, type DocumentSnapshot, type Transaction } from "firebase-ad
 import { adminDb } from "@/lib/firebase-admin";
 import { writeAuditLog } from "@/lib/admin-audit";
 import {
-    LEADERBOARD_CLASSES, LEADERBOARD_SIZE, REWARD_PLACES, boardId, isLeaderboardClass, leaderboardWeekKey, previousWeekKey, rankKey, secondsIntoWeek,
-    type LeaderboardClass, type LeaderboardEntry, type PointEvent, type PointsGrant, type RankedEntry, type RewardCandidate, type RewardStatus, type RewardWinner,
+    LEADERBOARD_CLASSES, LEADERBOARD_SIZE, REWARD_PLACES, boardId, isLeaderboardClass, leaderboardWeekKey, mostImproved, previousWeekKey, rankKey, secondsIntoWeek,
+    type ImprovedStudent, type LeaderboardClass, type LeaderboardEntry, type PointEvent, type PointsGrant, type RankedEntry, type RewardCandidate, type RewardStatus, type RewardWinner,
 } from "@/lib/leaderboard";
 import { resultsNotification, rewardNotification } from "@/lib/notifications";
 import { notifyEach } from "@/lib/notifications-server";
@@ -93,6 +93,15 @@ async function readEntries(weekKey: string, classLevel: number, schoolId: BoardS
 
 export async function readBoard(weekKey: string, classLevel: number, schoolId: BoardScope = null, limit = LEADERBOARD_SIZE): Promise<RankedEntry[]> {
     return readEntries(weekKey, classLevel, schoolId, limit);
+}
+
+/** The most improved student of a board this week, compared with the same board the week before. */
+export async function mostImprovedFor(weekKey: string, classLevel: number, schoolId: BoardScope = null): Promise<ImprovedStudent | null> {
+    const [current, previous] = await Promise.all([
+        readEntries(weekKey, classLevel, schoolId),
+        readEntries(previousWeekKey(weekKey), classLevel, schoolId),
+    ]);
+    return mostImproved(current, previous);
 }
 
 export async function countParticipants(weekKey: string, classLevel: number, schoolId: BoardScope = null): Promise<number> {

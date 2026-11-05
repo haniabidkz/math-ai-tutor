@@ -40,7 +40,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
     const [mode, setMode] = useState<"list" | "add" | "import">("list");
     const [form, setForm] = useState(EMPTY_FORM);
     const [busy, setBusy] = useState(false);
-    const [created, setCreated] = useState<{ name: string; phone: string; password: string | null } | null>(null);
+    const [created, setCreated] = useState<{ name: string; phone: string; email?: string; password: string | null } | null>(null);
     const [importText, setImportText] = useState("");
     const [preview, setPreview] = useState<{ rows: ImportPreviewRow[]; valid: number; invalid: number } | null>(null);
     const [outcomes, setOutcomes] = useState<ImportOutcome[] | null>(null);
@@ -93,7 +93,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
                 ...form, classLevel: Number(form.classLevel), sectionId: form.sectionId || undefined, password: form.password || undefined,
                 email: form.email || undefined, parentPhone: form.parentPhone || undefined, parentEmail: form.parentEmail || undefined,
             }));
-            setCreated({ name: form.name, phone: form.phone, password: data.password ?? form.password });
+            setCreated({ name: form.name, phone: form.phone, email: form.email, password: data.password ?? form.password });
             setForm({ ...EMPTY_FORM, classLevel: form.classLevel, sectionId: form.sectionId });
             say(`${form.name} was added.`);
             await load();
@@ -157,7 +157,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
         if (!window.confirm(prompts[action])) return;
         try {
             const data = await api<{ password: string | null }>("/api/school/students", jsonInit("PATCH", { uid: student.uid, action }));
-            if (action === "resetPassword") setCreated({ name: student.name, phone: student.phone ?? "", password: data.password });
+            if (action === "resetPassword") setCreated({ name: student.name, phone: student.phone ?? "", email: student.email, password: data.password });
             say(action === "resetPassword" ? "Password reset. Share the new one below." : "Done.");
             await load();
             onChanged?.();
@@ -193,7 +193,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
                 <Alert className="border-indigo-300 bg-indigo-50">
                     <KeyRound className="h-4 w-4" />
                     <AlertDescription>
-                        <strong>{created.name}</strong> signs in with phone <strong>{prettyPhone(created.phone)}</strong>
+                        <strong>{created.name}</strong> signs in with {created.phone ? <>phone <strong>{prettyPhone(created.phone)}</strong></> : <>email <strong>{created.email}</strong></>}
                         {created.password ? <> and password <code className="rounded bg-white px-1.5 py-0.5 font-mono">{created.password}</code>. Write it down now; it is not shown again.</> : <> and the password you typed.</>}
                     </AlertDescription>
                 </Alert>
@@ -201,11 +201,11 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
 
             {mode === "add" ? (
                 <Card>
-                    <CardHeader><CardTitle className="text-base">Add one student</CardTitle><CardDescription>The student signs in with this phone number and password. Leave the password blank to get one made up. A section is optional: schools that teach a class as one group just pick the class.</CardDescription></CardHeader>
+                    <CardHeader><CardTitle className="text-base">Add one student</CardTitle><CardDescription>The student signs in with the mobile number or the email (give at least one) and the password. Leave the password blank to get one made up. A section is optional: schools that teach a class as one group just pick the class.</CardDescription></CardHeader>
                     <CardContent>
                         <form onSubmit={addStudent} className="grid gap-3 md:grid-cols-2">
                             <div className="space-y-1"><Label htmlFor="st-name">Full name</Label><Input id="st-name" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></div>
-                            <div className="space-y-1"><Label htmlFor="st-phone">Mobile number</Label><Input id="st-phone" required placeholder="03001234567" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /></div>
+                            <div className="space-y-1"><Label htmlFor="st-phone">Mobile number <span className="font-normal text-muted-foreground">(or an email below)</span></Label><Input id="st-phone" placeholder="03001234567" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /></div>
                             <div className="space-y-1">
                                 <Label htmlFor="st-class">Class</Label>
                                 <select id="st-class" className="h-9 w-full rounded-md border px-2 text-sm" value={form.classLevel} onChange={(event) => setForm({ ...form, classLevel: event.target.value, sectionId: "" })}>
@@ -220,7 +220,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
                                 </select>
                             </div>
                             <div className="space-y-1"><Label htmlFor="st-password">Password <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id="st-password" minLength={6} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></div>
-                            <div className="space-y-1"><Label htmlFor="st-email">Email <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id="st-email" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></div>
+                            <div className="space-y-1"><Label htmlFor="st-email">Email <span className="font-normal text-muted-foreground">(if no mobile number)</span></Label><Input id="st-email" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></div>
                             <div className="space-y-1"><Label htmlFor="st-parent-phone">Parent mobile <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id="st-parent-phone" value={form.parentPhone} onChange={(event) => setForm({ ...form, parentPhone: event.target.value })} /></div>
                             <div className="space-y-1"><Label htmlFor="st-parent-email">Parent email <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id="st-parent-email" type="email" value={form.parentEmail} onChange={(event) => setForm({ ...form, parentEmail: event.target.value })} /></div>
                             <div className="md:col-span-2"><Button type="submit" disabled={busy}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}Add student</Button></div>
@@ -233,7 +233,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
                 <Card>
                     <CardHeader>
                         <CardTitle className="text-base">Bulk import</CardTitle>
-                        <CardDescription>Paste rows from Excel or type them: <code>Name, Phone, Class, Section, Password, Parent phone</code> — one student per line. Section and password are optional; a missing section is created, a missing password is made up.</CardDescription>
+                        <CardDescription>Paste rows from Excel or type them: <code>Name, Phone, Class, Section, Password, Parent phone</code> — one student per line. A student without a mobile number can have an email in the Phone column instead. Section and password are optional; a missing section is created, a missing password is made up.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
                         <textarea className="min-h-40 w-full rounded-md border p-2 font-mono text-sm" placeholder={"Ali Ahmed, 03001234567, 6, A\nSara Malik, 03001234568, 6, A, Sara2026"} value={importText} onChange={(event) => { setImportText(event.target.value); setPreview(null); }} />
@@ -361,7 +361,7 @@ export function StudentManager({ schoolId, sections, canManage, onChanged }: {
                     <CardContent>
                         <form onSubmit={saveEdit} className="grid gap-3 md:grid-cols-2">
                             <div className="space-y-1"><Label htmlFor="ed-name">Full name</Label><Input id="ed-name" required value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} /></div>
-                            <div className="space-y-1"><Label htmlFor="ed-phone">Mobile number <span className="font-normal text-muted-foreground">(sign-in; a change signs the student out everywhere)</span></Label><Input id="ed-phone" required value={editForm.phone} onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })} /></div>
+                            <div className="space-y-1"><Label htmlFor="ed-phone">Mobile number <span className="font-normal text-muted-foreground">(sign-in; a change signs the student out everywhere)</span></Label><Input id="ed-phone" value={editForm.phone} onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })} /></div>
                             <div className="space-y-1"><Label htmlFor="ed-email">Email <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id="ed-email" type="email" value={editForm.email} onChange={(event) => setEditForm({ ...editForm, email: event.target.value })} /></div>
                             <div className="space-y-1">
                                 <Label htmlFor="ed-class">Class</Label>

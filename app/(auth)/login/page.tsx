@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { signInWithCustomToken, signInWithEmailAndPassword } from "firebase/auth";
@@ -55,6 +55,12 @@ function LoginContent() {
     /** The "Forgot password" form in place of sign-in. */
     const [forgot, setForgot] = useState(false);
     const [forgotNotice, setForgotNotice] = useState("");
+    // The "link sent" note goes away by itself; the button stays ready to send another link.
+    useEffect(() => {
+        if (!forgotNotice) return;
+        const timer = window.setTimeout(() => setForgotNotice(""), 8000);
+        return () => window.clearTimeout(timer);
+    }, [forgotNotice]);
 
     // Form fields
     const [identifier, setIdentifier] = useState("");
@@ -73,6 +79,7 @@ function LoginContent() {
 
         try {
             if (forgot) {
+                setForgotNotice("");
                 const response = await fetch("/api/auth/forgot", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -82,8 +89,8 @@ function LoginContent() {
                 if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "The reset email could not be sent");
                 if (data.sent) {
                     setForgotNotice(data.maskedEmail
-                        ? `A reset link was sent to ${data.maskedEmail}. Open it, choose a new password, then sign in here.`
-                        : "If an account exists for this email, a reset link has been sent to it. Open it, choose a new password, then sign in here.");
+                        ? `A reset link was sent to ${data.maskedEmail}. Open it, choose a new password, then sign in here. Not there in a few minutes? Check spam, or send another link.`
+                        : "If an account exists for this email, a reset link has been sent to it. Open it, choose a new password, then sign in here. Not there in a few minutes? Check spam, or send another link.");
                 } else if (data.reason === "disabled") {
                     throw new Error("This account is deactivated. Please contact your school or support.");
                 } else {
@@ -92,6 +99,8 @@ function LoginContent() {
                 return;
             }
             if (isSignUp) {
+                // A mobile number, an email, or both: at least one is needed to sign in later.
+                if (!phone.trim() && !email.trim()) throw new Error("Enter a mobile number or an email address.");
                 // The server creates the account, so the school code, seats and field rules are checked there.
                 const parentIsEmail = parentContact.includes("@");
                 const response = await fetch("/api/auth/signup", {
@@ -100,7 +109,7 @@ function LoginContent() {
                     body: JSON.stringify({
                         role: signupRole,
                         name: name.trim(),
-                        phone,
+                        phone: phone.trim() || undefined,
                         email: email.trim() || undefined,
                         password,
                         ...(signupRole === "student" ? {
@@ -319,12 +328,12 @@ function LoginContent() {
                                                 <Label htmlFor="phone" className={labelClass}>Mobile Number</Label>
                                                 <div className="relative group">
                                                     <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
-                                                    <Input id="phone" type="tel" inputMode="tel" placeholder="03001234567" value={phone} onChange={(e) => setPhone(e.target.value)} required className={fieldClass} />
+                                                    <Input id="phone" type="tel" inputMode="tel" placeholder="03001234567" value={phone} onChange={(e) => setPhone(e.target.value)} className={fieldClass} />
                                                 </div>
-                                                <p className="ml-1 text-[11px] text-muted-foreground">You will sign in with this number. No code is sent to it.</p>
+                                                <p className="ml-1 text-[11px] text-muted-foreground">Give a mobile number, an email, or both. You can sign in with either. No code is sent.</p>
                                             </div>
                                             <div className="space-y-1.5">
-                                                <Label htmlFor="email" className={labelClass}>Email <span className="opacity-70 font-normal lowercase tracking-normal">(optional)</span></Label>
+                                                <Label htmlFor="email" className={labelClass}>Email <span className="opacity-70 font-normal lowercase tracking-normal">(if no mobile number)</span></Label>
                                                 <div className="relative group">
                                                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
                                                     <Input id="email" type="email" placeholder="m@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className={fieldClass} />

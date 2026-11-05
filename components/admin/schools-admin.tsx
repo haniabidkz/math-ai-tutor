@@ -37,6 +37,9 @@ export function SchoolsAdmin() {
     const [secret, setSecret] = useState<{ who: string; phone: string; password: string } | null>(null);
     const [deleteStudents, setDeleteStudents] = useState(false);
     const [deleteCode, setDeleteCode] = useState("");
+    /** What still stops the deletion, said in words; then a confirmation on the page (no browser pop-up). */
+    const [deleteHint, setDeleteHint] = useState("");
+    const [deleteConfirming, setDeleteConfirming] = useState(false);
 
     useEffect(() => { void load(); }, []);
 
@@ -59,6 +62,9 @@ export function SchoolsAdmin() {
         try {
             const detail = await adminApi<Detail>(`/api/schools/${school.id}`);
             setSelected(detail);
+            setDeleteCode("");
+            setDeleteHint("");
+            setDeleteConfirming(false);
             setEdit({ plan: detail.school.plan, trialEndsAt: toDateInput(detail.school.trialEndsAt), paidUntil: toDateInput(detail.school.paidUntil), seatLimit: String(detail.school.seatLimit), trialFullAccess: detail.school.trialFullAccess, status: detail.school.status, notes: detail.school.notes });
         } catch (caught) { fail(caught, "The school could not be loaded"); }
     }
@@ -136,13 +142,21 @@ export function SchoolsAdmin() {
         } catch (caught) { fail(caught, "The recount failed"); }
     }
 
+    function askDelete() {
+        if (!selected) return;
+        if (deleteCode.trim().toUpperCase() !== selected.school.code.toUpperCase()) {
+            setDeleteHint(`Type the school code ${selected.school.code} in the box first, to confirm.`);
+            setDeleteConfirming(false);
+            return;
+        }
+        setDeleteHint("");
+        setDeleteConfirming(true);
+    }
+
     async function removeSchool() {
         if (!selected) return;
-        const { school, students } = selected;
-        const what = deleteStudents
-            ? `delete the ${students.active + students.graduated} student accounts with all their work`
-            : `keep the ${students.active + students.graduated} students as individual learners`;
-        if (!window.confirm(`Delete ${school.name} (${school.code}) for good? This will ${what}, delete its ${selected.teachers} teacher and ${selected.admins.length} admin accounts, its sections, homework and leaderboards. This cannot be undone.`)) return;
+        const { school } = selected;
+        setDeleteConfirming(false);
         setBusy(true);
         try {
             const data = await adminApi<{ result: { students: number; studentsDeleted: boolean; teachers: number; admins: number; homework: number } }>(`/api/schools/${school.id}`, jsonInit("POST", { action: "delete", confirmCode: deleteCode, students: deleteStudents ? "delete" : "keep" }));
@@ -294,10 +308,24 @@ export function SchoolsAdmin() {
                             <div className="flex flex-wrap items-end gap-3">
                                 <div className="space-y-1">
                                     <Label htmlFor="delete-code">Type the school code <strong>{selected.school.code}</strong></Label>
-                                    <Input id="delete-code" value={deleteCode} onChange={(event) => setDeleteCode(event.target.value)} placeholder={selected.school.code} />
+                                    <Input id="delete-code" value={deleteCode} onChange={(event) => { setDeleteCode(event.target.value); setDeleteHint(""); setDeleteConfirming(false); }} placeholder={selected.school.code} />
                                 </div>
-                                <Button variant="destructive" disabled={busy || deleteCode.trim().toUpperCase() !== selected.school.code} onClick={removeSchool}><Trash2 className="mr-2 h-4 w-4" />Delete school</Button>
+                                <Button variant="destructive" disabled={busy} onClick={askDelete}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}{busy ? "Deleting…" : "Delete school"}</Button>
                             </div>
+                            {deleteHint ? <Alert className="border-amber-300 bg-amber-50"><AlertDescription>{deleteHint}</AlertDescription></Alert> : null}
+                            {deleteConfirming ? (
+                                <Alert variant="destructive">
+                                    <AlertDescription className="space-y-3">
+                                        <p><strong>Delete {selected.school.name} ({selected.school.code}) for good?</strong> {deleteStudents
+                                            ? `The ${selected.students.active + selected.students.graduated} student accounts are deleted with all their work`
+                                            : `The ${selected.students.active + selected.students.graduated} students stay as individual learners`}; its {selected.teachers} teacher and {selected.admins.length} admin accounts, sections, homework and leaderboards are deleted. This cannot be undone.</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            <Button variant="destructive" onClick={removeSchool} disabled={busy}><Trash2 className="mr-2 h-4 w-4" />Yes, delete for good</Button>
+                                            <Button variant="outline" onClick={() => setDeleteConfirming(false)} disabled={busy}>Cancel</Button>
+                                        </div>
+                                    </AlertDescription>
+                                </Alert>
+                            ) : null}
                         </CardContent>
                     </Card>
                 </section>

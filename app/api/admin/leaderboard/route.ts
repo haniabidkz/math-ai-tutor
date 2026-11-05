@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isLeaderboardClass, isValidWeekKey, leaderboardWeekKey, previousWeekKey, weekLabel } from "@/lib/leaderboard";
 import {
-    approveWinners, boardSummary, ensureWeekFinalized, finalizeWeek, LeaderboardError, pointHistory, rewardHistory, rewardSummary,
+    approveWinners, boardSummary, ensureWeekFinalized, finalizeWeek, LeaderboardError, mostImprovedFor, pointHistory, rewardHistory, rewardSummary,
     setMembership, setRewardDelivered, setStudentFlags, studentsMeta,
 } from "@/lib/leaderboard-server";
 import { listSchools } from "@/lib/schools-server";
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
             console.error("Could not close last week's leaderboard", error);
         }
 
-        const [summary, reward, history, schools] = await Promise.all([boardSummary(weekKey, classLevel, schoolId), rewardSummary(weekKey, classLevel, schoolId), rewardHistory(), listSchools()]);
+        const [summary, reward, history, schools, improved] = await Promise.all([boardSummary(weekKey, classLevel, schoolId), rewardSummary(weekKey, classLevel, schoolId), rewardHistory(), listSchools(), mostImprovedFor(weekKey, classLevel, schoolId)]);
         const meta = await studentsMeta(summary.top.map((entry) => entry.uid));
         const weeks: string[] = [];
         for (let key = current, index = 0; index < WEEKS_LISTED; key = previousWeekKey(key), index++) weeks.push(key);
@@ -62,6 +62,7 @@ export async function GET(request: NextRequest) {
             finalized: summary.finalized,
             finalizedAt: summary.finalizedAt,
             participants: summary.participants,
+            mostImproved: improved,
             entries: summary.top.map((entry) => {
                 const info = meta.get(entry.uid);
                 return {

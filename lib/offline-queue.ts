@@ -92,6 +92,31 @@ export function queueSize(storage?: QueueStorage): number {
     return loadQueue(storage).length;
 }
 
+/**
+ * The next question to answer without a network: the first one held on the device that has not
+ * been shown yet, so a question already answered (online or offline) is never asked twice.
+ * Null once the quiz's own number of questions is reached or nothing unseen is left.
+ */
+export function nextOfflineQuestion<T extends { id: string }>(
+    questions: T[] | undefined,
+    served: Iterable<string>,
+    progress: { questionNumber: number; totalQuestions: number },
+): T | null {
+    if (progress.questionNumber >= progress.totalQuestions) return null;
+    const seen = new Set(served);
+    return (questions ?? []).find((question) => !seen.has(question.id)) ?? null;
+}
+
+/**
+ * How a replayed answer's response is handled: kept for later when the server is busy or a
+ * review must be finished first; dropped only when it can never apply.
+ */
+export function replayVerdict(status: number, code?: string | null): { ok: boolean; retryable: boolean } {
+    if (status >= 200 && status < 300) return { ok: true, retryable: false };
+    if (status === 0 || status >= 500 || status === 429 || status === 401 || code === "remediation_pending") return { ok: false, retryable: true };
+    return { ok: false, retryable: false };
+}
+
 export type SyncOutcome = "synced" | "conflict" | "offline";
 
 /**

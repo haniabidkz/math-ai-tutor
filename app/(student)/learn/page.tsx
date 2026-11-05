@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged, type User } from "firebase/auth";
@@ -63,6 +63,13 @@ function LearnContent() {
     const [error, setError] = useState("");
     const [browseTopics, setBrowseTopics] = useState<BrowsableTopic[] | null>(null);
     const [browseClass, setBrowseClass] = useState(classLevel);
+    /** Practice questions already answered right on an earlier visit; they are not asked again. */
+    const [solvedIds, setSolvedIds] = useState<string[]>([]);
+    const [resumedNote, setResumedNote] = useState(false);
+    /** The return-to-where-you-left check runs once per visit, not on "Explain another way". */
+    const resumeHandled = useRef(false);
+    /** Opened from the quiz to read the lesson again: start at the top, never jump away. */
+    const reviewing = params.get("review") === "1";
 
     useEffect(() => onAuthStateChanged(auth, async (currentUser) => {
         if (!currentUser) return router.replace("/login?role=student");
@@ -94,6 +101,25 @@ function LearnContent() {
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error);
+            if (!resumeHandled.current) {
+                resumeHandled.current = true;
+                // A quiz started on this lesson and left midway: straight back to its current question.
+                if (data.resume?.openQuiz && !reviewing) {
+                    router.replace(`/quiz?microTag=${encodeURIComponent(microTag)}&class=${classLevel}`);
+                    return;
+                }
+                const solved: string[] = Array.isArray(data.resume?.solvedIds) ? data.resume.solvedIds : [];
+                setSolvedIds(solved);
+                // The lesson's own questions were reached before: open there, past the explanation.
+                const saved = Number(data.resume?.step);
+                if (!reviewing && Number.isInteger(saved) && saved >= 3) {
+                    const firstTry = (data.practice ?? [])[0];
+                    const target = Math.min(LESSON_STEPS.length, saved === 3 && firstTry && solved.includes(firstTry.id) ? 4 : saved);
+                    setStep(target);
+                    setReached(target);
+                    setResumedNote(true);
+                }
+            }
             setContent(data.content);
             setTip(data.tip ?? null);
             setConcept(data.concept);
@@ -122,11 +148,34 @@ function LearnContent() {
         }
     }
 
+    /** Saves where the student is in the lesson, so a return can open at the same place. */
+    async function saveProgress(update: { step?: number; solvedId?: string }) {
+        if (!user || !concept) return;
+        try {
+            await fetch("/api/teach", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${await user.getIdToken()}` },
+                body: JSON.stringify({ microTag: concept.microTag, progress: true, practiceIds: practice.map((item) => item.id), ...update }),
+            });
+        } catch {
+            // A lost save only means the lesson opens at its start next time.
+        }
+    }
+
     function goTo(next: number) {
         const target = Math.max(1, Math.min(LESSON_STEPS.length, next));
         setStep(target);
         setReached((current) => Math.max(current, target));
+        setResumedNote(false);
+        void saveProgress({ step: target });
         window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    /** A practice question answered right is remembered, so it is not asked again on a return. */
+    function practiceAnswered(id: string, correct: boolean) {
+        if (!correct || solvedIds.includes(id)) return;
+        setSolvedIds((current) => [...current, id]);
+        void saveProgress({ solvedId: id, step });
     }
 
     const retry = () => user && (microTag ? loadLesson(user, teachingLevel) : loadTopics(user));
@@ -171,7 +220,8 @@ function LearnContent() {
                 ) : concept && content ? (() => {
                     const idea = keyIdea(concept.concept);
                     const mistake = commonMistake(practice[0]);
-                    const quickCheck = practice[1] ?? null;
+                    // A quick check already answered right on an earlier visit is not asked again.
+                    const quickCheck = practice[1] && !solvedIds.includes(practice[1].id) ? practice[1] : null;
                     const stepsLeft = LESSON_STEPS.length - step;
                     const piLine = PI_LINES[step][0];
                     const startButton = (className: string) => (
@@ -216,6 +266,14 @@ function LearnContent() {
                                 <section className="min-w-0">
                                     <PiSays mood={PI_MOODS[step]} className="mb-4 lg:hidden">{piLine}</PiSays>
 
+                                    {resumedNote ? (
+                                        <Alert className="mb-4 border-teal-200 bg-teal-50">
+                                            <AlertDescription className="flex flex-wrap items-center justify-between gap-2 font-semibold text-teal-900">
+                                                <span>{"Welcome back! You continue from where you left off."}</span>
+                                                <Button type="button" size="sm" variant="outline" onClick={() => goTo(1)}>{"Read the lesson from the start"}</Button>
+                                            </AlertDescription>
+                                        </Alert>
+                                    ) : null}
                                     {step === 1 ? (
                                         <section className="pb-2">
                                             <span className="rounded-xl bg-teal-50 px-2.5 py-1 text-xs font-extrabold uppercase text-teal-800">{stepName(0)}</span>
@@ -267,7 +325,7 @@ function LearnContent() {
 
                                     {step === 3 ? (
                                         practice[0] ? (
-                                            <LessonPractice key={practice[0].id} item={practice[0]} language={language} eyebrow={stepName(2)} note={"Not scored"} />
+                                            <LessonPractice key={practice[0].id} item={practice[0]} language={language} eyebrow={stepName(2)} note={"Not scored"} onResult={(correct) => practiceAnswered(practice[0].id, correct)} />
                                         ) : (
                                             <section className="rounded-3xl border border-slate-200 bg-white p-6 md:p-8">
                                                 <span className="rounded-xl bg-teal-50 px-2.5 py-1 text-xs font-extrabold uppercase text-teal-800">{stepName(2)}</span>
@@ -306,7 +364,7 @@ function LearnContent() {
 
                                     {step === 5 ? (
                                         quickCheck ? (
-                                            <LessonPractice key={quickCheck.id} item={quickCheck} language={language} eyebrow={stepName(4)} note={"1 question · not scored"} />
+                                            <LessonPractice key={quickCheck.id} item={quickCheck} language={language} eyebrow={stepName(4)} note={"1 question · not scored"} onResult={(correct) => practiceAnswered(quickCheck.id, correct)} />
                                         ) : (
                                             <section className="rounded-3xl border border-slate-200 bg-white p-6 md:p-8 text-center">
                                                 <span className="rounded-xl bg-teal-50 px-2.5 py-1 text-xs font-extrabold uppercase text-teal-800">{stepName(4)}</span>

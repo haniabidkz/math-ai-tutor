@@ -117,11 +117,17 @@ const optionalClass = z.coerce.number().optional().refine((value) => value === u
 const optionalId = z.string().trim().max(120).optional().transform((value) => (value ? value : null));
 const dateField = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-12-31");
 
-/** Public sign-up: a phone is required, an email is optional; a school code links a student to a school. */
+/** Shown when a form gives neither way to sign in. */
+export const CONTACT_REQUIRED = "Enter a mobile number or an email address";
+
+/**
+ * Public sign-up: a mobile number or an email, at least one of the two, becomes the sign-in;
+ * a school code links a student to a school.
+ */
 export const signupSchema = z.object({
     role: z.enum(["student", "parent", "teacher"]),
     name: nameField,
-    phone: phoneField,
+    phone: optionalPhone,
     email: optionalEmail,
     password: passwordField,
     classLevel: optionalClass,
@@ -129,6 +135,7 @@ export const signupSchema = z.object({
     parentPhone: optionalPhone,
     schoolCode: z.string().trim().max(20).optional().transform((value) => (value ? normalizeSchoolCode(value) : null)),
 }).superRefine((value, context) => {
+    if (!value.phone && !value.email) context.addIssue({ code: "custom", message: CONTACT_REQUIRED, path: [] });
     if (value.role === "student" && !value.classLevel) context.addIssue({ code: "custom", message: "Choose a class", path: ["classLevel"] });
     if (value.schoolCode && !isValidSchoolCode(value.schoolCode)) context.addIssue({ code: "custom", message: "A school code looks like EAGLE-6", path: ["schoolCode"] });
     if (value.role !== "student" && value.schoolCode) context.addIssue({ code: "custom", message: "Teachers and parents are added by the school, not by code", path: ["schoolCode"] });
@@ -173,16 +180,17 @@ export const sectionInputSchema = z.object({
         .refine((value) => /^[A-Z0-9][A-Z0-9 -]*$/.test(value), { message: "Section names use letters, numbers, spaces and dashes" }),
 });
 
+/** A student the school adds: a mobile number or an email (or both) to sign in with. */
 export const managedStudentSchema = z.object({
     name: nameField,
-    phone: phoneField,
+    phone: optionalPhone,
     email: optionalEmail,
     password: optionalPassword,
     classLevel: classField,
     sectionId: optionalId,
     parentPhone: optionalPhone,
     parentEmail: optionalEmail,
-});
+}).refine((value) => Boolean(value.phone || value.email), { message: CONTACT_REQUIRED, path: [] });
 export type ManagedStudentInput = z.infer<typeof managedStudentSchema>;
 
 export const studentUpdateSchema = z.object({
@@ -422,16 +430,20 @@ export function parseStudentImport(text: string): { rows: ImportedStudentRow[]; 
             return index >= 0 ? (cells[index] ?? "") : "";
         };
         const name = get("name");
-        const phone = normalizePhone(get("phone"));
+        // An email typed in the phone column counts as the student's email.
+        const phoneCell = get("phone");
+        const phoneIsEmail = phoneCell.includes("@");
+        const phone = phoneCell && !phoneIsEmail ? normalizePhone(phoneCell) : null;
         const classCell = parseClassCell(get("class"));
         const section = get("section") ? normalizeSectionName(get("section")) : classCell.section;
         const password = get("password") || null;
         const parentRaw = get("parentphone");
         const parentPhone = parentRaw ? normalizePhone(parentRaw) : null;
-        const email = get("email").toLowerCase() || null;
+        const email = (get("email") || (phoneIsEmail ? phoneCell : "")).toLowerCase() || null;
         let error: string | null = null;
         if (name.length < 2) error = "Name is missing";
-        else if (!phone) error = "Phone number is not valid";
+        else if (phoneCell && !phoneIsEmail && !phone) error = "Phone number is not valid";
+        else if (!phone && !email) error = "Add a mobile number or an email";
         else if (!classCell.classLevel || !isSchoolClass(classCell.classLevel)) error = `Class must be ${SUPPORTED_SCHOOL_CLASSES.join(", ")}`;
         else if (password && password.length < 6) error = "Password must be at least 6 characters";
         else if (parentRaw && !parentPhone) error = "Parent phone is not valid";

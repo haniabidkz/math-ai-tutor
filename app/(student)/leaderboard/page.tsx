@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
-import { Award, BookOpen, Crown, Medal, Sparkles, Trophy } from "lucide-react";
+import { Award, BookOpen, Crown, Medal, Sparkles, TrendingUp, Trophy } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -15,15 +15,19 @@ import { cn } from "@/lib/utils";
 import type { LocalizedText } from "@/types/curriculum";
 
 interface Entry { uid: string; name: string; points: number; correctAnswers: number; rank: number; me?: boolean }
+interface Improved { uid: string; name: string; points: number; previousPoints: number; gain: number; me: boolean }
 interface LeaderboardData {
     classLevel: number;
+    /** The student's own class: the only board they earn points on. */
+    ownClass: number;
+    mostImproved: Improved | null;
     weekKey: string;
     label: string;
     resetsAt: number;
     participants: number;
     entries: Entry[];
     me: Entry | null;
-    previous: { weekKey: string; label: string; participants: number; top: Entry[]; me: Entry | null; winners: Array<{ uid: string; name: string; place: number; me: boolean }> } | null;
+    previous: { weekKey: string; label: string; participants: number; top: Entry[]; me: Entry | null; mostImproved: Improved | null; winners: Array<{ uid: string; name: string; place: number; me: boolean }> } | null;
     rules: LocalizedText[];
 }
 
@@ -48,22 +52,30 @@ export default function LeaderboardPage() {
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => onAuthStateChanged(auth, async (currentUser) => {
-        if (!currentUser) return router.replace("/login?role=student");
-        setUser(currentUser);
+    /** One class board; the student's own class unless another of Class 6, 7 and 8 is picked. */
+    async function loadBoard(currentUser: User, classLevel?: number) {
+        setLoading(true);
+        setError("");
         try {
-            const headers = { Authorization: `Bearer ${await currentUser.getIdToken()}` };
-            const [board, progress] = await Promise.all([fetch("/api/leaderboard", { headers }), fetch("/api/progress", { headers })]);
-            const boardData = await board.json();
-            const progressData = await progress.json().catch(() => ({}));
-            if (progressData?.profile) setProfile({ name: progressData.profile.name ?? currentUser.displayName ?? "", classLevel: progressData.profile.classLevel });
-            if (!board.ok) throw new Error(boardData.error);
+            const response = await fetch(`/api/leaderboard${classLevel ? `?class=${classLevel}` : ""}`, { headers: { Authorization: `Bearer ${await currentUser.getIdToken()}` } });
+            const boardData = await response.json();
+            if (!response.ok) throw new Error(boardData.error);
             setData(boardData);
         } catch (caught) {
             setError(caught instanceof Error && caught.message ? caught.message : "The leaderboard could not be loaded.");
         } finally {
             setLoading(false);
         }
+    }
+
+    useEffect(() => onAuthStateChanged(auth, async (currentUser) => {
+        if (!currentUser) return router.replace("/login?role=student");
+        setUser(currentUser);
+        const headers = { Authorization: `Bearer ${await currentUser.getIdToken()}` };
+        void fetch("/api/progress", { headers }).then((response) => response.json()).then((progressData) => {
+            if (progressData?.profile) setProfile({ name: progressData.profile.name ?? currentUser.displayName ?? "", classLevel: progressData.profile.classLevel });
+        }).catch(() => undefined);
+        await loadBoard(currentUser);
     }), [router]);
 
     const top = data?.entries.filter((entry) => entry.rank <= 3) ?? [];
@@ -76,11 +88,24 @@ export default function LeaderboardPage() {
                 description={data ? `${"Week of"} ${data.label} · ${resetsIn(data.resetsAt)}` : undefined}
                 icon={<Trophy className="h-6 w-6" />}
             />
+            {data ? (
+                <div className="mb-5 flex flex-wrap items-center gap-2" role="tablist" aria-label="Class boards">
+                    {[6, 7, 8].map((level) => (
+                        <Button key={level} role="tab" aria-selected={data.classLevel === level} size="sm" variant={data.classLevel === level ? "default" : "outline"} disabled={loading}
+                            onClick={() => user && data.classLevel !== level && loadBoard(user, level)}>
+                            {`Class ${level}`}{level === data.ownClass ? " · yours" : ""}
+                        </Button>
+                    ))}
+                </div>
+            ) : null}
             {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
             {loading ? <p className="py-16 text-center text-muted-foreground">{"Loading the board..."}</p> : null}
 
-            {data ? (
+            {data && !loading ? (
                 <div className="space-y-6">
+                    {data.classLevel !== data.ownClass ? (
+                        <Alert className="border-sky-200 bg-sky-50"><AlertDescription>{`You are in Class ${data.ownClass}. This is the Class ${data.classLevel} board; you earn points on your own class board.`}</AlertDescription></Alert>
+                    ) : (
                     <Card className="border-indigo-200 bg-gradient-to-br from-indigo-50 to-white">
                         <CardContent className="flex flex-wrap items-center justify-between gap-4 p-5">
                             <div className="flex items-center gap-4">
@@ -104,6 +129,7 @@ export default function LeaderboardPage() {
                             <Button asChild><Link href="/learn"><BookOpen className="mr-2 h-4 w-4" />{"Earn points"}</Link></Button>
                         </CardContent>
                     </Card>
+                    )}
 
                     {top.length ? (
                         <section>
@@ -124,6 +150,20 @@ export default function LeaderboardPage() {
                             </div>
                         </section>
                     ) : null}
+
+                    <Card className="border-emerald-200">
+                        <CardContent className="flex items-center gap-3 p-4">
+                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"><TrendingUp className="h-5 w-5" /></span>
+                            <div className="min-w-0">
+                                <p className="text-xs font-extrabold uppercase tracking-wide text-emerald-700">{"Most improved this week"}</p>
+                                {data.mostImproved ? (
+                                    <p className="font-bold">{data.mostImproved.name}{data.mostImproved.me ? " · you!" : ""} <span className="font-normal text-muted-foreground">{`+${data.mostImproved.gain} points (${data.mostImproved.previousPoints} last week, ${data.mostImproved.points} now)`}</span></p>
+                                ) : (
+                                    <p className="text-sm text-muted-foreground">{"Nobody yet. Beat your points from last week to take this spot."}</p>
+                                )}
+                            </div>
+                        </CardContent>
+                    </Card>
 
                     <Card>
                         <CardHeader className="pb-2">
@@ -181,6 +221,7 @@ export default function LeaderboardPage() {
                                 ) : (
                                     <p className="text-xs text-muted-foreground">{"Rewards for the top 3 paid members are approved by the admin."}</p>
                                 )}
+                                {data.previous.mostImproved ? <p className="text-sm"><TrendingUp className="mr-1 inline h-4 w-4 text-emerald-600" />{`Most improved: ${data.previous.mostImproved.name}${data.previous.mostImproved.me ? " (you!)" : ""}, +${data.previous.mostImproved.gain} points`}</p> : null}
                                 {data.previous.me ? <p className="text-xs text-muted-foreground">{`You finished #${data.previous.me.rank} with ${data.previous.me.points} points.`}</p> : null}
                             </CardContent>
                         </Card>

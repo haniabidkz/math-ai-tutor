@@ -6,7 +6,7 @@ import { getClassConcepts, getConcept } from "@/lib/curriculum";
 import { PREMIUM_LOCK_CODE, premiumLockMessage } from "@/lib/access";
 import { adminDb } from "@/lib/firebase-admin";
 import { accessForStudent } from "@/lib/schools-server";
-import { pickPractice } from "@/lib/lesson-steps";
+import { LESSON_STEPS, pickPractice, toPracticeItem } from "@/lib/lesson-steps";
 import { activityDateKey, newlyEarnedBadges, nextStreak, type StreakState } from "@/lib/gamification";
 import { authErrorResponse, requireUser } from "@/lib/server-auth";
 import type { Locale, MicroConcept, StudentClassLevel } from "@/types/curriculum";
@@ -31,6 +31,20 @@ const EXTRA_TIPS: Record<Locale, Record<1 | 2 | 3, string>> = {
         3: "**Gehri jaanch:** Apna jawab sawal mein wapas rakh kar tasdeeq karein aur nishan dobara check karein.",
     },
 };
+
+/** The lesson's own quiz the student started and left, so a return goes straight back to it. */
+async function openLessonQuiz(studentRef: FirebaseFirestore.DocumentReference, microTag: string): Promise<{ questionNumber: number; totalQuestions: number } | null> {
+    const snapshot = await studentRef.collection("assessmentSessions").where("kind", "==", "mastery").where("microTag", "==", microTag).get();
+    const millis = (value: unknown) => (value && typeof (value as { toMillis?: () => number }).toMillis === "function" ? (value as { toMillis: () => number }).toMillis() : 0);
+    const open = snapshot.docs
+        .map((doc) => doc.data())
+        // Homework quizzes are reached from the homework card, not from the lesson.
+        .filter((session) => session.status !== "completed" && !session.homeworkId && Array.isArray(session.questions) && session.questions.length > 0)
+        .sort((left, right) => millis(right.updatedAt ?? right.startedAt) - millis(left.updatedAt ?? left.startedAt))[0];
+    if (!open) return null;
+    const total = Number(open.questionCount ?? open.questions.length);
+    return { questionNumber: Math.min(Number(open.currentQuestionIndex ?? 0) + 1, total), totalQuestions: total };
+}
 
 function lessonMarkdown(concept: MicroConcept, prerequisite: MicroConcept | null, level: number, locale: Locale): string {
     const tip = EXTRA_TIPS[locale][Math.max(1, Math.min(3, level)) as 1 | 2 | 3];
@@ -82,11 +96,23 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        const [prerequisite, questions] = await Promise.all([
+        const [prerequisite, questions, lessonSnapshot, openQuiz] = await Promise.all([
             concept.prerequisiteTag ? getPublishedConcept(concept.prerequisiteTag) : null,
             // Two of the lesson's own questions for the try-it and quick-check steps; answered on the device, never scored.
             getPublishedQuestions(microTag),
+            studentRef.collection("lessonProgress").doc(concept.microTag).get(),
+            openLessonQuiz(studentRef, concept.microTag),
         ]);
+        // A student who read the lesson and reached its questions comes back to those questions:
+        // the same ones, and the screen skips the explanation they already saw.
+        const saved = lessonSnapshot.data() ?? {};
+        const savedStep = Number(saved.resumeStep);
+        const resumeStep = Number.isInteger(savedStep) && savedStep >= 3 ? Math.min(savedStep, LESSON_STEPS.length) : null;
+        const savedIds: string[] = Array.isArray(saved.practiceIds) ? saved.practiceIds.filter((id: unknown): id is string => typeof id === "string") : [];
+        const keptPractice = resumeStep
+            ? savedIds.map((id) => questions.find((question) => question.id === id)).filter((question): question is NonNullable<typeof question> => Boolean(question)).map(toPracticeItem)
+            : [];
+        const solvedIds: string[] = Array.isArray(saved.solvedPracticeIds) ? saved.solvedPracticeIds.filter((id: unknown): id is string => typeof id === "string") : [];
         const level = Math.max(1, Math.min(3, Number(body.teachingLevel ?? 1)));
 
         // The lesson is English; the same lesson in Roman Urdu is sent for the optional toggle.
@@ -114,7 +140,8 @@ export async function POST(request: NextRequest) {
                 family: concept.family,
                 prerequisiteTitle: prerequisite?.title.english ?? null,
             },
-            practice: pickPractice(questions),
+            practice: keptPractice.length ? keptPractice : pickPractice(questions),
+            resume: { step: resumeStep, solvedIds, openQuiz },
         });
     } catch (error) {
         const auth = authErrorResponse(error);
@@ -129,10 +156,22 @@ export async function PATCH(request: NextRequest) {
         const user = await requireUser(request, ["student"]);
         const body = await request.json();
         const microTag = String(body.microTag ?? body.topicId ?? "");
-        if (!microTag) return NextResponse.json({ success: false, error: "microTag is required" }, { status: 400 });
+        if (!microTag || microTag.includes("/")) return NextResponse.json({ success: false, error: "microTag is required" }, { status: 400 });
         const understood = body.understood === true;
         const studentRef = adminDb.collection("students").doc(user.uid);
         const ref = studentRef.collection("lessonProgress").doc(microTag);
+
+        // Where the student is inside the lesson: the step, the two practice questions, and
+        // the ones already solved. Nothing here counts as finishing the lesson.
+        if (body.progress === true) {
+            const update: Record<string, unknown> = { microTag, updatedAt: FieldValue.serverTimestamp() };
+            const step = Number(body.step);
+            if (Number.isInteger(step) && step >= 1 && step <= LESSON_STEPS.length) update.resumeStep = step;
+            if (Array.isArray(body.practiceIds)) update.practiceIds = body.practiceIds.filter((id: unknown) => typeof id === "string" && id.length < 200).slice(0, 4);
+            if (typeof body.solvedId === "string" && body.solvedId && body.solvedId.length < 200) update.solvedPracticeIds = FieldValue.arrayUnion(body.solvedId);
+            await ref.set(update, { merge: true });
+            return NextResponse.json({ success: true });
+        }
 
         const result = await adminDb.runTransaction(async (transaction) => {
             const [lessonSnapshot, studentSnapshot] = await Promise.all([
@@ -145,6 +184,8 @@ export async function PATCH(request: NextRequest) {
             transaction.set(ref, {
                 microTag,
                 understood,
+                // The quiz takes over from here; a later visit shows the lesson from the start.
+                ...(understood ? { resumeStep: FieldValue.delete(), practiceIds: FieldValue.delete(), solvedPracticeIds: FieldValue.delete() } : {}),
                 teachingAttempts: FieldValue.increment(1),
                 needsHumanAttention: !understood && Number(body.teachingLevel ?? 1) >= 3,
                 updatedAt: FieldValue.serverTimestamp(),

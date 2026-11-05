@@ -27,6 +27,7 @@ interface BoardData {
     schools: Array<{ id: string; name: string; code: string }>;
     weeks: Array<{ weekKey: string; label: string }>;
     finalized: boolean; finalizedAt: number | null; participants: number;
+    mostImproved: { uid: string; name: string; points: number; previousPoints: number; gain: number } | null;
     entries: AdminEntry[]; reward: Reward | null; history: Reward[];
 }
 interface HistoryItem { id: string; kind: string; points: number; correctAnswers: number; label: string; weekKey: string; createdAt: number | null }
@@ -130,6 +131,7 @@ export function LeaderboardAdmin() {
                 <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
                     <section className="rounded-lg bg-white p-4">
                         <h2 className="mb-3 font-semibold">Class {data.classLevel} · week of {data.label}{data.schoolId ? ` · ${data.schools.find((school) => school.id === data.schoolId)?.name ?? "school"}` : " · individual students"}</h2>
+                        <p className="mb-3 text-sm"><strong>Most improved:</strong> {data.mostImproved ? `${data.mostImproved.name}, +${data.mostImproved.gain} points (${data.mostImproved.previousPoints} last week, ${data.mostImproved.points} this week)` : "nobody yet (needs a student who played the week before too)"}</p>
                         <div className="overflow-auto">
                             <table className="w-full min-w-[860px] text-left text-sm">
                                 <thead className="bg-slate-100"><tr><th className="p-2">Rank</th><th className="p-2">Student</th><th className="p-2">Points</th><th className="p-2">Correct</th><th className="p-2">Paid member</th><th className="p-2">Flags</th><th className="p-2">Note</th><th className="p-2"></th></tr></thead>

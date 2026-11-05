@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import {
-    ArrowLeft, ArrowRight, Award, CheckCircle2, CloudOff, Flame, HelpCircle, Layers, Lightbulb,
+    ArrowLeft, ArrowRight, Award, BookOpen, CheckCircle2, CloudOff, Flame, HelpCircle, Layers, Lightbulb,
     LockOpen, RefreshCw, RotateCcw, Sparkles, Star, Target, XCircle,
 } from "lucide-react";
 import { BilingualText } from "@/components/bilingual-text";
@@ -27,6 +27,8 @@ import {
     enqueueAnswer,
     pendingForSession,
     syncQueue,
+    nextOfflineQuestion,
+    replayVerdict,
 } from "@/lib/offline-queue";
 import type { ClientQuestion } from "@/lib/assessment-content";
 import type { FoundationProgress } from "@/lib/foundation-fallback";
@@ -123,6 +125,10 @@ function QuizContent() {
     const [offline, setOffline] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [offlineFinished, setOfflineFinished] = useState(false);
+    /** Every main question shown in this quiz, so answering offline never repeats one. */
+    const served = useRef<Set<string>>(new Set());
+    /** A sync in progress; a ref, because the online and timer handlers outlive renders. */
+    const syncingRef = useRef(false);
 
     useEffect(() => onAuthStateChanged(auth, async (currentUser) => {
         if (!currentUser) return router.replace("/login?role=student");
@@ -243,6 +249,9 @@ function QuizContent() {
             // A fresh session invalidates anything still queued from an abandoned one; a resumed
             // one keeps its queue, which syncs as soon as the screen is back.
             if (!data.session.resumed) clearSessionQueue(data.session.id);
+            // The questions already asked come first in the list, the current one included.
+            served.current = new Set((data.session.questions ?? []).slice(0, data.session.questionNumber ?? 1).map((item: ClientQuestion) => item.id));
+            if (data.session.question) served.current.add(data.session.question.id);
             setPendingCount(0);
             setOfflineFinished(false);
             setQuiz(data.session);
@@ -262,17 +271,30 @@ function QuizContent() {
         setError("");
         // Practice and foundation answers never count on the path or the combo.
         const onMainQuestion = !practice && !foundation;
+        // The same id goes with a queued copy, so a request that did reach the server is never counted twice.
+        const eventId = crypto.randomUUID();
+        const canQueue = action === "answer" && Boolean(quiz.question) && onMainQuestion;
+        if (canQueue && typeof navigator !== "undefined" && navigator.onLine === false) {
+            answerOffline(quiz, selected, eventId);
+            inFlight.current = false;
+            setLoading(false);
+            return;
+        }
+        // A connection that is up but carries nothing must not leave the student waiting.
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 15_000);
         try {
             const response = await fetch("/api/evaluate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${await user.getIdToken()}` },
                 body: JSON.stringify({
                     sessionId: quiz.id,
-                    eventId: crypto.randomUUID(),
+                    eventId,
                     action,
                     questionId: quiz.question?.id,
                     optionId: selected,
                 }),
+                signal: controller.signal,
             });
             const data = await response.json();
             if (!response.ok) {
@@ -327,19 +349,26 @@ function QuizContent() {
             setFoundation(data.status === "foundation_practice" ? data.foundation ?? null : null);
             setFoundationResult(data.foundationResult ?? null);
             if (data.status === "active") recordMainQuestion(data.question);
+            if (data.question?.id) served.current.add(data.question.id);
+            // Answers still waiting on the device go up as soon as the server answers again.
+            if (pendingForSession(quiz.id).length) void flushQueue(user, quiz.id);
             setQuiz({ ...quiz, question: data.question, questionNumber: data.questionNumber ?? quiz.questionNumber, score: data.score });
             setRemedial(null);
             resetQuestionState();
             if (data.status !== "misconception_practice") setMisconception(null);
         } catch (caught) {
-            // fetch only throws when the request never reached the server. Practice and
-            // foundation questions are not in the local list, so they are not answered offline.
-            if (action === "answer" && caught instanceof TypeError && quiz.question && !practice && !foundation) {
-                answerOffline(quiz, selected);
+            // A network failure or a request that never finished: the answer is kept on the device.
+            // Practice and foundation questions are not in the local list, so they wait for the network.
+            const network = caught instanceof TypeError || (caught instanceof DOMException && caught.name === "AbortError");
+            if (network && canQueue) {
+                answerOffline(quiz, selected, eventId);
                 return;
             }
-            setError("The quiz could not continue. Please try again.");
+            setError(network
+                ? "You are offline. This question needs the internet; reconnect and press Check answer again. Nothing is lost."
+                : "The quiz could not continue. Please try again.");
         } finally {
+            window.clearTimeout(timer);
             inFlight.current = false;
             setLoading(false);
         }
@@ -353,9 +382,9 @@ function QuizContent() {
     }
 
     /** Stores the answer on the device and moves on using the locally held questions. */
-    function answerOffline(currentQuiz: QuizState, optionId: string) {
+    function answerOffline(currentQuiz: QuizState, optionId: string, eventId: string = crypto.randomUUID()) {
         enqueueAnswer({
-            eventId: crypto.randomUUID(),
+            eventId,
             sessionId: currentQuiz.id,
             questionId: currentQuiz.question!.id,
             optionId,
@@ -368,8 +397,10 @@ function QuizContent() {
         setLastAnswer(null);
         recordMainAnswer(null);
 
-        const next = currentQuiz.questions?.[currentQuiz.questionNumber];
+        if (currentQuiz.question) served.current.add(currentQuiz.question.id);
+        const next = nextOfflineQuestion(currentQuiz.questions, served.current, currentQuiz);
         if (next) {
+            served.current.add(next.id);
             setQuiz({ ...currentQuiz, question: next, questionNumber: currentQuiz.questionNumber + 1 });
             resetQuestionState();
         } else {
@@ -392,19 +423,28 @@ function QuizContent() {
             });
             return;
         }
+        // The screen takes the server's state as it is now: the next question, a review to read,
+        // or a practice round, after every queued answer was applied.
         setOfflineFinished(false);
-        setFoundation(session.foundation ?? null);
+        setRemedial(null);
+        setLastAnswer(null);
+        resetQuestionState();
         setQuiz((current) => current ? {
             ...current,
-            question: session.question ?? current.question,
+            question: session.question,
+            questions: session.questions ?? current.questions,
             questionNumber: session.questionNumber ?? current.questionNumber,
             score: session.score ?? current.score,
         } : current);
+        for (const item of (session.questions ?? []).slice(0, session.questionNumber ?? 0)) served.current.add(item.id);
+        if (session.question) served.current.add(session.question.id);
+        restoreSession(session);
     }
 
     /** Replays queued answers oldest-first; the server de-duplicates by eventId. */
     async function flushQueue(currentUser: User, sessionId: string) {
-        if (!pendingForSession(sessionId).length || syncing) return;
+        if (!pendingForSession(sessionId).length || syncingRef.current) return;
+        syncingRef.current = true;
         setSyncing(true);
         try {
             const token = await currentUser.getIdToken();
@@ -420,8 +460,9 @@ function QuizContent() {
                         optionId: item.optionId,
                     }),
                 });
-                // 409 means remediation is pending, so the answer stays queued for afterwards.
-                return { ok: response.ok, retryable: response.status >= 500 || response.status === 409 };
+                // Kept while the server is busy or a review comes first; dropped only if it can never apply.
+                const data = await response.json().catch(() => ({}));
+                return replayVerdict(response.status, typeof data.code === "string" ? data.code : null);
             });
             setPendingCount(pendingForSession(sessionId).length);
             if (outcome.synced > 0 || outcome.outcome !== "offline") {
@@ -431,9 +472,20 @@ function QuizContent() {
         } catch {
             setOffline(true);
         } finally {
+            syncingRef.current = false;
             setSyncing(false);
         }
     }
+
+    // While answers wait on the device, try again every 20 seconds: the "online" event is not
+    // fired by every phone, and a first attempt can fail on a weak signal.
+    useEffect(() => {
+        if (!user || !quiz || pendingCount === 0) return;
+        const timer = window.setInterval(() => {
+            if (navigator.onLine !== false) void flushQueue(user, quiz.id);
+        }, 20_000);
+        return () => window.clearInterval(timer);
+    }, [user, quiz?.id, pendingCount]);
 
     useEffect(() => {
         if (!user || !quiz) return;
@@ -608,9 +660,17 @@ function QuizContent() {
         <NoCopy className="min-h-screen bg-[#F4F6FB] font-body text-slate-900">
             <header className="border-b bg-white">
                 <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
-                    <Button variant="ghost" className="px-2 font-bold sm:px-4" asChild>
-                        <Link href="/dashboard" aria-label="Exit quiz"><ArrowLeft className="h-4 w-4 sm:mr-2" /><span className="hidden sm:inline">Exit quiz</span></Link>
-                    </Button>
+                    <div className="flex items-center gap-1">
+                        <Button variant="ghost" className="px-2 font-bold sm:px-4" asChild>
+                            <Link href="/dashboard" aria-label="Exit quiz"><ArrowLeft className="h-4 w-4 sm:mr-2" /><span className="hidden sm:inline">Exit quiz</span></Link>
+                        </Button>
+                        {quiz && quiz.kind === "mastery" && !params.get("homeworkId") ? (
+                            // Reading the lesson again keeps the quiz where it is; coming back continues it.
+                            <Button variant="ghost" className="px-2 font-bold sm:px-3" asChild>
+                                <Link href={`/learn?microTag=${encodeURIComponent(quiz.microTag)}&class=${quiz.classLevel ?? params.get("class") ?? ""}&review=1`} aria-label="Read the lesson again"><BookOpen className="h-4 w-4 sm:mr-2" /><span className="hidden sm:inline">Lesson</span></Link>
+                            </Button>
+                        ) : null}
+                    </div>
                     {quiz ? (
                         <div className="flex items-center gap-2">
                             <ComboChip combo={game.combo} />
@@ -713,7 +773,7 @@ function QuizContent() {
                                                 <Lightbulb className="mr-2 h-5 w-5" />Hint
                                             </Button>
                                         ) : null}
-                                        <Button size="lg" className="h-14 flex-1 rounded-2xl text-base font-extrabold" onClick={() => evaluate("answer")} disabled={!selected || loading}>
+                                        <Button size="lg" className="h-14 flex-1 rounded-2xl text-base font-extrabold" onClick={() => evaluate("answer")} disabled={!selected || loading || syncing}>
                                             Check answer<CheckCircle2 className="ml-2 h-5 w-5" />
                                         </Button>
                                     </div>

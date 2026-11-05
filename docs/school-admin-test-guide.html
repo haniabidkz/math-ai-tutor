@@ -35,7 +35,7 @@
 <body>
 
 <h1>LearnAI Tutor – School Platform Test Guide</h1>
-<p class="sub">How to try every new feature: schools, school admin panel, phone sign-in, forgot password, teachers and sections, trial and paid plans, seats, promotion, reports, school deletion and the new Super Admin tabs. Written for the product owner. Version 2 November 2026 (round 3, plus the content system in section 6).</p>
+<p class="sub">How to try every new feature: schools, school admin panel, phone sign-in, forgot password, teachers and sections, trial and paid plans, seats, promotion, reports, school deletion and the new Super Admin tabs. Written for the product owner. Version 5 November 2026 (round 3, the content system in section 6, and the required fixes in section 7).</p>
 
 <div class="box">
   <strong>Live site:</strong> https://learnaitutor.com &nbsp;·&nbsp; <strong>Super Admin:</strong> /super-admin &nbsp;·&nbsp; <strong>School Portal:</strong> /login?role=school &nbsp;·&nbsp; <strong>School Admin panel:</strong> /school-admin<br>
@@ -311,6 +311,22 @@
     <tr><td>23</td><td>Super Admin → Curriculum: look at "Curriculum order", choose a class and press <strong>Order by textbook (AI)</strong>.</td><td>A side-by-side preview: the current order and the textbook order, with moved lessons marked and a note from the model. Nothing changes until you press "Apply this order". After applying, the lesson cards below, the student path and the Learn page all follow that order.</td></tr>
     <tr><td>24</td><td>Super Admin → AI Studio: create a <strong>new micro-topic</strong> in an existing chapter (e.g. a lesson that belongs in the middle of Sets) and approve it.</td><td>The approval message says where it was placed. The Curriculum tab shows the lesson at its textbook position, not at the end; the lessons after it moved down one place. If the model could not decide, the lesson is last in the chapter and carries an "Order unconfirmed" badge, which "Order by textbook (AI)" clears.</td></tr>
     <tr><td>25</td><td>Super Admin → Curriculum: edit a lesson and set "Sub-topic order in chapter".</td><td>Lessons with a sub-topic order come first, in that order; lessons without one come after them. Within a sub-topic, "Order in topic" decides; equal values fall back to creation time, so the order is always the same.</td></tr>
+  </tbody>
+</table>
+
+<h2>7. Required fixes (5 November 2026)</h2>
+<table>
+  <thead><tr><th>#</th><th>What to do</th><th>What you should see</th></tr></thead>
+  <tbody>
+    <tr><td>26</td><td>Create a student account with only an email (leave Mobile Number empty). Then try once with both empty.</td><td>Email only works and you can sign in with that email. Both empty shows "Enter a mobile number or an email address". A mobile number alone still works as before. School admins can also add a student with only an email (Students tab or bulk import, email typed in the Phone column).</td></tr>
+    <tr><td>27</td><td>School admin → Promotion: press "Promote all classes" before typing the school code, then type it and press again.</td><td>Without the code a yellow note says what is missing (the button never just stays grey). With the code a confirmation appears on the page itself: "Yes, promote now". After it, "Promotion complete" with the numbers. No browser pop-up is used any more, so phones and browsers that block pop-ups work too.</td></tr>
+    <tr><td>28</td><td>Super Admin → Schools → open a test school → Delete this school: press Delete before and after typing the code.</td><td>Same pattern: a note when the code is missing, then a red confirmation on the page, "Yes, delete for good". The school disappears from the list.</td></tr>
+    <tr><td>29</td><td>As a student, open a lesson, go to "Try it", answer it, then close the tab and open the same lesson again.</td><td>"Welcome back! You continue from where you left off." The lesson opens at its questions, past the explanation, big idea and example; a question already answered right is not asked again. "Read the lesson from the start" is there if wanted.</td></tr>
+    <tr><td>30</td><td>Start the quiz of a lesson, answer two questions, leave, then open the same lesson again from the dashboard.</td><td>It goes straight to the quiz at question 3. Answered questions are not repeated. A "Lesson" button in the quiz header opens the lesson for reading without losing the quiz.</td></tr>
+    <tr><td>31</td><td>Leaderboard: as a student, finish two quizzes on two different lessons on the same day.</td><td>Only the first quiz of the day gives the +10 points for taking part; correct answers still earn their points. The board shows "Most improved this week" (biggest rise over last week, for students who played both weeks).</td></tr>
+    <tr><td>32</td><td>Student leaderboard: press Class 6, Class 7 and Class 8. School admin: open the new Leaderboard tab.</td><td>Each class has its own board. A student earns points only on their own class board and sees a note when looking at another class. The school admin sees the school's own board per class, with this week's standings, most improved and last week's top 3.</td></tr>
+    <tr><td>33</td><td>In a quiz, turn off the internet (airplane mode), answer two questions, then turn it back on.</td><td>"You are offline" appears and the quiz continues; answers are kept on the device. When the internet returns, they sync by themselves (retried every 20 seconds as well) and the quiz continues at the right question. No answer is lost or asked twice. The quiz stops at its own number of questions even offline.</td></tr>
+    <tr><td>34</td><td>Login → Forgot password → send a reset link to an account with an email.</td><td>The green "link sent" message disappears by itself after about 8 seconds, and "Send reset link" can be pressed again for another link.</td></tr>
   </tbody>
 </table>
 
