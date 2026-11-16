@@ -567,14 +567,24 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                     <div className="flex flex-wrap items-center justify-between gap-4">
                         <div className="space-y-1 text-sm">
                             <p className="font-semibold">Final check before going live</p>
-                            <p className="flex items-center gap-1.5">
-                                {draftIssues.length ? <AlertTriangle className="h-4 w-4 text-amber-600" /> : <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
-                                Counts: {DIFFICULTIES.map((difficulty) => `${capital(difficulty)} ${countFor(difficulty)}/${draft.quota[difficulty]}`).join(" · ")}
-                            </p>
-                            <p className="flex items-center gap-1.5">
-                                {checked === draft.questions.length && draft.questions.length ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-amber-600" />}
-                                Answers checked: {checked}/{draft.questions.length}
-                            </p>
+                            {draft.lessonOnly ? (
+                                // A lesson-only draft has no questions to count or check; its worked example is what was checked.
+                                <p className="flex items-center gap-1.5">
+                                    {draft.concept?.workedExample?.check?.status === "agrees" ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-amber-600" />}
+                                    Worked example: {draft.concept?.workedExample?.check?.status === "agrees" ? "the AI check agrees" : draft.concept?.workedExample?.check?.status === "error" ? "the AI check could not run" : draft.concept?.workedExample ? "edited by you, read it once more" : "none yet"}
+                                </p>
+                            ) : (
+                                <>
+                                    <p className="flex items-center gap-1.5">
+                                        {draftIssues.length ? <AlertTriangle className="h-4 w-4 text-amber-600" /> : <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
+                                        Counts: {DIFFICULTIES.map((difficulty) => `${capital(difficulty)} ${countFor(difficulty)}/${draft.quota[difficulty]}`).join(" · ")}
+                                    </p>
+                                    <p className="flex items-center gap-1.5">
+                                        {checked === draft.questions.length && draft.questions.length ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-amber-600" />}
+                                        Answers checked: {checked}/{draft.questions.length}
+                                    </p>
+                                </>
+                            )}
                             <p className="flex items-center gap-1.5">
                                 {blocking.length ? <AlertTriangle className="h-4 w-4 text-amber-600" /> : <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
                                 {blocking.length ? `${blocking.length} problem(s) left to fix` : "No problems left"}
