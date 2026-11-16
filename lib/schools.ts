@@ -207,12 +207,12 @@ export type StudentUpdate = z.infer<typeof studentUpdateSchema>;
 /** A teacher looks after whole classes, particular sections, or (nothing ticked) the whole school. */
 export const managedTeacherSchema = z.object({
     name: nameField,
-    phone: phoneField,
+    phone: optionalPhone,
     email: optionalEmail,
     password: optionalPassword,
     classes: classList.default([]),
     sectionIds: z.array(z.string().trim().min(1)).max(50).default([]),
-});
+}).refine((value) => Boolean(value.phone || value.email), { message: CONTACT_REQUIRED, path: [] });
 export type ManagedTeacherInput = z.infer<typeof managedTeacherSchema>;
 
 export const teacherUpdateSchema = z.object({

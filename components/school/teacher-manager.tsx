@@ -66,7 +66,7 @@ export function TeacherManager({ schoolId, sections, onChanged }: { schoolId?: s
     const [editing, setEditing] = useState<SchoolTeacherRow | null>(null);
     const [editForm, setEditForm] = useState<TeacherForm>(EMPTY);
     const [busy, setBusy] = useState(false);
-    const [created, setCreated] = useState<{ name: string; phone: string; password: string | null } | null>(null);
+    const [created, setCreated] = useState<{ name: string; phone: string; email?: string; password: string | null } | null>(null);
 
     const api = <T,>(path: string, init?: RequestInit) => schoolApi<T>(path, init, schoolId);
 
@@ -90,7 +90,7 @@ export function TeacherManager({ schoolId, sections, onChanged }: { schoolId?: s
         setCreated(null);
         try {
             const data = await api<{ password: string | null }>("/api/school/teachers", jsonInit("POST", { ...form, email: form.email || undefined, password: form.password || undefined }));
-            setCreated({ name: form.name, phone: form.phone, password: data.password ?? form.password });
+            setCreated({ name: form.name, phone: form.phone, email: form.email, password: data.password ?? form.password });
             setForm(EMPTY);
             setAdding(false);
             say(`${form.name} was added.`);
@@ -130,7 +130,7 @@ export function TeacherManager({ schoolId, sections, onChanged }: { schoolId?: s
         if (!window.confirm(prompts[action])) return;
         try {
             const data = await api<{ password: string | null }>("/api/school/teachers", jsonInit("PATCH", { uid: teacher.uid, action }));
-            if (action === "resetPassword") setCreated({ name: teacher.name, phone: teacher.phone ?? "", password: data.password });
+            if (action === "resetPassword") setCreated({ name: teacher.name, phone: teacher.phone ?? "", email: teacher.email, password: data.password });
             say("Done.");
             await load();
             onChanged?.();
@@ -140,8 +140,8 @@ export function TeacherManager({ schoolId, sections, onChanged }: { schoolId?: s
     const fields = (value: TeacherForm, set: (next: TeacherForm) => void, prefix: string, withPassword: boolean) => (
         <>
             <div className="space-y-1"><Label htmlFor={`${prefix}-name`}>Full name</Label><Input id={`${prefix}-name`} required value={value.name} onChange={(event) => set({ ...value, name: event.target.value })} /></div>
-            <div className="space-y-1"><Label htmlFor={`${prefix}-phone`}>Mobile number</Label><Input id={`${prefix}-phone`} required placeholder="03001234567" value={value.phone} onChange={(event) => set({ ...value, phone: event.target.value })} /></div>
-            <div className="space-y-1"><Label htmlFor={`${prefix}-email`}>Email <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id={`${prefix}-email`} type="email" value={value.email} onChange={(event) => set({ ...value, email: event.target.value })} /></div>
+            <div className="space-y-1"><Label htmlFor={`${prefix}-phone`}>Mobile number <span className="font-normal text-muted-foreground">(or an email)</span></Label><Input id={`${prefix}-phone`} placeholder="03001234567" value={value.phone} onChange={(event) => set({ ...value, phone: event.target.value })} /></div>
+            <div className="space-y-1"><Label htmlFor={`${prefix}-email`}>Email <span className="font-normal text-muted-foreground">(if no mobile number)</span></Label><Input id={`${prefix}-email`} type="email" value={value.email} onChange={(event) => set({ ...value, email: event.target.value })} /></div>
             {withPassword ? <div className="space-y-1"><Label htmlFor={`${prefix}-password`}>Password <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id={`${prefix}-password`} minLength={6} value={value.password} onChange={(event) => set({ ...value, password: event.target.value })} /></div> : <div />}
             <ScopePicker value={value} sections={sections} onChange={(next) => set({ ...value, ...next })} />
         </>
@@ -159,13 +159,13 @@ export function TeacherManager({ schoolId, sections, onChanged }: { schoolId?: s
             {created ? (
                 <Alert className="border-indigo-300 bg-indigo-50">
                     <KeyRound className="h-4 w-4" />
-                    <AlertDescription><strong>{created.name}</strong> signs in with phone <strong>{prettyPhone(created.phone)}</strong>{created.password ? <> and password <code className="rounded bg-white px-1.5 py-0.5 font-mono">{created.password}</code>. Write it down now.</> : <> and the password you typed.</>}</AlertDescription>
+                    <AlertDescription><strong>{created.name}</strong> signs in with {created.phone ? <>phone <strong>{prettyPhone(created.phone)}</strong></> : <>email <strong>{created.email}</strong></>}{created.password ? <> and password <code className="rounded bg-white px-1.5 py-0.5 font-mono">{created.password}</code>. Write it down now.</> : <> and the password you typed.</>}</AlertDescription>
                 </Alert>
             ) : null}
 
             {adding ? (
                 <Card>
-                    <CardHeader><CardTitle className="text-base">New teacher</CardTitle><CardDescription>Tick the whole classes and/or the sections this teacher looks after. Nothing ticked means the whole school.</CardDescription></CardHeader>
+                    <CardHeader><CardTitle className="text-base">New teacher</CardTitle><CardDescription>The teacher signs in with the mobile number or the email (give at least one). Tick the whole classes and/or the sections this teacher looks after. Nothing ticked means the whole school.</CardDescription></CardHeader>
                     <CardContent>
                         <form onSubmit={add} className="grid gap-3 md:grid-cols-2">
                             {fields(form, setForm, "te", true)}

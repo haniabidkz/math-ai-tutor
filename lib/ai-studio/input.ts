@@ -15,6 +15,8 @@ export const createDraftSchema = z.object({
     subTopic: short.nullable().optional(),
     microTopic: z.object({ microTag: z.string().trim().min(1).nullable(), title: short }).nullable().optional(),
     microTags: z.array(z.string().max(120)).max(40).optional(),
+    /** Rewrite only an existing micro-topic's lesson: explanation, worked example and visual, no questions. */
+    lessonOnly: z.boolean().optional(),
 });
 
 export const draftQuestionEditSchema = z.object({
@@ -35,6 +37,10 @@ export const draftConceptSchema = z.object({
     explanation: pair,
     /** Left out by the edit form; the stored boundary is then kept. */
     scope: z.object({ covers: z.array(short).max(10), excludes: z.array(short).max(6) }).optional(),
+    /** Left out: the stored worked example is kept. An edited one is the admin's own and loses the automatic check. */
+    workedExample: z.object({ problem: pair, steps: z.array(z.object({ text: pair, why: pair })).max(8), finalAnswer: pair }).nullable().optional(),
+    /** Left out: the stored visual is kept. The drawing is checked again when saved. */
+    visual: z.object({ required: z.boolean(), caption: pair, spec: z.record(z.string(), z.unknown()).nullable() }).nullable().optional(),
 });
 
 export const draftEditSchema = z.discriminatedUnion("op", [

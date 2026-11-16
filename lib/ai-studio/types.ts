@@ -1,4 +1,4 @@
-import type { Difficulty, LocalizedOption, LocalizedText, MisconceptionTag, StudentClassLevel } from "@/types/curriculum";
+import type { Difficulty, LessonVisual, LocalizedOption, LocalizedText, MisconceptionTag, StudentClassLevel, WorkedExample } from "@/types/curriculum";
 
 /** Micro-topic (30), sub-topic checkpoint (45) or main-topic mastery pool (60). */
 export type GenerationLevel = "micro" | "sub" | "main";
@@ -82,6 +82,10 @@ export interface DraftConcept {
     explanation: LocalizedText;
     /** Absent on drafts written before September 2026. */
     scope?: DraftScope;
+    /** One solved example, step by step with reasons; absent on drafts written before November 2026. */
+    workedExample?: WorkedExample | null;
+    /** The lesson picture, or the decision that none would help; absent on older drafts. */
+    visual?: LessonVisual | null;
 }
 
 export interface DraftTarget {
@@ -124,6 +128,8 @@ export interface GenerationDraft {
     target: DraftTarget;
     /** Same value for drafts of the same request, so a new one can replace an unfinished one. */
     targetKey?: string;
+    /** Rewrites only an existing micro-topic's lesson (explanation, worked example, visual); writes no questions. */
+    lessonOnly?: boolean;
     quota: Quota;
     concept: DraftConcept | null;
     questions: DraftQuestion[];

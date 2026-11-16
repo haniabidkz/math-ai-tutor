@@ -19,7 +19,9 @@ import {
 } from "@/lib/ai-studio/types";
 import { blockingIssues, normalizeText, validateDraft, type DraftIssue } from "@/lib/ai-studio/validate";
 import { MISCONCEPTION_TAGS, MISCONCEPTIONS } from "@/lib/mistake-analysis";
-import type { Difficulty, LocalizedText, MisconceptionTag } from "@/types/curriculum";
+import { LessonVisualView, WorkedExampleCard } from "@/components/lesson-visual";
+import { parseVisualSpec } from "@/lib/lesson-visual";
+import type { Difficulty, LessonVisual, LocalizedText, MisconceptionTag, WorkedExample } from "@/types/curriculum";
 
 /** Failures worth retrying automatically; a bad key or missing credit stops at once. */
 const RETRYABLE = new Set(["failed", "bad_output", "rejected", "refused"]);
@@ -315,12 +317,16 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
 
     async function approve() {
         if (!draft) return;
-        if (!window.confirm(`Push ${draft.questions.length} questions to the live question bank? Students will start seeing them.`)) return;
+        if (!window.confirm(draft.lessonOnly
+            ? `Replace the lesson of "${draft.target.microTopic?.title ?? "this micro-topic"}" with this one? Its questions stay as they are.`
+            : `Push ${draft.questions.length} questions to the live question bank? Students will start seeing them.`)) return;
         setPhase("approving");
         setError("");
         let data: { questionIds: string[]; microTag: string | null; removed?: number };
         try {
-            data = await adminApi(`${base}/approve`, jsonInit("POST", { replaceLesson, replaceOld: olderQuestionCount > 0 && (replaceOldChoice ?? draft.level === "micro") }));
+            data = await adminApi(`${base}/approve`, jsonInit("POST", draft.lessonOnly
+                ? { replaceLesson: true, replaceOld: false }
+                : { replaceLesson, replaceOld: olderQuestionCount > 0 && (replaceOldChoice ?? draft.level === "micro") }));
         } catch (caught) {
             setError(errorText(caught));
             setPhase("idle");
@@ -490,6 +496,9 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                 onOpenChange={(open) => setEditorOpen("concept", open)}
             />
 
+            {draft.lessonOnly ? (
+                <section className="bg-white p-4 text-sm text-muted-foreground">Lesson only: this draft rewrites the lesson (explanation, real-life example, worked example and visual). The micro-topic&apos;s questions stay as they are.</section>
+            ) : (<>
             <section className="space-y-3 bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
@@ -551,6 +560,7 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                 ))}
                 {!visible.length ? <p className="bg-white p-4 text-sm text-muted-foreground">No questions to show.</p> : null}
             </div>
+            </>)}
 
             {!live ? (
                 <section className="sticky bottom-0 z-20 rounded-lg border-2 border-emerald-500 bg-white p-4 shadow-lg">
@@ -569,7 +579,10 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                                 {blocking.length ? <AlertTriangle className="h-4 w-4 text-amber-600" /> : <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
                                 {blocking.length ? `${blocking.length} problem(s) left to fix` : "No problems left"}
                             </p>
-                            {draft.level === "micro" && draft.target.microTopic?.microTag ? (
+                            {draft.lessonOnly ? (
+                                <p className="text-muted-foreground">Approving replaces the lesson of &ldquo;{draft.target.microTopic?.title}&rdquo; with this one. No question is added or removed.</p>
+                            ) : null}
+                            {draft.level === "micro" && draft.target.microTopic?.microTag && !draft.lessonOnly ? (
                                 <label className="flex items-center gap-2">
                                     <input type="checkbox" checked={replaceLesson} onChange={(event) => setReplaceLesson(event.target.checked)} />
                                     Also use this explanation as the lesson for &ldquo;{draft.target.microTopic.title}&rdquo; (replaces its current lesson text)
@@ -581,7 +594,7 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                             {draft.level === "sub" ? (
                                 <p className="text-muted-foreground">The chosen micro-topics will be grouped under the sub-topic &ldquo;{draft.target.subTopic}&rdquo;.</p>
                             ) : null}
-                            {olderQuestionCount > 0 ? (
+                            {olderQuestionCount > 0 && !draft.lessonOnly ? (
                                 <label className="flex items-center gap-2">
                                     <input type="checkbox" checked={replaceOldChoice ?? draft.level === "micro"} onChange={(event) => setReplaceOldChoice(event.target.checked)} />
                                     Replace the {olderQuestionCount} older practice question(s) of {draft.target.microTopics.length === 1 ? `“${draft.target.microTopics[0].title}”` : "these micro-topics"}, so students see only this new pool (diagnostic tests are never touched)
@@ -602,6 +615,66 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
 }
 
 const EMPTY_CONCEPT: DraftConcept = { title: "", example: { english: "", romanUrdu: "" }, explanation: { english: "", romanUrdu: "" } };
+const EMPTY_TEXT: LocalizedText = { english: "", romanUrdu: "" };
+
+/** The worked example as fields; an edited example is the admin's own and loses the automatic check. */
+function WorkedExampleEditor({ value, onChange }: { value: WorkedExample | null; onChange: (value: WorkedExample | null) => void }) {
+    if (!value) {
+        return <Button type="button" size="sm" variant="outline" onClick={() => onChange({ problem: EMPTY_TEXT, steps: [{ text: EMPTY_TEXT, why: EMPTY_TEXT }, { text: EMPTY_TEXT, why: EMPTY_TEXT }], finalAnswer: EMPTY_TEXT })}><Plus className="mr-1 h-4 w-4" />Add a worked example</Button>;
+    }
+    const change = (next: Partial<WorkedExample>) => onChange({ ...value, ...next, check: undefined });
+    const setStep = (index: number, step: WorkedExample["steps"][number]) => change({ steps: value.steps.map((item, position) => (position === index ? step : item)) });
+    return (
+        <div className="space-y-3 rounded-md border border-indigo-200 p-3">
+            <p className="text-sm font-semibold">Worked example</p>
+            <PairEditor label="Problem" value={value.problem} rows={2} onChange={(problem) => change({ problem })} />
+            {value.steps.map((step, index) => (
+                <div key={index} className="space-y-2 rounded-md bg-slate-50 p-2">
+                    <PairEditor label={`Step ${index + 1}`} value={step.text} rows={2} onChange={(text) => setStep(index, { ...step, text })} />
+                    <PairEditor label={`Why step ${index + 1}`} value={step.why} rows={2} onChange={(why) => setStep(index, { ...step, why })} />
+                    {value.steps.length > 2 ? <Button type="button" size="sm" variant="ghost" onClick={() => change({ steps: value.steps.filter((_, position) => position !== index) })}><Trash2 className="mr-1 h-4 w-4" />Remove step {index + 1}</Button> : null}
+                </div>
+            ))}
+            {value.steps.length < 6 ? <Button type="button" size="sm" variant="outline" onClick={() => change({ steps: [...value.steps, { text: EMPTY_TEXT, why: EMPTY_TEXT }] })}><Plus className="mr-1 h-4 w-4" />Add a step</Button> : null}
+            <PairEditor label="Final answer" value={value.finalAnswer} rows={1} onChange={(finalAnswer) => change({ finalAnswer })} />
+        </div>
+    );
+}
+
+/** The lesson picture: on or off, its caption, and its drawing data, checked as it is typed. */
+function VisualEditor({ value, onChange }: { value: LessonVisual | null; onChange: (value: LessonVisual | null) => void }) {
+    const [raw, setRaw] = useState(() => (value?.spec ? JSON.stringify(value.spec, null, 2) : ""));
+    const [problem, setProblem] = useState("");
+    const on = Boolean(value?.required);
+    function changeRaw(next: string) {
+        setRaw(next);
+        try {
+            const { type, ...data } = JSON.parse(next) as { type?: string };
+            const parsed = parseVisualSpec(String(type ?? ""), data);
+            if ("error" in parsed) { setProblem(parsed.error); return; }
+            setProblem("");
+            onChange({ required: true, caption: value?.caption ?? EMPTY_TEXT, spec: parsed.spec });
+        } catch {
+            setProblem("this is not valid JSON yet");
+        }
+    }
+    return (
+        <div className="space-y-2 rounded-md border p-3">
+            <label className="flex items-center gap-2 text-sm font-semibold">
+                <input type="checkbox" checked={on} onChange={(event) => onChange(event.target.checked ? { required: true, caption: value?.caption ?? EMPTY_TEXT, spec: value?.spec ?? null } : { required: false, caption: EMPTY_TEXT, spec: null })} />
+                Show a visual with this lesson
+            </label>
+            {on ? (
+                <>
+                    <PairEditor label="Caption" value={value?.caption ?? EMPTY_TEXT} rows={1} onChange={(caption) => onChange({ required: true, caption, spec: value?.spec ?? null })} />
+                    <TextArea label="Drawing data (JSON, with its type)" value={raw} rows={6} onChange={changeRaw} />
+                    {problem ? <p className="text-xs text-red-700">Not used until fixed: {problem}.</p> : null}
+                    <LessonVisualView visual={value} language="english" />
+                </>
+            ) : <p className="text-xs text-muted-foreground">No picture: the lesson shows text only.</p>}
+        </div>
+    );
+}
 
 function ConceptCard({ concept, level, issues, readOnly, onSave, onOpenChange }: {
     concept: DraftConcept | null;
@@ -649,6 +722,8 @@ function ConceptCard({ concept, level, issues, readOnly, onSave, onOpenChange }:
                         <>
                             <PairEditor label="Explanation" value={form.explanation} rows={5} onChange={(explanation) => setForm({ ...form, explanation })} />
                             <PairEditor label="Real-life local example" value={form.example} rows={3} onChange={(example) => setForm({ ...form, example })} />
+                            <WorkedExampleEditor value={form.workedExample ?? null} onChange={(workedExample) => setForm({ ...form, workedExample })} />
+                            <VisualEditor value={form.visual ?? null} onChange={(visual) => setForm({ ...form, visual })} />
                         </>
                     ) : null}
                     <div className="flex gap-2">
@@ -663,6 +738,27 @@ function ConceptCard({ concept, level, issues, readOnly, onSave, onOpenChange }:
                         <>
                             <PairView label="Explanation" text={concept.explanation} />
                             <PairView label="Local example" text={concept.example} />
+                            {concept.workedExample ? (
+                                <div className="space-y-2">
+                                    <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                        Worked example
+                                        {concept.workedExample.check?.status === "agrees" ? <Badge className="bg-emerald-600">AI check agrees</Badge> : concept.workedExample.check?.status === "error" ? <Badge className="bg-amber-500">Not checked</Badge> : <Badge variant="outline">Edited by you</Badge>}
+                                    </p>
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                        <WorkedExampleCard example={concept.workedExample} language="english" />
+                                        <WorkedExampleCard example={concept.workedExample} language="roman-urdu" />
+                                    </div>
+                                </div>
+                            ) : null}
+                            {concept.visual ? (concept.visual.required ? (
+                                <div className="space-y-2">
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Visual · {concept.visual.spec?.type.replace(/_/g, " ")}</p>
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                        <LessonVisualView visual={concept.visual} language="english" />
+                                        <LessonVisualView visual={concept.visual} language="roman-urdu" />
+                                    </div>
+                                </div>
+                            ) : <p className="text-sm text-muted-foreground">Visual: none. The AI decided a picture would not help this micro-topic.</p>) : null}
                         </>
                     ) : null}
                     {concept.scope ? (

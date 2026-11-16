@@ -680,6 +680,8 @@ export async function updateTeacherInSchool(schoolId: string, uid: string, updat
     const { ref, data } = await memberInSchool("teachers", schoolId, uid);
     const patch: DocumentData = { updatedAt: FieldValue.serverTimestamp() };
     if (update.name !== undefined) { patch.name = update.name; await adminAuth.updateUser(uid, { displayName: update.name }).catch(() => undefined); }
+    // A teacher needs at least one way to sign in: a number, or an email.
+    if (update.email === null && !(update.phone ?? data.phone)) throw new SchoolError(400, "Keep a mobile number or an email, so the teacher can still sign in");
     if (update.phone !== undefined && update.phone !== data.phone) { await changePhone(uid, update.phone); patch.phone = update.phone; }
     if (update.email !== undefined && update.email !== (data.email || null)) { await syncAuthEmail(uid, update.email); patch.email = update.email ?? ""; }
     if (update.classes !== undefined || update.sectionIds !== undefined) {

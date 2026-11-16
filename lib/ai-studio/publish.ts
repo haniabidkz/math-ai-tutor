@@ -75,6 +75,9 @@ export function newConceptFromDraft(
         title: same(target.microTopic.title),
         concept: concept.explanation,
         example: concept.example,
+        // Lesson content lives on the lesson, apart from its practice questions.
+        ...(concept.workedExample ? { workedExample: concept.workedExample } : {}),
+        ...(concept.visual ? { visual: concept.visual } : {}),
         ...(target.subTopic ? { subTopic: same(target.subTopic) } : {}),
         family,
         visualKind: chapter?.visualKind ?? visualForFamily(family),

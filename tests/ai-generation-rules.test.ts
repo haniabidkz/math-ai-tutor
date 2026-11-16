@@ -8,6 +8,19 @@ import { blockingIssues, brevityIssues, validateDraft } from "@/lib/ai-studio/va
 import { MICRO_CONCEPTS } from "@/lib/curriculum";
 import { draftQuestion, reviewDraft } from "./fixtures/ai-draft";
 
+/** A worked example and a visual decision, which every micro-topic lesson reply now carries. */
+const LESSON_PARTS = {
+    worked_example: {
+        problem: { english: "Write the set of vowels.", roman_urdu: "Vowels ka set likhein." },
+        steps: [
+            { english: "List the vowels a, e, i, o, u.", roman_urdu: "Vowels a, e, i, o, u likhein.", why_english: "A set lists its members.", why_roman_urdu: "Set apne members likhta hai." },
+            { english: "Put them in curly brackets.", roman_urdu: "Inhein curly brackets mein rakhein.", why_english: "Curly brackets show a set.", why_roman_urdu: "Curly brackets set dikhate hain." },
+        ],
+        final_answer: { english: "V = {a, e, i, o, u}", roman_urdu: "V = {a, e, i, o, u}" },
+    },
+    visual: { visual_required: false, type: "none", caption_english: "", caption_roman_urdu: "", spec_json: "" },
+};
+
 const chapter = { topicId: "class6-integers", title: "" };
 const targetFor = (input: Parameters<typeof buildTarget>[0]) => {
     const built = buildTarget(input, MICRO_CONCEPTS);
@@ -106,7 +119,7 @@ describe("1. strict topic scope", () => {
         expect(conceptPrompt({ level: "sub", target: sub }).user).toContain("from OUTSIDE this sub-topic");
         // A chapter of seven micro-topics keeps a covered skill for each of them.
         const covers = Array.from({ length: 8 }, (_, index) => `skill ${index + 1}`);
-        const read = normalizeConcept({ title: "T", english: "E", roman_urdu: "R", real_life_example: { english: "x", roman_urdu: "y" }, covers, excludes: ["a", "b"] });
+        const read = normalizeConcept({ title: "T", english: "E", roman_urdu: "R", real_life_example: { english: "x", roman_urdu: "y" }, covers, excludes: ["a", "b"] , ...LESSON_PARTS });
         expect(read.concept?.scope?.covers).toHaveLength(8);
     });
 

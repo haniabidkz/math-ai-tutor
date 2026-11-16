@@ -38,8 +38,47 @@ export interface MicroConcept {
     subTopicOrder?: number;
     /** How the lesson's place in the textbook order was decided, and whether it still needs confirming. */
     sequence?: { source: "ai" | "manual" | "unknown"; textbook?: string; note?: string; updatedAt?: unknown };
+    /** The AI Studio's picture for the lesson, or its decision that a picture would not help. */
+    visual?: LessonVisual | null;
+    /** One solved example, step by step, with the reason for each step. */
+    workedExample?: WorkedExample | null;
     foundationOnly?: boolean;
     status: ContentStatus;
+}
+
+/** The simple drawings a lesson can show; each is drawn by the app from a few numbers or words. */
+export type LessonVisualSpec =
+    | { type: "number_line"; min: number; max: number; step: number; points: Array<{ value: number; label?: string }>; jumps: Array<{ from: number; to: number; label?: string }> }
+    | { type: "fraction_model"; shape: "bar" | "circle"; numerator: number; denominator: number }
+    | { type: "area_model"; rows: number; cols: number; shaded: number; rowLabel?: string; colLabel?: string }
+    | { type: "balance_scale"; left: string[]; right: string[]; balanced: boolean }
+    | { type: "venn_diagram"; universal: { label: string; elements: string[] } | null; sets: Array<{ label: string; elements: string[] }> }
+    | { type: "set_roster"; name: string; elements: string[] }
+    | { type: "geometry_shape"; shape: "triangle" | "right_triangle" | "rectangle" | "square" | "circle" | "parallelogram"; sideLabels: string[]; angleLabels: string[] }
+    | { type: "bar_model"; bars: Array<{ label: string; value: number }>; unit: string };
+
+export type LessonVisualType = LessonVisualSpec["type"];
+
+/** A picture only when it really helps: `required: false` records that the AI decided against one. */
+export interface LessonVisual {
+    required: boolean;
+    caption: LocalizedText;
+    spec: LessonVisualSpec | null;
+}
+
+export interface WorkedExampleStep {
+    /** What is done in this step. */
+    text: LocalizedText;
+    /** Why this step is done. */
+    why: LocalizedText;
+}
+
+export interface WorkedExample {
+    problem: LocalizedText;
+    steps: WorkedExampleStep[];
+    finalAnswer: LocalizedText;
+    /** An independent solve of the problem by a second model, when the lesson was generated. */
+    check?: { status: "agrees" | "error"; note?: string };
 }
 
 export interface LocalizedOption {

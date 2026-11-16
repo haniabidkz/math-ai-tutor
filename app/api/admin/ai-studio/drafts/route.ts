@@ -74,8 +74,13 @@ export async function POST(request: NextRequest) {
         const built = buildTarget(input, concepts);
         if ("error" in built) throw new StudioError(400, built.error);
 
-        const quota = quotaFor(input.level, effectiveConfig(configDoc.data() as Partial<AssessmentConfig> | undefined));
-        const key = targetKey(input.level, built.target);
+        // A lesson-only draft rewrites an existing micro-topic's lesson and writes no questions.
+        const lessonOnly = input.lessonOnly === true;
+        if (lessonOnly && !(input.level === "micro" && built.target.microTopic?.microTag)) {
+            throw new StudioError(400, "Only an existing micro-topic's lesson can be rewritten on its own.");
+        }
+        const quota = lessonOnly ? { easy: 0, medium: 0, hard: 0 } : quotaFor(input.level, effectiveConfig(configDoc.data() as Partial<AssessmentConfig> | undefined));
+        const key = `${targetKey(input.level, built.target)}${lessonOnly ? ":lesson" : ""}`;
 
         // A new request replaces any unfinished draft of the same request, so the Studio holds
         // only the content being generated now. Approved drafts stay as history.
@@ -93,6 +98,7 @@ export async function POST(request: NextRequest) {
             curriculum: CURRICULUM_NAME,
             target: built.target,
             targetKey: key,
+            ...(lessonOnly ? { lessonOnly: true } : {}),
             quota,
             concept: null,
             questions: [],
@@ -106,7 +112,7 @@ export async function POST(request: NextRequest) {
         await batch.commit();
         const name = built.target.microTopic?.title ?? built.target.subTopic ?? built.target.chapter.title;
         const cleared = replaced.length ? `; replaced ${replaced.length} unfinished draft(s) of it` : "";
-        await writeAuditLog({ actorUid: admin.uid, actorEmail: admin.email, action: "aiStudio.draft.create", targetType: "generationDraft", targetId: ref.id, summary: `Started ${input.level}-topic pool for ${name} (${quotaTotal(quota)} questions)${cleared}` });
+        await writeAuditLog({ actorUid: admin.uid, actorEmail: admin.email, action: "aiStudio.draft.create", targetType: "generationDraft", targetId: ref.id, summary: lessonOnly ? `Started a lesson rewrite for ${name} (no questions)${cleared}` : `Started ${input.level}-topic pool for ${name} (${quotaTotal(quota)} questions)${cleared}` });
         return NextResponse.json({ success: true, id: ref.id, replacedDrafts: replaced.length }, { status: 201 });
     } catch (error) {
         return studioErrorResponse(error, "The draft could not be created");

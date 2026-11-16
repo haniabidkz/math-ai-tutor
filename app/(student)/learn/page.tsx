@@ -9,6 +9,7 @@ import { BilingualText } from "@/components/bilingual-text";
 import { ConceptBrowser, type BrowsableTopic } from "@/components/concept-browser";
 import { ConceptGraphic } from "@/components/concept-graphic";
 import { InsightBlock } from "@/components/insight-block";
+import { LessonVisualView, WorkedExampleCard } from "@/components/lesson-visual";
 import { LessonPractice } from "@/components/student/lesson-practice";
 import { LanguagePrompt } from "@/components/student/language-prompt";
 import { PiSays, type PiMood } from "@/components/student/pi-mascot";
@@ -19,7 +20,7 @@ import { auth } from "@/lib/firebase";
 import { XP_FIRST_ATTEMPT_CORRECT } from "@/lib/gamification";
 import { commonMistake, keyIdea, LESSON_STEPS, splitLesson, type LessonPracticeItem } from "@/lib/lesson-steps";
 import { cn } from "@/lib/utils";
-import type { LocalizedText } from "@/types/curriculum";
+import type { LessonVisual, LocalizedText, WorkedExample } from "@/types/curriculum";
 
 interface LessonConcept {
     microTag: string;
@@ -31,6 +32,8 @@ interface LessonConcept {
     example?: LocalizedText | null;
     subTopic?: LocalizedText | null;
     prerequisiteTitle?: string | null;
+    visual?: LessonVisual | null;
+    workedExample?: WorkedExample | null;
 }
 
 const read = (lang: AidLanguage | null, text: { english: string; romanUrdu: string }) => (lang === "roman-urdu" && text.romanUrdu ? text.romanUrdu : text.english);
@@ -298,6 +301,8 @@ function LearnContent() {
                                                 <h2 className="mt-3 font-display text-3xl font-semibold">{concept.title}</h2>
                                                 <p className="mt-4 text-lg leading-8 text-slate-800" lang={language === "roman-urdu" ? "ur-Latn" : undefined}>{parts.definition}</p>
                                                 {concept.prerequisiteTitle ? <p className="mt-2 text-sm text-slate-500">{`It helps to understand "${concept.prerequisiteTitle}" first.`}</p> : null}
+                                                <LessonVisualView visual={concept.visual} language={language} className="mt-5" />
+                                                <WorkedExampleCard example={concept.workedExample} language={language} className="mt-5" />
                                                 {examples.length ? (
                                                     <div className="mt-5 space-y-3">
                                                         {examples.map((example, index) => (

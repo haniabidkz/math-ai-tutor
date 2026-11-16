@@ -5,6 +5,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { findForeignContext } from "@/lib/ai-studio/context-check";
 import { AiError, completeJson } from "@/lib/ai-studio/ai";
 import { batchFocus, conceptPrompt, questionPrompt } from "@/lib/ai-studio/prompts";
+import { checkWorkedExample } from "@/lib/ai-studio/worked-check";
 import { findNearCopy, questionSignature } from "@/lib/ai-studio/similarity";
 import { conceptSchemaFor, normalizeConcept, normalizeQuestionBatch, questionBatchSchema } from "@/lib/ai-studio/schema";
 import {
@@ -49,11 +50,27 @@ async function runStep(draft: GenerationDraft, step: GenerationStep) {
         const prompt = conceptPrompt(draft, step.feedback);
         const reply = await completeJson<unknown>({ role: "generation", ...prompt, schemaName: help ? "concept_explanation" : "pool_boundary", schema: conceptSchemaFor(draft.level), temperature: 0.6, maxOutputTokens: 16_000, timeoutMs: PER_MODEL_MS });
         const { concept, problems } = normalizeConcept(reply.data, help);
-        const foreign = concept && help ? findForeignContext(concept.explanation.english, concept.example.english) : [];
+        const foreign = concept && help ? findForeignContext(concept.explanation.english, concept.example.english, concept.workedExample?.problem.english ?? "") : [];
         if (foreign.length) problems.push(`the explanation uses a foreign setting (${foreign.join(", ")}); use Pakistani daily life, Rupees and kilometres`);
-        if (concept && help) problems.push(...romanUrduProblems("the explanation", concept.explanation.romanUrdu), ...romanUrduProblems("the real-life example", concept.example.romanUrdu));
+        if (concept && help) {
+            problems.push(...romanUrduProblems("the explanation", concept.explanation.romanUrdu), ...romanUrduProblems("the real-life example", concept.example.romanUrdu));
+            for (const step of concept.workedExample?.steps ?? []) problems.push(...romanUrduProblems("the worked example", step.text.romanUrdu));
+        }
+        let usage = reply.usage;
+        // A second model solves the worked example; a wrong one is written again with the reason.
+        if (concept?.workedExample && help && !problems.length) {
+            try {
+                const check = await checkWorkedExample(concept.workedExample);
+                usage = { inputTokens: usage.inputTokens + check.usage.inputTokens, outputTokens: usage.outputTokens + check.usage.outputTokens };
+                if (check.matches) concept.workedExample = { ...concept.workedExample, check: { status: "agrees" } };
+                else problems.push(`the worked example is wrong: an independent solve got "${check.answer.slice(0, 120)}"${check.note ? ` (${check.note.slice(0, 200)})` : ""}; work every step and the final answer out again`);
+            } catch (error) {
+                console.error("The worked example could not be checked", error);
+                concept.workedExample = { ...concept.workedExample, check: { status: "error", note: "The automatic check could not run." } };
+            }
+        }
         const outcome: Outcome = concept && !problems.length ? { ok: true, concept } : { ok: false, problems, error: "The explanation was incomplete" };
-        return { outcome, usage: reply.usage };
+        return { outcome, usage };
     }
 
     const difficulty = step.difficulty!;

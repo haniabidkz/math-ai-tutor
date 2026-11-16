@@ -31,10 +31,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     try {
         const admin = await requireSuperAdmin(request);
         const { id } = await context.params;
-        const { replaceLesson = false, replaceOld = false } = approveSchema.parse(await request.json().catch(() => ({})));
+        const { replaceLesson: askedReplace = false, replaceOld: askedReplaceOld = false } = approveSchema.parse(await request.json().catch(() => ({})));
         const ref = draftsCollection().doc(id);
 
         const preview = await loadDraft(id);
+        // A lesson-only draft rewrites the lesson and never touches the questions.
+        const replaceOld = askedReplaceOld && preview.lessonOnly !== true;
         const tags = preview.target.microTopics.map((topic) => topic.microTag);
         const [liveTexts, concepts, older] = await Promise.all([
             liveQuestionTexts(tags),
@@ -56,6 +58,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             if (issues.length) throw new StudioError(422, `${issues.length} problem(s) must be fixed before approval.`, issues);
 
             const { target } = draft;
+            const replaceLesson = askedReplace || draft.lessonOnly === true;
             const creating = draft.level === "micro" && !target.microTopic?.microTag;
             if (creating && !placement) throw new StudioError(409, "The draft changed while it was being approved. Approve again.");
             const placed = creating ? placeLesson(newConceptFromDraft(draft, concepts), concepts, placement!) : null;
@@ -85,7 +88,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
                     // Bundled concepts not yet copied to Firestore are written in full, never as a fragment.
                     const base: Partial<MicroConcept> = snapshot.exists ? {} : { ...conceptByTag.get(snapshot.id) };
                     const change: Partial<MicroConcept> = {
-                        ...(draft.level === "micro" && replaceLesson ? { concept: draft.concept!.explanation, example: draft.concept!.example } : {}),
+                        ...(draft.level === "micro" && replaceLesson ? {
+                            concept: draft.concept!.explanation,
+                            example: draft.concept!.example,
+                            ...(draft.concept!.workedExample !== undefined ? { workedExample: draft.concept!.workedExample } : {}),
+                            ...(draft.concept!.visual !== undefined ? { visual: draft.concept!.visual } : {}),
+                        } : {}),
                         ...(target.subTopic ? { subTopic: same(target.subTopic) } : {}),
                     };
                     transaction.set(snapshot.ref, { ...base, ...change, ...stamp }, { merge: true });

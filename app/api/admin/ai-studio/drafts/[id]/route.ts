@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { parseVisualSpec } from "@/lib/lesson-visual";
+import type { LessonVisual } from "@/types/curriculum";
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
@@ -72,7 +74,20 @@ export async function PATCH(request: NextRequest, context: Context) {
                 case "concept": {
                     // Editing the explanation keeps the scope boundary the questions were written to.
                     const scope = edit.concept.scope ?? draft.concept?.scope;
-                    changes = { concept: { ...edit.concept, ...(scope ? { scope } : {}) } };
+                    const workedExample = edit.concept.workedExample === undefined ? draft.concept?.workedExample : edit.concept.workedExample;
+                    let visual: LessonVisual | null | undefined = draft.concept?.visual;
+                    if (edit.concept.visual !== undefined) {
+                        const sent = edit.concept.visual;
+                        if (sent?.required) {
+                            const { type, ...data } = (sent.spec ?? {}) as { type?: string };
+                            const parsed = parseVisualSpec(String(type ?? ""), data);
+                            if ("error" in parsed) throw new StudioError(400, `The visual cannot be saved: ${parsed.error}.`);
+                            visual = { required: true, caption: sent.caption, spec: parsed.spec };
+                        } else {
+                            visual = sent ? { required: false, caption: sent.caption, spec: null } : null;
+                        }
+                    }
+                    changes = { concept: { ...edit.concept, ...(scope ? { scope } : {}), workedExample, visual } };
                     break;
                 }
                 case "question": {

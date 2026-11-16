@@ -1,3 +1,4 @@
+import { VISUAL_GUIDE } from "@/lib/lesson-visual";
 import { MISCONCEPTIONS, MISCONCEPTION_TAGS } from "@/lib/mistake-analysis";
 import {
     CURRICULUM_NAME, NEW_MICRO_TAG, REWRITE_REASONS, withHelp,
@@ -179,9 +180,19 @@ ${focus}${siblings}
 ${withHelp(draft.level)
     ? `Write the concept explanation for this ${LEVEL_WORDS[draft.level]}, and fix its boundary so that every practice question stays inside it:
 - title: a short title.
-- english: a very simple explanation in 3 to 5 short sentences, with one tiny worked example.
+- english: a very simple explanation in 3 to 5 short sentences. The full solved example goes in worked_example below.
 - roman_urdu: the same explanation in warm, conversational Roman Urdu.
-- real_life_example: one short, relatable local word problem from Pakistani daily life, in English and in Roman Urdu.`
+- real_life_example: one short, relatable local word problem from Pakistani daily life, in English and in Roman Urdu.
+- worked_example: one solved example on exactly this micro-topic, different from the real-life example:
+  problem: the question, in English and Roman Urdu;
+  steps: 2 to 5 short steps, each with what is done (english, roman_urdu) and why that step is done (why_english, why_roman_urdu), one short sentence each;
+  final_answer: the answer stated plainly, in English and Roman Urdu.
+  Work it out carefully and check it again: every step and the final answer must be exactly right.
+- visual: decide whether one simple picture would really help a student understand THIS micro-topic.
+  If it would not, set visual_required to false, type to "none", and the captions and spec_json to "".
+  If it would, set visual_required to true, choose the one type that fits, write a one-line caption in English and Roman Urdu, and put the drawing's data in spec_json as JSON, exactly in this form:
+${VISUAL_GUIDE}
+  The picture must show this micro-topic's own idea, with the same numbers or elements as the explanation or the worked example. Never a decorative, generic or unrelated picture. Keep it small and simple.`
     : `Students never see a lesson, hint or solution for this ${LEVEL_WORDS[draft.level]}: its questions only mark right or wrong. Write no explanation. Fix only its boundary so that every practice question stays inside it:
 - title: a short title.`}
 ${boundaryAsk}${rejected}`,

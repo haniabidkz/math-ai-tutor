@@ -73,6 +73,8 @@ export function AiStudio({ concepts, config, onPublished }: {
     const [subTopic, setSubTopic] = useState("");
     const [microTag, setMicroTag] = useState("");
     const [newMicro, setNewMicro] = useState("");
+    /** For an existing micro-topic: write a new lesson (explanation, worked example, visual) and no questions. */
+    const [lessonOnly, setLessonOnly] = useState(false);
     const [microTags, setMicroTags] = useState<string[]>([]);
     const subTopicListId = useId();
 
@@ -123,6 +125,7 @@ export function AiStudio({ concepts, config, onPublished }: {
     };
     const built = chapterId ? buildTarget(input, liveConcepts) : { error: "Choose the main topic." };
     const formError = level === "micro" && !microTag && chapterId ? "Choose a micro-topic or add a new one." : "error" in built ? built.error : "";
+    const lessonOnlyOn = lessonOnly && level === "micro" && Boolean(microTag) && microTag !== NEW;
 
     function chooseLevel(value: GenerationLevel) {
         setLevel(value);
@@ -148,13 +151,13 @@ export function AiStudio({ concepts, config, onPublished }: {
 
     async function create() {
         // Only the content of this request is kept: an unfinished draft of the same request is replaced.
-        const key = "target" in built ? targetKey(level, built.target) : null;
+        const key = "target" in built ? `${targetKey(level, built.target)}${lessonOnlyOn ? ":lesson" : ""}` : null;
         const earlier = drafts.filter((draft) => isUnfinished(draft) && draft.targetKey === key);
         if (earlier.length && !window.confirm(`You already have ${earlier.length === 1 ? "an unfinished draft" : `${earlier.length} unfinished drafts`} for this topic. Starting again discards ${earlier.length === 1 ? "it" : "them"}, so only the new content is kept. Continue?`)) return;
         setCreating(true);
         setError("");
         try {
-            const data = await adminApi<{ id: string }>("/api/admin/ai-studio/drafts", jsonInit("POST", input));
+            const data = await adminApi<{ id: string }>("/api/admin/ai-studio/drafts", jsonInit("POST", lessonOnlyOn ? { ...input, lessonOnly: true } : input));
             setOpen({ id: data.id, autoRun: true });
         } catch (caught) {
             setError(caught instanceof Error ? caught.message : "The draft could not be created");
@@ -277,6 +280,12 @@ export function AiStudio({ concepts, config, onPublished }: {
                             options={[["", "Choose a micro-topic"], ...inChapter.map((concept) => [concept.microTag, concept.title.english]), [NEW, "+ New micro-topic"]]}
                             onChange={setMicroTag} />
                         {microTag === NEW ? <TextInput label="New micro-topic name" value={newMicro} placeholder="e.g. Finding LCM of Denominators" onChange={setNewMicro} /> : null}
+                        {microTag && microTag !== NEW ? (
+                            <label className="flex items-center gap-2 text-sm md:col-span-2">
+                                <input type="checkbox" checked={lessonOnly} onChange={(event) => setLessonOnly(event.target.checked)} />
+                                Only rewrite the lesson (explanation, worked example and a visual if it helps); keep the current questions
+                            </label>
+                        ) : null}
                     </div>
                 ) : null}
 
@@ -301,7 +310,9 @@ export function AiStudio({ concepts, config, onPublished }: {
 
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-slate-50 p-3 text-sm">
                     <p>
-                        <strong>{quotaTotal(quota)} questions</strong>: {quota.easy} easy, {quota.medium} medium, {quota.hard} hard, plus the concept explanation. Every answer is solved a second time by AI, then you review and approve.
+                        {lessonOnlyOn
+                            ? <><strong>Only the lesson</strong>: explanation, real-life example, a worked example solved a second time by AI, and a visual when it helps. No questions are written or changed. You review and approve.</>
+                            : <><strong>{quotaTotal(quota)} questions</strong>: {quota.easy} easy, {quota.medium} medium, {quota.hard} hard, plus the lesson (explanation, worked example and a visual when it helps). Every answer is solved a second time by AI, then you review and approve.</>}
                     </p>
                     <Button onClick={create} disabled={!ready || creating || Boolean(formError)}>
                         {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}Generate with AI

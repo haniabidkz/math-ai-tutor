@@ -138,6 +138,8 @@ export async function POST(request: NextRequest) {
                 example: concept.example ?? null,
                 subTopic: concept.subTopic ?? null,
                 family: concept.family,
+                visual: concept.visual ?? null,
+                workedExample: concept.workedExample ?? null,
                 prerequisiteTitle: prerequisite?.title.english ?? null,
             },
             practice: keptPractice.length ? keptPractice : pickPractice(questions),

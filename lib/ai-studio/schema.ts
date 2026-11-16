@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { MISCONCEPTION_TAGS } from "@/lib/mistake-analysis";
 import { OPTION_LETTERS, withHelp, type DraftConcept, type DraftQuestion, type GenerationLevel, type OptionLetter } from "@/lib/ai-studio/types";
 import { stripOptionLabel } from "@/lib/ai-studio/validate";
+import { normalizeVisual, normalizeWorkedExample, visualSchema, workedExampleSchema } from "@/lib/lesson-visual";
 import { cleanMathText, findQuestionArtifacts } from "@/lib/text-clean";
 import type { Difficulty, MisconceptionTag } from "@/types/curriculum";
 
@@ -20,12 +21,15 @@ const bilingual = {
 export const conceptSchema = {
     type: "object",
     additionalProperties: false,
-    required: ["title", "real_life_example", "english", "roman_urdu", "covers", "excludes"],
+    required: ["title", "real_life_example", "english", "roman_urdu", "worked_example", "visual", "covers", "excludes"],
     properties: {
         title: { type: "string" },
         real_life_example: bilingual,
         english: { type: "string" },
         roman_urdu: { type: "string" },
+        // One solved example with the reason for each step, and a simple picture only when it helps.
+        worked_example: workedExampleSchema,
+        visual: visualSchema,
         // The scope boundary: every question must test one covered skill and none of the excluded ideas.
         covers: { type: "array", items: { type: "string" } },
         excludes: { type: "array", items: { type: "string" } },
@@ -146,7 +150,7 @@ function list(value: unknown, limit: number): string[] {
 }
 
 export function normalizeConcept(raw: unknown, help = true): { concept: DraftConcept | null; problems: string[] } {
-    const data = (raw ?? {}) as { title?: unknown; real_life_example?: RawBilingual; english?: unknown; roman_urdu?: unknown; covers?: unknown; excludes?: unknown };
+    const data = (raw ?? {}) as { title?: unknown; real_life_example?: RawBilingual; english?: unknown; roman_urdu?: unknown; covers?: unknown; excludes?: unknown; worked_example?: unknown; visual?: unknown };
     const concept: DraftConcept = {
         title: text(data.title),
         example: pair(data.real_life_example),
@@ -159,6 +163,14 @@ export function normalizeConcept(raw: unknown, help = true): { concept: DraftCon
     if (help && (!concept.example.english || !concept.example.romanUrdu)) problems.push("the real-life example must be in both English and Roman Urdu");
     if (concept.scope!.covers.length < 2) problems.push("covers must list 2 to 6 specific skills this topic includes");
     if (concept.scope!.excludes.length < 2) problems.push("excludes must list 2 to 6 neighbouring ideas that belong to other lessons");
+    // A micro-topic lesson also has a worked example and a visual decision; the other pools have no lesson.
+    if (help) {
+        const worked = normalizeWorkedExample(data.worked_example);
+        const visual = normalizeVisual(data.visual);
+        problems.push(...worked.problems, ...visual.problems);
+        concept.workedExample = worked.workedExample;
+        concept.visual = visual.visual;
+    }
     return { concept: problems.length ? null : concept, problems };
 }
 

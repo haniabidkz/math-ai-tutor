@@ -4,6 +4,7 @@ import { isNearCopy, questionSignature, wordCount } from "@/lib/ai-studio/simila
 import { OPTION_LETTERS, withHelp, type DraftQuestion, type GenerationDraft, type GenerationLevel } from "@/lib/ai-studio/types";
 import { questionRomanUrduIssues, romanUrduIssues } from "@/lib/ai-studio/urdu-check";
 import { findQuestionArtifacts } from "@/lib/text-clean";
+import { visualProblems, workedExampleProblems } from "@/lib/lesson-visual";
 import { MISCONCEPTIONS } from "@/lib/mistake-analysis";
 
 export interface DraftIssue {
@@ -141,6 +142,22 @@ export function validateDraft(draft: Pick<GenerationDraft, "quota" | "concept" |
             for (const message of [...romanUrduIssues("The explanation", concept.explanation), ...romanUrduIssues("The real-life example", concept.example)]) {
                 issues.push({ severity: "warning", where: "concept", message });
             }
+            const sentence = (message: string) => `${message[0].toUpperCase()}${message.slice(1)}.`;
+            // Drafts written before worked examples existed can still be approved; new ones need a complete one.
+            if (concept.workedExample === undefined) {
+                issues.push({ severity: "warning", where: "concept", message: "This draft was written before worked examples were added, so it has none." });
+            } else {
+                for (const message of workedExampleProblems(concept.workedExample)) issues.push({ severity: "error", where: "concept", message: sentence(message) });
+                if (concept.workedExample) {
+                    const foreignExample = findForeignContext(concept.workedExample.problem.english);
+                    if (foreignExample.length) issues.push({ severity: "error", where: "concept", message: `The worked example uses a foreign setting (${foreignExample.join(", ")}). Rewrite it with a local example.` });
+                    if (concept.workedExample.check?.status === "error") issues.push({ severity: "warning", where: "concept", message: "The worked example's answer could not be checked automatically. Check it yourself." });
+                    for (const message of [...romanUrduIssues("The worked example", concept.workedExample.problem), ...romanUrduIssues("The worked example's answer", concept.workedExample.finalAnswer)]) {
+                        issues.push({ severity: "warning", where: "concept", message });
+                    }
+                }
+            }
+            for (const message of visualProblems(concept.visual)) issues.push({ severity: "error", where: "concept", message: sentence(message) });
         }
     }
 

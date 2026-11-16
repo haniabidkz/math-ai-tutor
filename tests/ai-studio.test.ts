@@ -9,6 +9,19 @@ import { blockingIssues, validateDraft } from "@/lib/ai-studio/validate";
 import { MICRO_CONCEPTS } from "@/lib/curriculum";
 import { draftQuestion as question, reviewDraft as draft } from "./fixtures/ai-draft";
 
+/** A worked example and a visual decision, which every micro-topic lesson reply now carries. */
+const LESSON_PARTS = {
+    worked_example: {
+        problem: { english: "Write the set of vowels.", roman_urdu: "Vowels ka set likhein." },
+        steps: [
+            { english: "List the vowels a, e, i, o, u.", roman_urdu: "Vowels a, e, i, o, u likhein.", why_english: "A set lists its members.", why_roman_urdu: "Set apne members likhta hai." },
+            { english: "Put them in curly brackets.", roman_urdu: "Inhein curly brackets mein rakhein.", why_english: "Curly brackets show a set.", why_roman_urdu: "Curly brackets set dikhate hain." },
+        ],
+        final_answer: { english: "V = {a, e, i, o, u}", roman_urdu: "V = {a, e, i, o, u}" },
+    },
+    visual: { visual_required: false, type: "none", caption_english: "", caption_roman_urdu: "", spec_json: "" },
+};
+
 describe("question counts per level", () => {
     it("uses the exact counts from the specification", () => {
         expect(DEFAULT_QUOTAS.micro).toEqual({ easy: 10, medium: 10, hard: 10 });
@@ -172,7 +185,7 @@ describe("reading the model's reply", () => {
 
     it("reads a concept explanation with its scope boundary", () => {
         const scope = { covers: ["meaning of a set", " well-defined collections ", "Meaning of a set"], excludes: ["subsets", "union of sets"] };
-        const read = normalizeConcept({ title: "T", english: "E", roman_urdu: "R", real_life_example: { english: "x", roman_urdu: "y" }, ...scope });
+        const read = normalizeConcept({ title: "T", english: "E", roman_urdu: "R", real_life_example: { english: "x", roman_urdu: "y" }, ...scope , ...LESSON_PARTS });
         expect(read.problems).toEqual([]);
         // Trimmed, and repeats (in any letter case) dropped.
         expect(read.concept?.scope).toEqual({ covers: ["meaning of a set", "well-defined collections"], excludes: ["subsets", "union of sets"] });
@@ -180,7 +193,7 @@ describe("reading the model's reply", () => {
     });
 
     it("rejects an explanation without a boundary", () => {
-        const noBoundary = normalizeConcept({ title: "T", english: "E", roman_urdu: "R", real_life_example: { english: "x", roman_urdu: "y" }, covers: ["one"], excludes: [] });
+        const noBoundary = normalizeConcept({ title: "T", english: "E", roman_urdu: "R", real_life_example: { english: "x", roman_urdu: "y" }, covers: ["one"], excludes: [] , ...LESSON_PARTS });
         expect(noBoundary.concept).toBeNull();
         expect(noBoundary.problems).toEqual([
             "covers must list 2 to 6 specific skills this topic includes",
