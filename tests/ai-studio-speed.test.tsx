@@ -116,6 +116,9 @@ describe("the review page writes several batches at once and checks answers alon
         let mostAtOnce = 0;
         let mostHardAtOnce = 0;
         const activeHard = new Set<string>();
+        const checkedKeys: string[] = [];
+        let checksActive = 0;
+        let mostChecksAtOnce = 0;
         api.mockImplementation(async (path: string, init?: RequestInit) => {
             const method = init?.method ?? "GET";
             if (path === base && method === "GET") return { draft: state, liveTexts: [] };
@@ -146,13 +149,19 @@ describe("the review page writes several batches at once and checks answers alon
             }
             if (path === `${base}/verify`) {
                 events.push("verify");
-                const batch = state.questions.filter((question) => question.verification.status === "pending").slice(0, 5).map((question) => question.key);
+                const { keys } = JSON.parse(String(init?.body ?? "{}")) as { keys?: string[] };
+                for (const key of keys ?? []) checkedKeys.push(key);
+                checksActive += 1;
+                mostChecksAtOnce = Math.max(mostChecksAtOnce, checksActive);
+                await new Promise((resolve) => setTimeout(resolve, 1_200));
+                checksActive -= 1;
+                const batch = state.questions.filter((question) => question.verification.status === "pending" && (!keys || keys.includes(question.key))).slice(0, 5).map((question) => question.key);
                 state = { ...state, questions: state.questions.map((question) => (batch.includes(question.key) ? { ...question, verification: { status: "agrees" as const, aiAnswer: "A" as const } } : question)) };
                 return { draft: state, checked: batch.length, remaining: state.questions.filter((question) => question.verification.status === "pending").length };
             }
             throw new ApiError(`Unexpected ${method} ${path}`, 500, {});
         });
-        return { events, calls, stats: () => ({ mostAtOnce, mostHardAtOnce }) };
+        return { events, calls, checkedKeys, stats: () => ({ mostAtOnce, mostHardAtOnce }), mostChecksAtOnce: () => mostChecksAtOnce };
     }
     const batch = (id: string, difficulty: Difficulty, count = 3): GenerationStep => ({ id, kind: "questions", difficulty, count, status: "pending", attempts: 0 });
 
@@ -173,6 +182,20 @@ describe("the review page writes several batches at once and checks answers alon
         const lastEnd = studio.events.map((event) => event.startsWith("end:")).lastIndexOf(true);
         expect(studio.events.indexOf("verify")).toBeLessThan(lastEnd);
         expect(screen.queryByText(/could not be finished/)).not.toBeInTheDocument();
+        // Every answer was sent for checking once, and the last ones were checked several at a time.
+        expect(new Set(studio.checkedKeys).size).toBe(studio.checkedKeys.length);
+        expect(studio.checkedKeys).toHaveLength(18);
+    });
+
+    it("checks what is left at the end with several checks at once, each with its own questions", async () => {
+        const steps: GenerationStep[] = [{ id: "concept", kind: "concept", status: "done", attempts: 1 }, batch("easy-1", "easy", 4), batch("easy-2", "easy", 4), batch("easy-3", "easy", 4)];
+        const studio = fakeStudio(steps, (step) => step.count ?? 0);
+        render(<AiDraftReview draftId="d1" autoRun onClose={vi.fn()} onPublished={vi.fn()} />);
+
+        await waitFor(() => expect(screen.getByText("Answers checked: 12/12")).toBeInTheDocument(), { timeout: 15_000 });
+        expect(studio.mostChecksAtOnce()).toBeGreaterThan(1);
+        expect(new Set(studio.checkedKeys).size).toBe(12);
+        expect(studio.checkedKeys).toHaveLength(12);
     });
 
     it("keeps asking a partly kept step for the rest without counting it as a failure", async () => {

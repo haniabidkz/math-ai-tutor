@@ -304,27 +304,32 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
             }
         };
 
-        /** Checks answers in batches while questions are written, then whatever is left at the end. */
-        const checker = async () => {
+        /** Questions a check is running for, and questions already sent once, so none is checked twice. */
+        const claimed = new Set<string>();
+        const sent = new Set<string>();
+        /**
+         * Checks answers in batches of five: one check at a time while questions are written,
+         * then several at once for whatever is left, each with its own questions.
+         */
+        const checker = async (index: number) => {
             let failures = 0;
             let waits = 0;
             while (!stopRef.current && !halted) {
-                const waitingForCheck = current.questions.filter(needsCheck).length;
-                if (!waitingForCheck || (writing && waitingForCheck < CHECK_BATCH)) {
-                    if (!writing) return;
+                const free = current.questions.filter((question) => needsCheck(question) && !claimed.has(question.key) && !sent.has(question.key));
+                if (!free.length && !writing) return;
+                if (!free.length || (writing && (index > 0 || free.length < CHECK_BATCH))) {
                     await sleep(500);
                     continue;
                 }
+                const keys = free.slice(0, CHECK_BATCH).map((question) => question.key);
+                for (const key of keys) claimed.add(key);
                 try {
-                    const data = await adminApi<{ draft: GenerationDraft; checked: number; remaining: number }>(`${base}/verify`, { method: "POST" });
+                    const data = await adminApi<{ draft: GenerationDraft; checked: number; remaining: number }>(`${base}/verify`, jsonInit("POST", { keys }));
+                    for (const key of keys) sent.add(key);
                     setWaiting("");
                     take(data.draft);
                     failures = 0;
                     waits = 0;
-                    if (!data.checked) {
-                        if (!writing) return;
-                        await sleep(2_000);
-                    }
                 } catch (caught) {
                     const code = caught instanceof ApiError ? String(caught.body.code ?? "") : "";
                     if (WAIT_MS[code] && waits < MAX_WAITS_IN_A_ROW) {
@@ -339,12 +344,14 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                         return;
                     }
                     await sleep(1_500);
+                } finally {
+                    for (const key of keys) claimed.delete(key);
                 }
             }
         };
 
         try {
-            const checking = checker();
+            const checking = Promise.all(Array.from({ length: PARALLEL_STEPS }, (_, index) => checker(index)));
             await Promise.all(Array.from({ length: only ? 1 : PARALLEL_STEPS }, () => worker()));
             writing = false;
             if (!stopRef.current && !halted) setPhase("checking");

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { checkBatchSize, completeJson } from "@/lib/ai-studio/ai";
@@ -15,6 +16,11 @@ import { requireSuperAdmin } from "@/lib/server-auth";
 
 export const maxDuration = 300;
 
+const bodySchema = z.object({
+    /** Only these questions; without it, the first unchecked ones. */
+    keys: z.array(z.string().min(1).max(80)).max(20).optional(),
+});
+
 /** A check that errored is repeated only when the admin asks ("Check again"), so it cannot loop. */
 const needsCheck = (question: DraftQuestion) =>
     question.verification.status === "pending" &&
@@ -30,13 +36,15 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     try {
         await requireSuperAdmin(request);
         const { id } = await context.params;
+        // Checks running at the same time each name their own questions, so no answer is checked twice.
+        const { keys } = bodySchema.parse(await request.json().catch(() => ({})));
         const ref = draftsCollection().doc(id);
         const draft = await loadDraft(id);
         assertOpen(draft);
 
-        const batch = draft.questions.filter(needsCheck).slice(0, checkBatchSize());
+        const batch = draft.questions.filter((question) => needsCheck(question) && (!keys || keys.includes(question.key))).slice(0, checkBatchSize());
         if (!batch.length) {
-            return NextResponse.json({ success: true, checked: 0, remaining: 0, draft: toClientDraft(draft) });
+            return NextResponse.json({ success: true, checked: 0, remaining: draft.questions.filter(needsCheck).length, draft: toClientDraft(draft) });
         }
 
         // Short ids keep the reply small and easy to match back. Each question carries its

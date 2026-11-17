@@ -343,6 +343,17 @@
   </tbody>
 </table>
 
+<h2>9. Faster AI Studio pools (17 November 2026)</h2>
+<p>A 35-question micro-topic pool used to take 10 to 20 minutes: its 14 steps and 7 answer checks ran one after another, and one broken question threw away the whole batch of three. Now up to three steps run at the same time (the lesson first, hard batches early, never three hard batches together), answers are checked while the rest is still being written, and the good questions of a reply are kept, so only the broken one is written again. Measured on production: about 3 to 4 minutes for a full pool, with the same rules and the same independent answer check.</p>
+<table>
+  <thead><tr><th>#</th><th>What to do</th><th>What you should see</th></tr></thead>
+  <tbody>
+    <tr><td>40</td><td>Super Admin → AI Studio: generate a micro-topic pool and watch the "Generating" list.</td><td>After the lesson step, up to three steps show a spinner and a timer at the same time. "Answers checked" in the question pool starts rising while questions are still being written. The pool is usually ready for review in 3 to 4 minutes.</td></tr>
+    <tr><td>41</td><td>Watch for a step whose reply had one bad question.</td><td>The step shows "2 of 3 kept" and asks only for the missing question. This does not count as a failed try. If you skip such a step, its note says how many were kept and how many to add by hand.</td></tr>
+    <tr><td>42</td><td>Press "Pause after the running steps" during generation, then "Continue generating".</td><td>The steps already running finish and no new ones start. Continue picks up where it stopped, keeping every question already written.</td></tr>
+  </tbody>
+</table>
+
 <p class="small">Everything in this guide was verified on production with automated checks (83 on 22 October 2026, plus the teacher-scope and edit checks on 30 October 2026) and a browser walk-through; all test schools and accounts were deleted afterwards. The content-system checks of 2 November 2026 ran on production with a throwaway student that was deleted afterwards.</p>
 
 </body>
