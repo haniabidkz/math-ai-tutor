@@ -142,4 +142,38 @@ describe("placing a new lesson by the textbook", () => {
         expect(concept).toMatchObject({ topicOrder: 1, order: 0, subTopic: { english: "First steps" } });
         expect([...shifts.entries()]).toEqual([["b-1", { topicOrder: 2 }], ["c-1", { topicOrder: 3 }]]);
     });
+
+    const text = (english: string) => ({ english, romanUrdu: english });
+    const lessonOf = (microTag: string, topicId: string, order: number, extra: Partial<MicroConcept> = {}): MicroConcept => ({
+        microTag, prerequisiteTag: null, classLevel: 6, topicId, topicTitle: text(topicId), title: text(microTag), concept: text("…"),
+        family: "algebra", visualKind: "expression", order, status: "published", ...extra,
+    });
+
+    it("counts only the lessons students see, so an archived lesson does not push the new one a place too early", () => {
+        // Like Class 6 Sets: an archived lesson sits between the visible ones.
+        const existing = [
+            lessonOf("roster", "sets", 0), lessonOf("old", "sets", 1, { status: "archived" }),
+            lessonOf("descriptive", "sets", 2), lessonOf("set-builder", "sets", 3), lessonOf("empty", "sets", 4),
+        ];
+        const fresh = lessonOf("converting", "sets", 99);
+        // The model sees roster, descriptive, set-builder, empty and asks for place 3: after set-builder.
+        const { concept, shifts } = placeLesson(fresh, existing, { chapterIndex: 0, lessonIndex: 3, subTopic: null, source: "ai", note: "After all three forms." });
+        expect(concept).toMatchObject({ order: 4, prerequisiteTag: "set-builder" });
+        expect([...shifts.entries()]).toEqual([["empty", { order: 5 }]]);
+        // At the very end it follows the last visible lesson.
+        const last = placeLesson(fresh, existing, { chapterIndex: 0, lessonIndex: 4, subTopic: null, source: "ai", note: "" });
+        expect(last.concept).toMatchObject({ order: 5, prerequisiteTag: "empty" });
+        expect(last.shifts.size).toBe(0);
+    });
+
+    it("gives a numberless chapter its number first, so a new chapter never jumps ahead of it", () => {
+        // Like Class 6 today: the Sets chapter has no chapter number.
+        const existing = [lessonOf("s-1", "sets", 0), lessonOf("s-2", "sets", 1)];
+        const after = placeLesson(lessonOf("n-1", "new", 0), existing, { chapterIndex: 1, lessonIndex: 0, subTopic: null, source: "ai", note: "" });
+        expect(after.concept.topicOrder).toBe(1);
+        expect([...after.shifts.entries()]).toEqual([["s-1", { topicOrder: 0 }], ["s-2", { topicOrder: 0 }]]);
+        const ahead = placeLesson(lessonOf("n-1", "new", 0), existing, { chapterIndex: 0, lessonIndex: 0, subTopic: null, source: "ai", note: "" });
+        expect(ahead.concept.topicOrder).toBe(0);
+        expect([...ahead.shifts.entries()]).toEqual([["s-1", { topicOrder: 1 }], ["s-2", { topicOrder: 1 }]]);
+    });
 });

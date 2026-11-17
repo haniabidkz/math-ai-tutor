@@ -101,9 +101,14 @@ export function placeLesson(
     const shifts = new Map<string, Partial<Pick<MicroConcept, "order" | "topicOrder">>>();
     const inClass = existing.filter((item) => item.classLevel === concept.classLevel && item.microTag !== concept.microTag);
     const lessons = orderConcepts(inClass.filter((item) => item.topicId === concept.topicId));
-    const at = Math.max(0, Math.min(lessons.length, placement.lessonIndex));
-    const before = lessons[at - 1];
-    const after = lessons[at];
+    // The textbook position counts only the lessons students see, as the placement was asked.
+    // Archived lessons keep their own place in the numbering but are never counted, otherwise
+    // every lesson placed after one would land a place too early.
+    const shown = lessons.filter((item) => item.status !== "archived" && !item.foundationOnly);
+    const wanted = Math.max(0, Math.min(shown.length, placement.lessonIndex));
+    const before = shown[wanted - 1];
+    const after = shown[wanted];
+    const at = after ? lessons.indexOf(after) : before ? lessons.indexOf(before) + 1 : lessons.length;
     const subTopicOrder = before?.subTopicOrder ?? after?.subTopicOrder;
     const placed: MicroConcept = {
         ...concept,
@@ -119,19 +124,24 @@ export function placeLesson(
         if (lesson.order !== order) shifts.set(lesson.microTag, { order });
     });
     if (!lessons.length) {
-        // A new chapter takes the place of the chapter now at that position, which moves down with the rest.
+        // A chapter without a number sorts after every numbered one, so a new chapter would jump
+        // ahead of it and lock its lessons. Chapters without a number first get one after the
+        // numbered chapters, in today's order; then the new chapter takes the place of the
+        // chapter at its position, which moves down with the rest.
         const chapters = classOutline(inClass, concept.classLevel);
-        const atChapter = chapters[placement.chapterIndex];
-        if (atChapter && typeof atChapter.topicOrder === "number") {
-            placed.topicOrder = atChapter.topicOrder;
-            for (const item of inClass) {
-                if (!item.foundationOnly && typeof item.topicOrder === "number" && item.topicOrder >= atChapter.topicOrder) {
-                    shifts.set(item.microTag, { ...shifts.get(item.microTag), topicOrder: item.topicOrder + 1 });
-                }
-            }
-        } else if (atChapter) {
-            // The chapter there has no place of its own, so the new one goes last and is flagged.
-            placed.sequence = { ...placed.sequence!, source: "unknown" };
+        const numbered = inClass.filter((item) => !item.foundationOnly && typeof item.topicOrder === "number").map((item) => item.topicOrder!);
+        let next = Math.max(-1, ...numbered) + 1;
+        const chapterNumber = new Map<string, number>();
+        for (const chapter of chapters) chapterNumber.set(chapter.topicId, chapter.topicOrder ?? next++);
+        const atChapter = chapters[Math.max(0, Math.min(chapters.length, placement.chapterIndex))];
+        const newNumber = atChapter ? chapterNumber.get(atChapter.topicId)! : next;
+        placed.topicOrder = newNumber;
+        for (const item of inClass) {
+            if (item.foundationOnly) continue;
+            const current = chapterNumber.get(item.topicId) ?? item.topicOrder;
+            if (typeof current !== "number") continue;
+            const moved = current >= newNumber ? current + 1 : current;
+            if (item.topicOrder !== moved) shifts.set(item.microTag, { ...shifts.get(item.microTag), topicOrder: moved });
         }
     }
     return { concept: placed, shifts };
