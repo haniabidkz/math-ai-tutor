@@ -6,15 +6,14 @@ import { findForeignContext } from "@/lib/ai-studio/context-check";
 import { AiError, completeJson } from "@/lib/ai-studio/ai";
 import { batchFocus, conceptPrompt, questionPrompt } from "@/lib/ai-studio/prompts";
 import { checkWorkedExample } from "@/lib/ai-studio/worked-check";
-import { findNearCopy, questionSignature } from "@/lib/ai-studio/similarity";
-import { conceptSchemaFor, normalizeConcept, normalizeQuestionBatch, questionBatchSchema } from "@/lib/ai-studio/schema";
+import { dropRepeats, keepGoodQuestions, settleStep, stillNeeded } from "@/lib/ai-studio/batch-keep";
+import { conceptSchemaFor, normalizeConcept, questionBatchSchema, readQuestionBatch } from "@/lib/ai-studio/schema";
 import {
     assertOpen, clean, draftFrom, draftsCollection, liveQuestionTexts,
     studioErrorResponse, StudioError, toClientDraft,
 } from "@/lib/ai-studio/store";
 import { withHelp, type DraftConcept, type DraftQuestion, type GenerationDraft, type GenerationStep } from "@/lib/ai-studio/types";
-import { questionRomanUrduProblems, romanUrduProblems } from "@/lib/ai-studio/urdu-check";
-import { brevityIssues, normalizeText } from "@/lib/ai-studio/validate";
+import { romanUrduProblems } from "@/lib/ai-studio/urdu-check";
 import { requireSuperAdmin } from "@/lib/server-auth";
 
 export const maxDuration = 300;
@@ -37,8 +36,9 @@ const bodySchema = z.object({
     force: z.boolean().optional(),
 });
 
+/** `refused` lists why the questions not kept from a partly good reply were refused. */
 type Outcome =
-    | { ok: true; concept?: DraftConcept; questions?: DraftQuestion[] }
+    | { ok: true; concept?: DraftConcept; questions?: DraftQuestion[]; refused?: string[] }
     | { ok: false; problems: string[]; error: string };
 
 async function runStep(draft: GenerationDraft, step: GenerationStep) {
@@ -74,10 +74,11 @@ async function runStep(draft: GenerationDraft, step: GenerationStep) {
     }
 
     const difficulty = step.difficulty!;
-    const count = step.count!;
+    const count = stillNeeded(step);
     const live = await liveQuestionTexts(tags);
     const inDraft = draft.questions.map((question) => question.questionText);
-    const focus = batchFocus(draft, count);
+    // The lock reserved the micro-topics for this run, so batches running at the same time spread out.
+    const focus = step.focus ?? batchFocus(draft, count);
     // Each question must name one covered skill, so it cannot leave the written scope.
     const skills = draft.concept?.scope?.covers ?? [];
     const prompt = questionPrompt(draft, { difficulty, count, avoid: [...live, ...inDraft], feedback: step.feedback, focus });
@@ -85,38 +86,13 @@ async function runStep(draft: GenerationDraft, step: GenerationStep) {
         role: "generation", ...prompt, schemaName: "question_pool", schema: questionBatchSchema(tags, skills, help),
         temperature: 0.6, maxOutputTokens: 48_000, timeoutMs: PER_MODEL_MS, reasoningEffort: REASONING_BY_DIFFICULTY[difficulty],
     });
-    const { questions, problems } = normalizeQuestionBatch(reply.data, { difficulty, count, allowedTags: tags, skills, withHelp: help });
+    const { read, countProblem } = readQuestionBatch(reply.data, { difficulty, count, allowedTags: tags, skills, withHelp: help });
 
-    // Rule A, short questions and no repeats: the whole batch is redone with the reasons, never patched up.
-    const seen = new Set([...live, ...inDraft].map(normalizeText));
-    const poolSignatures = inDraft.map((text) => questionSignature(text));
-    questions.forEach((question, index) => {
-        const label = `question ${index + 1}`;
-        const foreign = findForeignContext(question.questionText, ...question.options, question.hint.english, question.solution.english);
-        if (foreign.length) problems.push(`${label} uses a foreign setting (${foreign.join(", ")}); use Pakistani daily life, Rupees and kilometres`);
-        for (const issue of brevityIssues(question)) {
-            if (issue.severity === "error") problems.push(`${label}: ${issue.message}`);
-        }
-        problems.push(...questionRomanUrduProblems(label, question));
-        const text = normalizeText(question.questionText);
-        if (seen.has(text)) problems.push(`${label} repeats an existing question`);
-        else {
-            const copied = findNearCopy(text, poolSignatures);
-            if (copied >= 0) problems.push(`${label} is almost the same as an earlier question ("${[...inDraft, ...questions.map((item) => item.questionText)][copied].slice(0, 80)}"); change the idea or situation, not just the numbers`);
-        }
-        seen.add(text);
-        poolSignatures.push(questionSignature(text));
-    });
-    // Sub-topic and main-topic pools stay evenly spread: each batch covers the micro-topics it was given.
-    if (focus.length && questions.length) {
-        const wanted = [...focus].sort().join(",");
-        const got = questions.map((question) => question.microTag).sort().join(",");
-        if (wanted !== got) problems.push(`write one question for each of these micro-topics: ${focus.join(", ")} (the reply covered ${got})`);
-    }
+    const { kept, refused } = keepGoodQuestions(read, { count, existing: [...live, ...inDraft], focus, countProblem });
 
-    const outcome: Outcome = problems.length
-        ? { ok: false, problems, error: `The reply broke ${problems.length} rule(s)` }
-        : { ok: true, questions };
+    const outcome: Outcome = kept.length
+        ? { ok: true, questions: kept, refused }
+        : { ok: false, problems: refused.length ? refused : [countProblem ?? "no questions came back"], error: `The reply broke ${Math.max(1, refused.length)} rule(s)` };
     return { outcome, usage: reply.usage };
 }
 
@@ -143,9 +119,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             if (step.status === "running" && !force && lockedAt - (step.startedAt ?? 0) < STALE_AFTER_MS) {
                 throw new StudioError(409, "This step is already running. Wait for it to finish.", { code: "running", startedAt: step.startedAt ?? null });
             }
-            const steps = draft.steps.map((item) => (item.id === stepId ? { ...item, status: "running" as const, startedAt: lockedAt } : item));
+            // Sub-topic and main-topic pools: batches running at the same time each take the
+            // micro-topics with the fewest questions, counting what the others are already writing.
+            const reserved = draft.steps
+                .filter((item) => item.id !== stepId && item.status === "running" && lockedAt - (item.startedAt ?? 0) < STALE_AFTER_MS)
+                .flatMap((item) => item.focus ?? []);
+            const focus = step.kind === "questions" ? batchFocus(draft, stillNeeded(step), reserved) : [];
+            const running: GenerationStep = { ...step, status: "running", startedAt: lockedAt, focus: focus.length ? focus : undefined };
+            const steps = draft.steps.map((item) => (item.id === stepId ? running : item));
             transaction.update(ref, { steps: clean(steps), updatedAt: FieldValue.serverTimestamp() });
-            return { draft, step, skip: false };
+            return { draft, step: running, skip: false };
         });
         if (locked.skip) return NextResponse.json({ success: true, draft: toClientDraft(locked.draft) });
 
@@ -164,19 +147,19 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
             const draft = draftFrom(await transaction.get(ref));
             const current = draft.steps.find((item) => item.id === stepId);
             // Another request took over a step that looked stuck; its result wins.
-            if (!current || current.status !== "running" || current.startedAt !== lockedAt || draft.status !== "generating") return draft;
+            if (!current || current.status !== "running" || current.startedAt !== lockedAt || draft.status !== "generating") {
+                return { draft, failed: !outcome.ok, error: outcome.ok ? "" : outcome.error, problems: outcome.ok ? [] : outcome.problems, kept: 0 };
+            }
 
-            const steps: GenerationStep[] = draft.steps.map((item) => {
-                if (item.id !== stepId) return item;
-                const base = { id: item.id, kind: item.kind, difficulty: item.difficulty, count: item.count, attempts: item.attempts + 1 };
-                return outcome.ok
-                    ? { ...base, status: "done" as const }
-                    // Keep earlier feedback when the failure was the connection, not the content.
-                    : { ...base, status: "failed" as const, error: outcome.error, feedback: outcome.problems.length ? outcome.problems : item.feedback };
-            });
+            const fresh = outcome.ok ? dropRepeats(outcome.questions ?? [], draft.questions) : { kept: [], refused: [] };
+            const kept = fresh.kept;
+            const refused = outcome.ok ? [...(outcome.refused ?? []), ...fresh.refused] : outcome.problems;
+            const error = outcome.ok ? `The reply broke ${Math.max(1, refused.length)} rule(s)` : outcome.error;
+            const settled = settleStep(current, { ok: outcome.ok, kept: kept.length, refused, error });
+            const steps: GenerationStep[] = draft.steps.map((item) => (item.id === stepId ? settled.step : item));
             const changes: Partial<GenerationDraft> = { steps };
             if (outcome.ok && outcome.concept) changes.concept = outcome.concept;
-            if (outcome.ok && outcome.questions) changes.questions = [...draft.questions, ...outcome.questions];
+            if (kept.length) changes.questions = [...draft.questions, ...kept];
             if (steps.every((item) => item.status === "done")) changes.status = "needs_review";
 
             transaction.update(ref, {
@@ -186,16 +169,17 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
                 "usage.outputTokens": FieldValue.increment(usage.outputTokens),
                 updatedAt: FieldValue.serverTimestamp(),
             });
-            return { ...draft, ...changes };
+            return { draft: { ...draft, ...changes }, failed: !settled.finished && !settled.progressed, error, problems: refused, kept: kept.length };
         });
 
-        if (!outcome.ok) {
+        if (saved.failed) {
             return NextResponse.json(
-                { success: false, error: outcome.error, problems: outcome.problems, code: aiCode ?? "rejected", draft: toClientDraft(saved) },
+                { success: false, error: saved.error, problems: saved.problems, code: aiCode ?? "rejected", draft: toClientDraft(saved.draft) },
                 { status: aiCode ? 502 : 422 },
             );
         }
-        return NextResponse.json({ success: true, draft: toClientDraft(saved) });
+        // A partly kept reply is progress, not a failure: the step stays open for the rest.
+        return NextResponse.json({ success: true, kept: saved.kept, refused: saved.problems, draft: toClientDraft(saved.draft) });
     } catch (error) {
         return studioErrorResponse(error, "The step could not run");
     }

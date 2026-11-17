@@ -32,7 +32,34 @@ const MAX_TRIES = 3;
  */
 const WAIT_MS: Record<string, number> = { rate_limited: 60_000, busy: 15_000, network: 5_000, gateway: 5_000 };
 const MAX_WAITS_IN_A_ROW = 20;
+/** Steps that run at the same time. A hard batch takes about 90 seconds, so hard batches start first. */
+const PARALLEL_STEPS = 3;
+/** At most this many batches of one difficulty at once, so batches written together rarely overlap. */
+const SAME_DIFFICULTY_AT_ONCE = 2;
+const SLOWEST_FIRST: Record<Difficulty, number> = { hard: 0, medium: 1, easy: 2 };
+/** Answers are checked while the pool is still being written, as soon as a full check batch waits. */
+const CHECK_BATCH = 5;
+/** Failures no retry can fix until the admin changes the account or the model: the run stops at once. */
+const STOP_CODES = new Set(["not_configured", "invalid_key", "no_credit", "model_unavailable"]);
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+const needsCheck = (question: DraftQuestion) =>
+    question.verification.status === "pending" && question.questionText.trim().length > 0 && question.options.every((option) => option.trim().length > 0);
+
+/**
+ * Replies of steps running together can arrive out of order. Everything they report only grows
+ * (steps done, questions, answers checked, attempts), so the reply saved later has the larger tally.
+ */
+function savedLater(next: GenerationDraft, current: GenerationDraft): boolean {
+    const tally = (draft: GenerationDraft) => [
+        draft.steps.filter((step) => step.status === "done").length,
+        draft.questions.length,
+        draft.questions.filter((question) => question.verification.status !== "pending").length,
+        draft.steps.reduce((sum, step) => sum + step.attempts, 0),
+    ];
+    const [after, before] = [tally(next), tally(current)];
+    const differs = after.findIndex((value, index) => value !== before[index]);
+    return differs < 0 || after[differs] > before[differs];
+}
 const capital = (value: string) => `${value[0].toUpperCase()}${value.slice(1)}`;
 const errorText = (caught: unknown) => (caught instanceof Error ? caught.message : "Something went wrong");
 
@@ -86,24 +113,34 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
     const startedRef = useRef(false);
     /** Set by "Reset this step": the next request for that step takes it over. */
     const forceRef = useRef<string | null>(null);
-    const wakeRef = useRef<(() => void) | null>(null);
-    /** The step a request is in flight for and when it started, so the screen shows it moving. */
-    const [running, setRunning] = useState<{ stepId: string; since: number } | null>(null);
+    /** Waits in progress; steps running together may each be waiting. */
+    const wakersRef = useRef(new Set<() => void>());
+    /** The steps requests are in flight for and when each started, so the screen shows them moving. */
+    const [running, setRunning] = useState<Record<string, number>>({});
     const [stuck, setStuck] = useState<{ stepId: string; startedAt: number | null } | null>(null);
     const [now, setNow] = useState(() => Date.now());
     const base = `/api/admin/ai-studio/drafts/${draftId}`;
 
     /** A wait the admin can cut short, for example by resetting a stuck step. */
     const pause = useCallback((ms: number) => new Promise<void>((resolve) => {
-        const timer = window.setTimeout(() => { wakeRef.current = null; resolve(); }, ms);
-        wakeRef.current = () => { window.clearTimeout(timer); wakeRef.current = null; resolve(); };
+        const wake = () => {
+            window.clearTimeout(timer);
+            wakersRef.current.delete(wake);
+            resolve();
+        };
+        const timer = window.setTimeout(wake, ms);
+        wakersRef.current.add(wake);
     }), []);
+    const wakeAll = () => {
+        for (const wake of [...wakersRef.current]) wake();
+    };
 
+    const anyRunning = Object.keys(running).length > 0;
     useEffect(() => {
-        if (!running) return;
+        if (!anyRunning) return;
         const timer = window.setInterval(() => setNow(Date.now()), 1_000);
         return () => window.clearInterval(timer);
-    }, [running]);
+    }, [anyRunning]);
     const elapsed = (since: number) => {
         const seconds = Math.max(0, Math.round((now - since) / 1000));
         return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -165,9 +202,11 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
     }, [base]);
 
     /**
-     * Runs the plan one step per request, retrying rejected replies with the reasons attached.
-     * A step that keeps failing is set aside for the admin and the rest of the plan carries on,
-     * so one bad batch never freezes the queue. With `only`, just that step runs.
+     * Runs the plan with up to three steps at a time: the lesson first, because every question is
+     * written from its scope, then the question batches, slowest first. Answers are checked while
+     * the rest is still being written. A rejected reply is retried with the reasons; a step that
+     * keeps failing is set aside for the admin and the others carry on, so one bad batch never
+     * freezes the queue. With `only`, just that step runs.
      */
     const generate = useCallback(async (start: GenerationDraft, only?: string) => {
         stopRef.current = false;
@@ -175,36 +214,59 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
         setError("");
         setPhase("generating");
         let current = start;
+        const take = (next: GenerationDraft) => {
+            if (!savedLater(next, current)) return;
+            current = next;
+            setDraft(next);
+        };
         const tries = new Map<string, number>();
-        const givenUp: string[] = [];
+        const holds = new Map<string, number>();
+        const givenUp = new Set<string>();
+        const inFlight = new Map<string, GenerationStep>();
         let lastFailure = "";
-        let waits = 0;
-        let limitWaits = 0;
-        try {
-            while (!stopRef.current) {
-                const step = current.steps.find((item) => item.status !== "done" && !givenUp.includes(item.id) && (!only || item.id === only));
-                if (!step) break;
+        let halted = "";
+        let checkFailure = "";
+        let writing = true;
+
+        const nextStep = (): GenerationStep | undefined => {
+            const open = current.steps.filter((step) => step.status !== "done" && !givenUp.has(step.id) && !inFlight.has(step.id) && (!only || step.id === only));
+            const lesson = current.steps.find((step) => step.kind === "concept");
+            // Questions wait for the lesson, unless it was set aside after failing.
+            if (!only && lesson && lesson.status !== "done" && !givenUp.has(lesson.id)) return open.find((step) => step.id === lesson.id);
+            const sameDifficulty = (difficulty?: Difficulty) => [...inFlight.values()].filter((step) => step.difficulty === difficulty).length;
+            return open
+                .filter((step) => step.kind === "questions" && step.difficulty && sameDifficulty(step.difficulty) < SAME_DIFFICULTY_AT_ONCE)
+                .sort((left, right) => SLOWEST_FIRST[left.difficulty!] - SLOWEST_FIRST[right.difficulty!])[0]
+                ?? open.find((step) => step.kind === "concept");
+        };
+
+        const worker = async () => {
+            let limitWaits = 0;
+            while (!stopRef.current && !halted) {
+                const step = nextStep();
+                if (!step) {
+                    if (!inFlight.size) return;
+                    await sleep(300);
+                    continue;
+                }
+                inFlight.set(step.id, step);
+                setRunning((value) => ({ ...value, [step.id]: Date.now() }));
                 try {
-                    setRunning({ stepId: step.id, since: Date.now() });
                     const force = forceRef.current === step.id;
-                    forceRef.current = null;
+                    if (force) forceRef.current = null;
                     const data = await adminApi<{ draft: GenerationDraft }>(`${base}/generate`, jsonInit("POST", { stepId: step.id, ...(force ? { force: true } : {}) }));
                     setWaiting("");
-                    setStuck(null);
+                    setStuck((value) => (value?.stepId === step.id ? null : value));
                     limitWaits = 0;
-                    waits = 0;
-                    current = data.draft;
-                    setDraft(current);
+                    take(data.draft);
                 } catch (caught) {
                     const body = caught instanceof ApiError ? caught.body : {};
-                    if (body.draft) {
-                        current = body.draft as GenerationDraft;
-                        setDraft(current);
-                    }
+                    if (body.draft) take(body.draft as GenerationDraft);
                     // An earlier request (another tab, or one cut off by a timeout) still holds this
                     // step. Wait for it to finish or go stale; the admin can reset it at any time.
-                    if (caught instanceof ApiError && caught.status === 409 && current.status === "generating" && waits < 40) {
-                        waits += 1;
+                    const held = holds.get(step.id) ?? 0;
+                    if (caught instanceof ApiError && caught.status === 409 && current.status === "generating" && held < 40) {
+                        holds.set(step.id, held + 1);
                         const details = body.details as { startedAt?: number | null } | undefined;
                         setStuck({ stepId: step.id, startedAt: details?.startedAt ?? null });
                         await pause(10_000);
@@ -212,6 +274,10 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                         continue;
                     }
                     const code = String(body.code ?? "");
+                    if (STOP_CODES.has(code)) {
+                        halted = describeFailure(caught);
+                        continue;
+                    }
                     if (WAIT_MS[code] && limitWaits < MAX_WAITS_IN_A_ROW) {
                         limitWaits += 1;
                         setWaiting(`${errorText(caught)} Waiting ${WAIT_MS[code] / 1000} seconds, then continuing...`);
@@ -224,25 +290,79 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                         await pause(1_000);
                         continue;
                     }
-                    givenUp.push(step.id);
+                    givenUp.add(step.id);
                     lastFailure = describeFailure(caught);
-                    setStuck(null);
+                    setStuck((value) => (value?.stepId === step.id ? null : value));
+                } finally {
+                    inFlight.delete(step.id);
+                    setRunning((value) => {
+                        const next = { ...value };
+                        delete next[step.id];
+                        return next;
+                    });
                 }
             }
-            setWaiting("");
-            if (givenUp.length) {
-                setError(givenUp.length === 1
-                    ? `One step could not be finished: ${lastFailure} It has "Try again" and "Skip" below; the other steps carried on.`
-                    : `${givenUp.length} steps could not be finished. The last problem: ${lastFailure} Each one has "Try again" and "Skip" below.`);
+        };
+
+        /** Checks answers in batches while questions are written, then whatever is left at the end. */
+        const checker = async () => {
+            let failures = 0;
+            let waits = 0;
+            while (!stopRef.current && !halted) {
+                const waitingForCheck = current.questions.filter(needsCheck).length;
+                if (!waitingForCheck || (writing && waitingForCheck < CHECK_BATCH)) {
+                    if (!writing) return;
+                    await sleep(500);
+                    continue;
+                }
+                try {
+                    const data = await adminApi<{ draft: GenerationDraft; checked: number; remaining: number }>(`${base}/verify`, { method: "POST" });
+                    setWaiting("");
+                    take(data.draft);
+                    failures = 0;
+                    waits = 0;
+                    if (!data.checked) {
+                        if (!writing) return;
+                        await sleep(2_000);
+                    }
+                } catch (caught) {
+                    const code = caught instanceof ApiError ? String(caught.body.code ?? "") : "";
+                    if (WAIT_MS[code] && waits < MAX_WAITS_IN_A_ROW) {
+                        waits += 1;
+                        setWaiting(`${errorText(caught)} Waiting ${WAIT_MS[code] / 1000} seconds, then continuing...`);
+                        await sleep(WAIT_MS[code]);
+                        continue;
+                    }
+                    failures += 1;
+                    if (!RETRYABLE.has(code) || failures >= MAX_TRIES) {
+                        checkFailure = describeFailure(caught);
+                        return;
+                    }
+                    await sleep(1_500);
+                }
             }
-            if (!stopRef.current && current.steps.every((item) => item.status === "done")) await check();
+        };
+
+        try {
+            const checking = checker();
+            await Promise.all(Array.from({ length: only ? 1 : PARALLEL_STEPS }, () => worker()));
+            writing = false;
+            if (!stopRef.current && !halted) setPhase("checking");
+            await checking;
+            setWaiting("");
+            if (halted) setError(halted);
+            else if (givenUp.size) {
+                setError(givenUp.size === 1
+                    ? `One step could not be finished: ${lastFailure} It has "Try again" and "Skip" below; the other steps carried on.`
+                    : `${givenUp.size} steps could not be finished. The last problem: ${lastFailure} Each one has "Try again" and "Skip" below.`);
+            } else if (checkFailure) setError(checkFailure);
         } finally {
-            setRunning(null);
+            setRunning({});
             setStuck(null);
             setWaiting("");
             setPhase("idle");
         }
-    }, [base, check, load, pause]);
+    }, [base, load, pause]);
 
     useEffect(() => {
         let cancelled = false;
@@ -426,7 +546,7 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                                 {labels.get(stuck.stepId)} is still marked as running from an earlier request{stuck.startedAt ? ` (started ${elapsed(stuck.startedAt)} ago)` : ""}.
                                 {" "}Waiting for it to finish or time out. If that request is gone, reset the step.
                             </span>
-                            <Button size="sm" variant="outline" onClick={() => { forceRef.current = stuck.stepId; wakeRef.current?.(); }}>
+                            <Button size="sm" variant="outline" onClick={() => { forceRef.current = stuck.stepId; wakeAll(); }}>
                                 <RotateCcw className="mr-2 h-4 w-4" />Reset this step and continue
                             </Button>
                         </AlertDescription>
@@ -441,11 +561,11 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                         <div>
                             <h3 className="font-semibold">Generating</h3>
                             <p className="text-xs text-muted-foreground">
-                                {draft.questions.length} of {draft.quota.easy + draft.quota.medium + draft.quota.hard} questions written. Each step is one AI request for a small batch of questions; a reply that breaks a rule is rejected and written again. A step that keeps failing is set aside and the others carry on.
+                                {draft.questions.length} of {draft.quota.easy + draft.quota.medium + draft.quota.hard} questions written. Each step is one AI request for a small batch of questions, and up to {PARALLEL_STEPS} run at the same time while finished answers are already being checked. When a reply has a question that breaks a rule, the good questions are kept and only the broken ones are written again. A step that keeps failing is set aside and the others carry on.
                             </p>
                         </div>
                         {phase === "generating"
-                            ? <Button variant="outline" onClick={() => { stopRef.current = true; }}><Pause className="mr-2 h-4 w-4" />Pause after this step</Button>
+                            ? <Button variant="outline" onClick={() => { stopRef.current = true; }}><Pause className="mr-2 h-4 w-4" />Pause after the running steps</Button>
                             : <Button onClick={() => generate(draft)} disabled={busy}><Play className="mr-2 h-4 w-4" />{draft.steps.some((step) => step.attempts) ? "Continue generating" : "Start generating"}</Button>}
                     </div>
                     <ol className="grid gap-1 text-sm md:grid-cols-2">
@@ -453,16 +573,17 @@ export function AiDraftReview({ draftId, autoRun = false, onClose, onPublished }
                             <li key={step.id} className="flex items-start gap-2">
                                 {step.skipped ? <SkipForward className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
                                     : step.status === "done" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                                        : step.status === "running" || running?.stepId === step.id ? <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-sky-600" />
+                                        : step.status === "running" || running[step.id] ? <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-sky-600" />
                                             : step.status === "failed" ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                                                 : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-300" />}
                                 <span>
                                     {labels.get(step.id)}
                                     {step.attempts > 1 ? <span className="text-xs text-muted-foreground"> · {step.attempts} attempts</span> : null}
-                                    {running?.stepId === step.id ? (
-                                        <span className="text-xs text-sky-700"> · {elapsed(running.since)}{now - running.since > 120_000 ? " · hard questions can take up to 3 minutes; nothing is stuck while this timer runs" : ""}</span>
+                                    {step.kept && step.status !== "done" ? <span className="text-xs text-emerald-700"> · {step.kept} of {step.count} kept</span> : null}
+                                    {running[step.id] ? (
+                                        <span className="text-xs text-sky-700"> · {elapsed(running[step.id])}{now - running[step.id] > 120_000 ? " · hard questions can take up to 3 minutes; nothing is stuck while this timer runs" : ""}</span>
                                     ) : null}
-                                    {step.error && step.status !== "running" && running?.stepId !== step.id ? <span className="block text-xs text-muted-foreground">{step.error}</span> : null}
+                                    {step.error && step.status !== "running" && !running[step.id] ? <span className="block text-xs text-muted-foreground">{step.error}</span> : null}
                                     {step.skipped && phase === "idle" ? (
                                         <Button size="sm" variant="link" className="h-auto p-0 text-xs" onClick={() => retryStep(step.id)}>
                                             <RotateCcw className="mr-1 h-3 w-3" />Generate again

@@ -136,13 +136,14 @@ export function checkerTopic(draft: Pick<GenerationDraft, "target" | "concept">,
 
 /**
  * For sub-topic and main-topic pools, which micro-topics the next batch should cover: those
- * with the fewest questions so far, so the pool ends up evenly spread.
+ * with the fewest questions so far, so the pool ends up evenly spread. `reserved` holds the
+ * micro-topics that batches running at the same time are already writing for.
  */
-export function batchFocus(draft: Pick<GenerationDraft, "level" | "target" | "questions">, count: number): string[] {
+export function batchFocus(draft: Pick<GenerationDraft, "level" | "target" | "questions">, count: number, reserved: string[] = []): string[] {
     const topics = draft.target.microTopics;
     if (draft.level === "micro" || topics.length <= 1) return [];
     const used = new Map(topics.map((topic) => [topic.microTag, 0]));
-    for (const question of draft.questions) used.set(question.microTag, (used.get(question.microTag) ?? 0) + 1);
+    for (const tag of [...draft.questions.map((question) => question.microTag), ...reserved]) used.set(tag, (used.get(tag) ?? 0) + 1);
     const ordered = topics
         .map((topic, index) => ({ tag: topic.microTag, used: used.get(topic.microTag) ?? 0, index }))
         .sort((left, right) => left.used - right.used || left.index - right.index)

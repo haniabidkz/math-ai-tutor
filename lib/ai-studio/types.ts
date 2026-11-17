@@ -108,6 +108,10 @@ export interface GenerationStep {
     kind: "concept" | "questions";
     difficulty?: Difficulty;
     count?: number;
+    /** Questions of this step already kept from earlier replies; only the rest are asked for again. */
+    kept?: number;
+    /** Sub-topic and main-topic pools: the micro-topics this run of the step writes for, reserved while it runs. */
+    focus?: string[];
     status: StepStatus;
     attempts: number;
     error?: string;

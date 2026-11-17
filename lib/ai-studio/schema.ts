@@ -174,21 +174,26 @@ export function normalizeConcept(raw: unknown, help = true): { concept: DraftCon
     return { concept: problems.length ? null : concept, problems };
 }
 
-/**
- * Converts one batch reply into draft questions. The batch is rejected as a whole when the
- * count is wrong or any question is incomplete, so it can be regenerated with the reasons.
- */
-export function normalizeQuestionBatch(
-    raw: unknown,
-    expected: { difficulty: Difficulty; count: number; allowedTags: string[]; skills?: string[]; /** False for sub-topic and main-topic pools, whose questions carry no help. */ withHelp?: boolean },
-    makeKey: () => string = () => randomUUID(),
-): { questions: DraftQuestion[]; problems: string[] } {
-    const items = Array.isArray((raw as { questions?: unknown })?.questions) ? (raw as { questions: RawQuestion[] }).questions : [];
-    const problems: string[] = [];
-    if (items.length !== expected.count) problems.push(`exactly ${expected.count} questions were required but ${items.length} came back`);
+/** One question of a batch reply and the rules it broke; it can be kept when the list is empty. */
+export interface ReadQuestion { question: DraftQuestion; problems: string[] }
 
-    const questions: DraftQuestion[] = items.map((item, index) => {
+type BatchExpectation = { difficulty: Difficulty; count: number; allowedTags: string[]; skills?: string[]; /** False for sub-topic and main-topic pools, whose questions carry no help. */ withHelp?: boolean };
+
+/**
+ * Reads a batch reply question by question, so the good questions of a reply can be kept and
+ * only the broken ones written again. `countProblem` says when the reply had the wrong number.
+ */
+export function readQuestionBatch(
+    raw: unknown,
+    expected: BatchExpectation,
+    makeKey: () => string = () => randomUUID(),
+): { read: ReadQuestion[]; countProblem: string | null } {
+    const items = Array.isArray((raw as { questions?: unknown })?.questions) ? (raw as { questions: RawQuestion[] }).questions : [];
+    const countProblem = items.length !== expected.count ? `exactly ${expected.count} questions were required but ${items.length} came back` : null;
+
+    const read = items.map((item, index): ReadQuestion => {
         const label = `question ${index + 1}`;
+        const problems: string[] = [];
         const options = Array.isArray(item.options) ? item.options.map((option) => stripOptionLabel(text(option))) : [];
         const correct = text(item.correct_option) as OptionLetter;
         const microTag = text(item.micro_tag);
@@ -224,7 +229,7 @@ export function normalizeQuestionBatch(
         const missing = OPTION_LETTERS.filter((letter) => letter !== correct && (!wrongReasons[letter]?.english || !wrongReasons[letter]?.romanUrdu));
         if (help && OPTION_LETTERS.includes(correct) && missing.length) problems.push(`${label} is missing why option ${missing.join(", ")} is wrong`);
 
-        return {
+        const question: DraftQuestion = {
             key: makeKey(),
             difficulty: expected.difficulty,
             microTag,
@@ -237,8 +242,22 @@ export function normalizeQuestionBatch(
             wrongReasons,
             verification: { status: "pending" },
             origin: "ai",
-        } satisfies DraftQuestion;
+        };
+        return { question, problems };
     });
+    return { read, countProblem };
+}
 
-    return { questions: problems.length ? [] : questions, problems };
+/**
+ * Converts one batch reply into draft questions, all or nothing: the batch is rejected as a
+ * whole when the count is wrong or any question is incomplete (used for single rewrites).
+ */
+export function normalizeQuestionBatch(
+    raw: unknown,
+    expected: BatchExpectation,
+    makeKey: () => string = () => randomUUID(),
+): { questions: DraftQuestion[]; problems: string[] } {
+    const { read, countProblem } = readQuestionBatch(raw, expected, makeKey);
+    const problems = [...(countProblem ? [countProblem] : []), ...read.flatMap((item) => item.problems)];
+    return { questions: problems.length ? [] : read.map((item) => item.question), problems };
 }
