@@ -132,7 +132,11 @@ export function placeLesson(
         const numbered = inClass.filter((item) => !item.foundationOnly && typeof item.topicOrder === "number").map((item) => item.topicOrder!);
         let next = Math.max(-1, ...numbered) + 1;
         const chapterNumber = new Map<string, number>();
-        for (const chapter of chapters) chapterNumber.set(chapter.topicId, chapter.topicOrder ?? next++);
+        for (const chapter of chapters) {
+            // A chapter sorts by the smallest number any of its lessons carries, as compareChapters does.
+            const own = inClass.filter((item) => item.topicId === chapter.topicId && typeof item.topicOrder === "number").map((item) => item.topicOrder!);
+            chapterNumber.set(chapter.topicId, own.length ? Math.min(...own) : next++);
+        }
         const atChapter = chapters[Math.max(0, Math.min(chapters.length, placement.chapterIndex))];
         const newNumber = atChapter ? chapterNumber.get(atChapter.topicId)! : next;
         placed.topicOrder = newNumber;

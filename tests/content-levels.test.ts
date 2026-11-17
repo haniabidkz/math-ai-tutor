@@ -175,5 +175,10 @@ describe("placing a new lesson by the textbook", () => {
         const ahead = placeLesson(lessonOf("n-1", "new", 0), existing, { chapterIndex: 0, lessonIndex: 0, subTopic: null, source: "ai", note: "" });
         expect(ahead.concept.topicOrder).toBe(0);
         expect([...ahead.shifts.entries()]).toEqual([["s-1", { topicOrder: 1 }], ["s-2", { topicOrder: 1 }]]);
+        // Exactly Class 6 Sets: only the first lesson lacks the number its chapter sorts by.
+        const partly = [lessonOf("s-1", "sets", 0), lessonOf("s-2", "sets", 1, { topicOrder: 2 })];
+        const last = placeLesson(lessonOf("n-1", "new", 0), partly, { chapterIndex: 1, lessonIndex: 0, subTopic: null, source: "ai", note: "" });
+        expect(last.concept.topicOrder).toBe(3);
+        expect([...last.shifts.entries()]).toEqual([["s-1", { topicOrder: 2 }]]);
     });
 });
